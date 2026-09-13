@@ -154,18 +154,27 @@ def main() -> None:
         _common.block(_first_run_reason(root))
         return
 
-    passed, detail = _run_verification(root, config["verify"])
+    command = config["verify"]
+    passed, detail = _run_verification(root, command)
     if passed:
         _write_refusal_count(state_dir, 0)
+        _common.log_decision(root, "stop.py", "allow", reason=f"`{command}` passed")
         _common.allow()
         return
 
     refusals = _read_refusal_count(state_dir) + 1
     if refusals > _MAX_CONSECUTIVE_REFUSALS:
         _write_refusal_count(state_dir, 0)
+        _common.log_decision(
+            root,
+            "stop.py",
+            "allow",
+            reason=f"giving up after {refusals} consecutive failures: {detail}",
+        )
         _common.allow()
         return
     _write_refusal_count(state_dir, refusals)
+    _common.log_decision(root, "stop.py", "block", reason=detail)
     _common.block(detail)
 
 

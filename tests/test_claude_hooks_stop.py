@@ -20,6 +20,7 @@ from pathlib import Path
 from typing import Any
 from unittest import mock
 
+import _common
 import stop
 
 
@@ -105,6 +106,10 @@ class VerificationRunTests(unittest.TestCase):
             self.assertEqual(
                 (state_dir / "consecutive_refusals").read_text(encoding="utf-8"), "0"
             )
+            logged = _common.last_decision(Path(root), "stop.py")
+            assert logged is not None
+            self.assertEqual(logged["decision"], "allow")
+            self.assertIn("passed", logged["reason"])
 
     def test_red_run_blocks_and_increments_refusal_counter(self) -> None:
         with (
@@ -123,6 +128,10 @@ class VerificationRunTests(unittest.TestCase):
             self.assertIn("exited 1", result["reason"])
             counter = Path(scratch) / "canon" / "consecutive_refusals"
             self.assertEqual(counter.read_text(encoding="utf-8"), "1")
+            logged = _common.last_decision(Path(root), "stop.py")
+            assert logged is not None
+            self.assertEqual(logged["decision"], "block")
+            self.assertIn("exited 1", logged["reason"])
 
     def test_refusal_counter_cap_allows_through(self) -> None:
         with (
@@ -144,6 +153,10 @@ class VerificationRunTests(unittest.TestCase):
             self.assertEqual(
                 (state_dir / "consecutive_refusals").read_text(encoding="utf-8"), "0"
             )
+            logged = _common.last_decision(Path(root), "stop.py")
+            assert logged is not None
+            self.assertEqual(logged["decision"], "allow")
+            self.assertIn("giving up after", logged["reason"])
 
     def test_verify_timeout_counts_as_red(self) -> None:
         with (

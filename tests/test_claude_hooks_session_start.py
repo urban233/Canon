@@ -17,6 +17,7 @@ import unittest
 from pathlib import Path
 from unittest import mock
 
+import _common
 import session_start
 
 
@@ -170,6 +171,76 @@ class PrStatusTests(unittest.TestCase):
             )
 
 
+class RecentCommitsTests(unittest.TestCase):
+    def test_none_base_yields_none(self) -> None:
+        self.assertIsNone(session_start._recent_commits(Path("/repo"), None))
+
+    def test_joins_log_lines_with_semicolons(self) -> None:
+        completed = mock.Mock(returncode=0, stdout="a1b2c3d First\nd4e5f6a Second\n")
+        with mock.patch("subprocess.run", return_value=completed):
+            self.assertEqual(
+                session_start._recent_commits(Path("/repo"), "abc123"),
+                "a1b2c3d First; d4e5f6a Second",
+            )
+
+    def test_no_commits_yields_none(self) -> None:
+        completed = mock.Mock(returncode=0, stdout="")
+        with mock.patch("subprocess.run", return_value=completed):
+            self.assertIsNone(session_start._recent_commits(Path("/repo"), "abc123"))
+
+    def test_git_failure_yields_none(self) -> None:
+        completed = mock.Mock(returncode=128, stdout="")
+        with mock.patch("subprocess.run", return_value=completed):
+            self.assertIsNone(session_start._recent_commits(Path("/repo"), "abc123"))
+
+
+class LastVerificationTests(unittest.TestCase):
+    def test_none_when_nothing_logged(self) -> None:
+        with tempfile.TemporaryDirectory() as root:
+            self.assertIsNone(session_start._last_verification(Path(root)))
+
+    def test_formats_the_most_recent_stop_record(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            _common.log_decision(root, "stop.py", "allow", reason="`just test` passed")
+            verification = session_start._last_verification(root)
+            assert verification is not None
+            self.assertIn("allow at", verification)
+            self.assertIn("`just test` passed", verification)
+
+
+class OpenQuestionsTests(unittest.TestCase):
+    def test_none_without_a_plan_file(self) -> None:
+        with tempfile.TemporaryDirectory() as root:
+            self.assertIsNone(session_start._open_questions(Path(root), "solo"))
+
+    def test_reads_the_open_questions_section(self) -> None:
+        with tempfile.TemporaryDirectory() as root_str:
+            root = Path(root_str)
+            plan_path = root / ".canon" / "plans" / "solo.md"
+            plan_path.parent.mkdir(parents=True)
+            plan_path.write_text(
+                "---\nstatus: approved\n---\n\n"
+                "## Non-goals\n- Nothing.\n\n"
+                "## Open questions\n- Still unsure about X.\n",
+                encoding="utf-8",
+            )
+            self.assertEqual(
+                session_start._open_questions(root, "solo"), "- Still unsure about X."
+            )
+
+    def test_none_without_an_open_questions_section(self) -> None:
+        with tempfile.TemporaryDirectory() as root_str:
+            root = Path(root_str)
+            plan_path = root / ".canon" / "plans" / "solo.md"
+            plan_path.parent.mkdir(parents=True)
+            plan_path.write_text(
+                "---\nstatus: approved\n---\n\n## Non-goals\n- Nothing.\n",
+                encoding="utf-8",
+            )
+            self.assertIsNone(session_start._open_questions(root, "solo"))
+
+
 class MainTests(unittest.TestCase):
     def test_position_line_assembles_all_pieces(self) -> None:
         with tempfile.TemporaryDirectory() as root_str:
@@ -194,6 +265,49 @@ class MainTests(unittest.TestCase):
             self.assertIn("Verify: `just test`", context)
             self.assertIn("PR: unknown (gh unavailable)", context)
             self.assertNotIn("Diff vs", context)
+            self.assertNotIn("Post-compaction recap", context)
+
+    def test_compact_source_appends_recap(self) -> None:
+        with tempfile.TemporaryDirectory() as root_str:
+            root = Path(root_str)
+            plan_path = root / ".canon" / "plans" / "feature" / "widget.md"
+            plan_path.parent.mkdir(parents=True)
+            plan_path.write_text(
+                "---\nstatus: approved\n---\n\n## Open questions\n- Still open.\n",
+                encoding="utf-8",
+            )
+            _common.log_decision(root, "stop.py", "allow", reason="`just test` passed")
+
+            with mock.patch("_common.current_branch", return_value="feature/widget"):
+                with mock.patch("_common.default_branch", return_value="main"):
+                    with mock.patch("_common.merge_base", return_value="abc123"):
+                        with mock.patch(
+                            "subprocess.run",
+                            return_value=mock.Mock(
+                                returncode=0, stdout="a1b2c3d A commit\n"
+                            ),
+                        ):
+                            context = _invoke_main(
+                                {"cwd": str(root), "source": "compact"}
+                            )
+
+            self.assertIn("Post-compaction recap", context)
+            self.assertIn("Decisions since `main`: a1b2c3d A commit", context)
+            self.assertIn("Last verification: allow at", context)
+            self.assertIn("Open questions:\n- Still open.", context)
+
+    def test_non_compact_source_omits_recap(self) -> None:
+        with tempfile.TemporaryDirectory() as root_str:
+            root = Path(root_str)
+            with mock.patch("_common.current_branch", return_value="main"):
+                with mock.patch("_common.default_branch", return_value="main"):
+                    with mock.patch("_common.merge_base", return_value=None):
+                        with mock.patch("subprocess.run", side_effect=OSError("no gh")):
+                            context = _invoke_main(
+                                {"cwd": str(root), "source": "startup"}
+                            )
+
+            self.assertNotIn("Post-compaction recap", context)
 
 
 if __name__ == "__main__":

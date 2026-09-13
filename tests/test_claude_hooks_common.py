@@ -11,6 +11,7 @@ from __future__ import annotations
 import io
 import json
 import sys
+import tempfile
 import unittest
 from collections.abc import Callable
 from contextlib import redirect_stdout
@@ -231,6 +232,46 @@ class GitDerivationTests(unittest.TestCase):
         completed = mock.Mock(returncode=1, stdout="")
         with mock.patch("subprocess.run", return_value=completed):
             self.assertIsNone(_common.merge_base(Path("/repo"), "main"))
+
+
+class PlanSectionsTests(unittest.TestCase):
+    def test_splits_headings_case_and_whitespace_insensitively(self) -> None:
+        body = "# Title\n\n## Approach\nDo it.\n\n## Non-goals\n- Not that.\n"
+        sections = _common.plan_sections(body)
+        self.assertEqual(sections["approach"], "Do it.")
+        self.assertEqual(sections["non-goals"], "- Not that.")
+
+    def test_last_section_runs_to_end_of_body(self) -> None:
+        body = "## Verification\n1. Run tests.\n"
+        self.assertEqual(_common.plan_sections(body)["verification"], "1. Run tests.")
+
+    def test_no_headings_yields_empty_dict(self) -> None:
+        self.assertEqual(_common.plan_sections("just prose, no headings"), {})
+
+
+class LastDecisionTests(unittest.TestCase):
+    def test_returns_none_when_log_is_missing(self) -> None:
+        with tempfile.TemporaryDirectory() as root:
+            self.assertIsNone(_common.last_decision(Path(root), "stop.py"))
+
+    def test_returns_the_most_recent_matching_record(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            _common.log_decision(root, "stop.py", "block", reason="first")
+            _common.log_decision(root, "other.py", "allow", reason="unrelated")
+            _common.log_decision(root, "stop.py", "allow", reason="second")
+            record = _common.last_decision(root, "stop.py")
+            assert record is not None
+            self.assertEqual(record["decision"], "allow")
+            self.assertEqual(record["reason"], "second")
+
+    def test_ignores_malformed_lines(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            log_path = root / ".canon" / "hooks" / "decisions.jsonl"
+            log_path.parent.mkdir(parents=True)
+            log_path.write_text("not json\n", encoding="utf-8")
+            self.assertIsNone(_common.last_decision(root, "stop.py"))
 
 
 if __name__ == "__main__":
