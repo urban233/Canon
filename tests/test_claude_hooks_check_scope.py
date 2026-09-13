@@ -21,6 +21,7 @@ from typing import Any
 from unittest import mock
 
 import check_scope
+import save_plan
 
 SAVED_PLAN_WITH_SCOPE = """---
 status: approved
@@ -352,6 +353,78 @@ class InertWithoutVerificationSignalTests(unittest.TestCase):
                 }
             )
             self.assertEqual(output, "")
+
+
+class ScopeFromADerivedHeaderTests(unittest.TestCase):
+    """The glob half of this hook, end to end from an approved plan.
+
+    `save_plan.py` wrote `scope:` blank unconditionally until §06's
+    derivation landed, so `_glob_match` was unreachable in practice no
+    matter how well it was unit-tested: `patterns` was always empty and
+    the `out_of_scope` branch never ran. These exercise the real path --
+    a plan approved with a `## Scope` section, then an edit checked
+    against it.
+    """
+
+    def _approve(self, root: Path, branch: str, scope_section: str) -> None:
+        body = (
+            f"## Scope\n{scope_section}\n\n"
+            "## Non-goals\nDo not rewrite the parser.\n\n"
+            "## Verification\njust test\n"
+        )
+        response = (
+            "User has approved your plan. You can now start coding.\n\n"
+            "## Approved Plan:\n" + body
+        )
+        with mock.patch.object(
+            sys,
+            "stdin",
+            io.StringIO(
+                json.dumps(
+                    {
+                        "cwd": str(root),
+                        "tool_name": "ExitPlanMode",
+                        "tool_response": response,
+                    }
+                )
+            ),
+        ):
+            with mock.patch("sys.exit"):
+                save_plan.main()
+
+    def _edit(self, root: Path, relative: str) -> str:
+        return _invoke_main(
+            {
+                "cwd": str(root),
+                "tool_name": "Edit",
+                "tool_input": {"file_path": str(root / relative)},
+            }
+        )
+
+    def test_an_in_scope_edit_is_silent(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            _init_repo(root, "feature/widget")
+            self._approve(root, "feature/widget", "- src/widget/**")
+            self.assertEqual(self._edit(root, "src/widget/core.py"), "")
+
+    def test_an_out_of_scope_edit_is_reported(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            _init_repo(root, "feature/widget")
+            self._approve(root, "feature/widget", "- src/widget/**")
+            output = self._edit(root, "src/parser/lexer.py")
+            self.assertIn("Possible scope departure", output)
+            self.assertIn("src/parser/lexer.py", output)
+
+    def test_a_prose_scope_section_reports_nothing(self) -> None:
+        """No pattern is derived from prose, so there is nothing to
+        depart from -- the hook must not manufacture a departure."""
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            _init_repo(root, "feature/widget")
+            self._approve(root, "feature/widget", "Just the widget module.")
+            self.assertEqual(self._edit(root, "src/parser/lexer.py"), "")
 
 
 if __name__ == "__main__":
