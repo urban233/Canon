@@ -34,9 +34,10 @@ typecheck:
 lock-check:
     bazel test //:requirements.test
 
-# Validate the plugin manifest and marketplace.
+# Validate the plugin manifest and marketplace. --strict is what CI runs;
+# there's no reason to check less strictly locally than CI will.
 validate-plugin:
-    claude plugin validate ./plugins/claude
+    claude plugin validate --strict ./plugins/claude
 
 # Everything CI runs.
 ci: build test lint fmt-check typecheck lock-check validate-plugin
