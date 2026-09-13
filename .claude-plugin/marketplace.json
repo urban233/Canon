@@ -1,0 +1,23 @@
+{
+  "name": "canon",
+  "description": "Canon: a Claude Code plugin that keeps agentic development on track without a stored state machine.",
+  "owner": {
+    "name": "Martin Urban"
+  },
+  "metadata": {
+    "pluginRoot": "./plugins"
+  },
+  "plugins": [
+    {
+      "name": "claude",
+      "source": "claude",
+      "description": "Canon for Claude Code: plan persistence, a verification gate, and evidence-based review — without a stored state machine.",
+      "version": "0.0.1",
+      "author": {
+        "name": "Martin Urban"
+      },
+      "license": "BSD-3-Clause",
+      "homepage": "https://github.com/urban233/Canon"
+    }
+  ]
+}

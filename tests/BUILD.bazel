@@ -1,0 +1,11 @@
+load("@rules_python//python:defs.bzl", "py_test")
+
+# Glob-driven: a new test_*.py file needs no edit here.
+[
+    py_test(
+        name = src[:-3],
+        srcs = [src, "__init__.py"],
+        deps = ["//plugins/claude/hooks:hooks_common"],
+    )
+    for src in glob(["test_*.py"])
+]

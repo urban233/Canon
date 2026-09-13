@@ -1,0 +1,12 @@
+load("@rules_python//python:defs.bzl", "py_library")
+
+# imports = ["."] makes this directory the package root, so both Bazel
+# tests and a hook invoked directly by Claude Code (which adds its own
+# directory to sys.path before `import _common`) resolve the same module
+# the same way.
+py_library(
+    name = "hooks_common",
+    srcs = ["_common.py", "__init__.py"],
+    imports = ["."],
+    visibility = ["//tests:__pkg__"],
+)

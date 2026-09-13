@@ -1,0 +1,21 @@
+# Python
+__pycache__/
+*.pyc
+*.egg-info/
+
+# Bazel
+bazel-*
+MODULE.bazel.lock
+
+# Canon's own local diagnostics only -- never read back to decide anything
+# (see plugins/claude/hooks/_common.py). `.canon/config.json` (added in
+# Step 2) is committed, so this ignores just the hooks subdirectory rather
+# than the whole `.canon/` tree.
+.canon/hooks/
+
+# macOS
+.DS_Store
+
+# Editors
+.vscode/
+.idea/

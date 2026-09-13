@@ -1,0 +1,36 @@
+[project]
+name = "canon"
+version = "0.0.1"
+description = "A Claude Code plugin that keeps agentic development on track without a stored state machine."
+requires-python = ">=3.9"
+license = { text = "BSD-3-Clause" }
+
+[tool.ruff]
+target-version = "py313"
+line-length = 88
+
+# Hooks run on the user's own python3, not a resolved Bazel toolchain, so
+# they are held to a 3.9 floor: 3.10+ syntax there fails lint rather than
+# failing silently on an older machine. See docs/plan.md.
+[tool.ruff.per-file-target-version]
+"plugins/*/hooks/*.py" = "py39"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B"]
+
+[tool.pyrefly]
+project-includes = ["plugins", "tests", "src"]
+project-excludes = ["**/__pycache__", "**/*.pyc"]
+# 3.9, matching the hooks floor: at this step the only real source is
+# _common.py, which must type-check at that floor anyway. Revisit once
+# src/ or tests/ contain syntax genuinely newer than 3.9.
+python-version = "3.9"
+preset = "strict"
+# Each hook directory is its own import root (matching imports=["."] in its
+# BUILD.bazel), so `import _common` resolves the same way under Bazel and
+# under a bare `python3 hooks/foo.py` invocation.
+search-path = ["plugins/claude/hooks"]
+# No runtime dependency exists yet (see docs/plan.md's Non-goals), so
+# skip interpreter discovery rather than depend on whatever venv happens
+# to be active in the invoking shell -- this repo has no venv of its own.
+skip-interpreter-query = true
