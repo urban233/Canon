@@ -100,6 +100,28 @@ def head_sha(root: Path) -> str | None:
     return sha[:9] if sha else None
 
 
+def full_head_sha(root: Path) -> str | None:
+    """The current HEAD's full SHA, or None if that can't be determined.
+
+    Unlike `head_sha`, this is not truncated -- `gh run list --commit`
+    needs the exact SHA to avoid ambiguity, where the other callers of
+    `head_sha` only need something short enough to display.
+    """
+    return _run_git(root, "rev-parse", "HEAD")
+
+
+def is_pushed(root: Path, sha: str) -> bool:
+    """Whether `sha` exists in the history of any remote-tracking
+    branch.
+
+    `git branch -r --contains` rather than comparing against the
+    current branch's own `@{u}` -- this stays correct even if the local
+    branch's own upstream tracking is stale or unset, so long as the
+    commit reached *some* remote branch.
+    """
+    return bool(_run_git(root, "branch", "-r", "--contains", sha))
+
+
 def commits_ahead(root: Path, base_sha: str | None) -> int | None:
     """How many commits HEAD is ahead of `base_sha`, or None if either
     that count or `base_sha` itself couldn't be determined."""
