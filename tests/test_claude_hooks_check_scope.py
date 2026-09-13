@@ -137,6 +137,20 @@ def _init_repo(root: Path, branch: str) -> None:
     )
     if branch != "main":
         _run_git(root, "checkout", "-q", "-b", branch)
+    _activate(root)
+
+
+def _activate(root: Path) -> None:
+    """Give `root` a verification signal.
+
+    Canon is inert without one (docs/plan.md §07, "No signal, no
+    Canon"), so a fixture with no `verify` command exercises the inert
+    path rather than the behaviour under test. Every test here that is
+    not specifically about going inert calls this.
+    """
+    config_path = root / ".canon" / "config.json"
+    config_path.parent.mkdir(parents=True, exist_ok=True)
+    config_path.write_text(json.dumps({"verify": "true"}), encoding="utf-8")
 
 
 def _write_plan(root: Path, branch: str, text: str) -> None:
@@ -308,6 +322,34 @@ class MainTests(unittest.TestCase):
             _write_plan(root, "feature/widget", SAVED_PLAN_WITH_SCOPE)
             output = _invoke_main(
                 {"cwd": str(root), "tool_name": "Edit", "tool_input": {}}
+            )
+            self.assertEqual(output, "")
+
+
+class InertWithoutVerificationSignalTests(unittest.TestCase):
+    """docs/plan.md §07: "Not the gate alone -- the whole plugin."
+
+    See docs/decisions/0001-what-inert-means.md for the two hooks this
+    deliberately does not apply to.
+    """
+
+    def test_a_scope_departure_is_not_reported(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            _init_repo(root, "feature/widget")
+            _write_plan(
+                root,
+                "feature/widget",
+                "---\nstatus: approved\nscope: [src/widget/**]\n---\n\n"
+                "## Non-goals\nDo not touch the parser.\n",
+            )
+            (root / ".canon" / "config.json").unlink()
+            output = _invoke_main(
+                {
+                    "cwd": str(root),
+                    "tool_name": "Edit",
+                    "tool_input": {"file_path": str(root / "src" / "parser.py")},
+                }
             )
             self.assertEqual(output, "")
 

@@ -18,6 +18,20 @@ import git_guard
 
 def _init_repo(root: Path) -> None:
     subprocess.run(["git", "init", "-q"], cwd=root, check=True, capture_output=True)
+    _activate(root)
+
+
+def _activate(root: Path) -> None:
+    """Give `root` a verification signal.
+
+    Canon is inert without one (docs/plan.md §07, "No signal, no
+    Canon"), so a fixture with no `verify` command exercises the inert
+    path rather than the behaviour under test. Every test here that is
+    not specifically about going inert calls this.
+    """
+    config_path = root / ".canon" / "config.json"
+    config_path.parent.mkdir(parents=True, exist_ok=True)
+    config_path.write_text(json.dumps({"verify": "true"}), encoding="utf-8")
 
 
 def _invoke_main(payload: dict[str, Any]) -> str:
@@ -99,8 +113,10 @@ class DestructiveCommandTests(unittest.TestCase):
             root = Path(tmp)
             _init_repo(root)
             config_path = root / ".canon" / "config.json"
-            config_path.parent.mkdir(parents=True)
-            config_path.write_text(json.dumps({"mode": "pair"}), encoding="utf-8")
+            config_path.parent.mkdir(parents=True, exist_ok=True)
+            config_path.write_text(
+                json.dumps({"verify": "true", "mode": "pair"}), encoding="utf-8"
+            )
             output = _invoke_main(_payload(root, "git push --force origin main"))
             payload = json.loads(output)
             self.assertEqual(
@@ -142,6 +158,31 @@ class NearMissTests(unittest.TestCase):
 
     def test_log_merges_is_read_only(self) -> None:
         self._assert_allowed("git log --merges")
+
+
+class InertWithoutVerificationSignalTests(unittest.TestCase):
+    """docs/plan.md §07: "Not the gate alone -- the whole plugin."
+
+    See docs/decisions/0001-what-inert-means.md for the two hooks this
+    deliberately does not apply to.
+    """
+
+    def test_a_destructive_command_is_not_denied(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            _init_repo(root)
+            (root / ".canon" / "config.json").unlink()
+            self.assertEqual(
+                _invoke_main(_payload(root, "git push --force origin main")), ""
+            )
+
+    def test_an_attribution_trailer_is_not_stripped(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            _init_repo(root)
+            (root / ".canon" / "config.json").unlink()
+            command = 'git commit -m "x\n\nCo-Authored-By: A Model <a@b.c>"'
+            self.assertEqual(_invoke_main(_payload(root, command)), "")
 
 
 class AttributionStrippingTests(unittest.TestCase):

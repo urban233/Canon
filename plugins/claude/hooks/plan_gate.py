@@ -26,6 +26,11 @@ counter is needed for "ask once": the checks below stop finding
 anything to gate on the moment their own condition resolves (a plan
 gets saved; the branch changes), which is "once" for free, per
 Invariant II -- nothing stored to keep in sync.
+
+Inert without a verification signal (docs/plan.md §07, "No signal, no
+Canon"): with no `verify` command in `.canon/config.json` this hook is a
+silent no-op. See docs/decisions/0001-what-inert-means.md for why
+`stop.py` and `session_start.py` are the two exceptions.
 """
 
 from __future__ import annotations
@@ -127,6 +132,8 @@ def main() -> None:
         return  # can't reliably tell -- don't block on uncertainty
     default = _common.default_branch(root)
     config = _config.load_config(root)
+    if not _config.canon_is_active(config):
+        return  # no verification signal: Canon is inert, not gating
     guard_default = _config.guard_default_branch(config)
     mode = _config.interaction_mode(config)
 

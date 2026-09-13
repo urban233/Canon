@@ -106,6 +106,20 @@ class FirstRunTests(unittest.TestCase):
             assert first is not None
             self.assertEqual(first["decision"], "block")
 
+    def test_still_asks_when_canon_is_otherwise_inert(self) -> None:
+        """`stop.py` is the one gate that must not go inert without a
+        signal -- its block is the only route to acquiring one. See
+        docs/decisions/0001-what-inert-means.md."""
+        with (
+            tempfile.TemporaryDirectory() as root,
+            tempfile.TemporaryDirectory() as scratch,
+        ):
+            self.assertFalse((Path(root) / ".canon" / "config.json").exists())
+            result = _invoke_main({"cwd": root, "scratchpad_dir": scratch})
+            self.assertIsNotNone(result)
+            assert result is not None
+            self.assertEqual(result["decision"], "block")
+
 
 class VerificationRunTests(unittest.TestCase):
     def test_green_run_allows_and_resets_refusal_counter(self) -> None:

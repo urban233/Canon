@@ -32,6 +32,11 @@ casually" spine-table row and §12's authorship section:
 
 Like `plan_gate.py`, this hook only ever denies, never asks -- see that
 module's docstring for why.
+
+Inert without a verification signal (docs/plan.md §07, "No signal, no
+Canon"): with no `verify` command in `.canon/config.json` this hook is a
+silent no-op. See docs/decisions/0001-what-inert-means.md for why
+`stop.py` and `session_start.py` are the two exceptions.
 """
 
 from __future__ import annotations
@@ -42,6 +47,7 @@ import sys
 from typing import Any
 
 import _common
+import _config
 
 _NON_DELIMITER = r"[^|;&]*"
 _DESTRUCTIVE_PATTERNS = [
@@ -129,6 +135,8 @@ def main() -> None:
         return
 
     root = _common.repo_root(payload)
+    if not _config.canon_is_active(_config.load_config(root)):
+        return  # no verification signal: Canon is inert, not guarding
 
     label = _matched_destructive_operation(command)
     if label is not None:
