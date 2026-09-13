@@ -4,8 +4,8 @@
 Covers reading the approved plan (preferring the on-disk file over the
 embedded copy), the derived header (`status`, `base`, `verify` filled in;
 `scope`/`done`/`parent` left blank), the missing-required-section notes,
-and the silent no-op on anything that isn't an approval -- the properties
-Step 4's plan calls out as non-negotiable for this hook.
+the silent no-op on anything that isn't an approval, and (`FeaturePlanTests`)
+the feature-plan path a non-empty `## Steps` section triggers instead.
 """
 
 from __future__ import annotations
@@ -51,6 +51,26 @@ PLAN_EMPTY_VERIFICATION = """# A title
 
 ## Risks
 None.
+"""
+
+PLAN_WITH_STEPS = """# Public Permalinks
+
+## Why
+People need to cite datasets.
+
+## Success
+A permalink resolves for any dataset, forever.
+
+## Non-goals
+- Not migrating existing internal links.
+
+## Shape
+A slug model and a resolver.
+
+## Steps
+1. Slug model
+2. Resolver
+3. Migration
 """
 
 
@@ -305,6 +325,127 @@ class MainTests(unittest.TestCase):
             )
 
             self.assertFalse((root / ".canon").exists())
+
+
+class FeaturePlanTests(unittest.TestCase):
+    def test_saves_to_the_features_directory_with_a_slugified_title(self) -> None:
+        with tempfile.TemporaryDirectory() as root_str:
+            root = Path(root_str)
+            _init_repo(root, "main")
+            response = _approved_tool_response(PLAN_WITH_STEPS, saved_path=None)
+
+            _invoke_main(
+                {
+                    "cwd": str(root),
+                    "tool_name": "ExitPlanMode",
+                    "tool_response": response,
+                }
+            )
+
+            plan_path = root / ".canon" / "plans" / "features" / "public-permalinks.md"
+            self.assertTrue(plan_path.exists())
+
+    def test_header_has_status_and_a_blank_steps_field(self) -> None:
+        with tempfile.TemporaryDirectory() as root_str:
+            root = Path(root_str)
+            _init_repo(root, "main")
+            response = _approved_tool_response(PLAN_WITH_STEPS, saved_path=None)
+
+            _invoke_main(
+                {
+                    "cwd": str(root),
+                    "tool_name": "ExitPlanMode",
+                    "tool_response": response,
+                }
+            )
+
+            content = (
+                root / ".canon" / "plans" / "features" / "public-permalinks.md"
+            ).read_text(encoding="utf-8")
+            self.assertIn("status: approved", content)
+            self.assertIn("steps:\n", content)
+            self.assertNotIn("scope:", content)
+            self.assertNotIn("base:", content)
+
+    def test_body_steps_section_rides_through_unaltered(self) -> None:
+        with tempfile.TemporaryDirectory() as root_str:
+            root = Path(root_str)
+            _init_repo(root, "main")
+            response = _approved_tool_response(PLAN_WITH_STEPS, saved_path=None)
+
+            _invoke_main(
+                {
+                    "cwd": str(root),
+                    "tool_name": "ExitPlanMode",
+                    "tool_response": response,
+                }
+            )
+
+            content = (
+                root / ".canon" / "plans" / "features" / "public-permalinks.md"
+            ).read_text(encoding="utf-8")
+            self.assertIn("## Steps", content)
+            self.assertIn("1. Slug model", content)
+
+    def test_falls_back_to_feature_when_no_title_present(self) -> None:
+        with tempfile.TemporaryDirectory() as root_str:
+            root = Path(root_str)
+            _init_repo(root, "main")
+            untitled = "## Steps\n1. One step\n"
+            response = _approved_tool_response(untitled, saved_path=None)
+
+            _invoke_main(
+                {
+                    "cwd": str(root),
+                    "tool_name": "ExitPlanMode",
+                    "tool_response": response,
+                }
+            )
+
+            plan_path = root / ".canon" / "plans" / "features" / "feature.md"
+            self.assertTrue(plan_path.exists())
+
+    def test_overwrites_an_existing_feature_plan_of_the_same_slug(self) -> None:
+        with tempfile.TemporaryDirectory() as root_str:
+            root = Path(root_str)
+            _init_repo(root, "main")
+            features_dir = root / ".canon" / "plans" / "features"
+            features_dir.mkdir(parents=True)
+            (features_dir / "public-permalinks.md").write_text(
+                "stale", encoding="utf-8"
+            )
+            response = _approved_tool_response(PLAN_WITH_STEPS, saved_path=None)
+
+            _invoke_main(
+                {
+                    "cwd": str(root),
+                    "tool_name": "ExitPlanMode",
+                    "tool_response": response,
+                }
+            )
+
+            content = (features_dir / "public-permalinks.md").read_text(
+                encoding="utf-8"
+            )
+            self.assertNotEqual(content, "stale")
+            self.assertIn("Slug model", content)
+
+    def test_a_plan_without_steps_still_takes_the_branch_path(self) -> None:
+        with tempfile.TemporaryDirectory() as root_str:
+            root = Path(root_str)
+            _init_repo(root, "feature/widget")
+            response = _approved_tool_response(PLAN_WITH_SECTIONS, saved_path=None)
+
+            _invoke_main(
+                {
+                    "cwd": str(root),
+                    "tool_name": "ExitPlanMode",
+                    "tool_response": response,
+                }
+            )
+
+            self.assertTrue((root / ".canon" / "plans" / "feature/widget.md").exists())
+            self.assertFalse((root / ".canon" / "plans" / "features").exists())
 
 
 if __name__ == "__main__":
