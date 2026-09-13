@@ -17,3 +17,12 @@ py_library(
     imports = ["."],
     visibility = ["//tests:__pkg__"],
 )
+
+# Exposes this package's own .py files to the root package's lint/typecheck
+# targets, which need the whole tree laid out with real repo-relative paths
+# -- glob() alone can't cross this package's boundary from outside it.
+filegroup(
+    name = "py_sources",
+    srcs = glob(["*.py"]),
+    visibility = ["//:__pkg__"],
+)

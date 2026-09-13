@@ -1,12 +1,10 @@
 # Canon's build/test/lint/typecheck entry point.
 #
-# Bazel owns build and test; `uvx` owns developer tooling (ruff, pyrefly) so
-# no pip dependency hub exists yet -- see docs/plan.md's Non-goals for why.
-# `just` itself is not vendored into this repo; install it via your platform's
-# package manager (e.g. a Nix flake, cargo, or https://github.com/casey/just).
-
-RUFF_VERSION := "0.16.7"
-PYREFLY_VERSION := "1.3.0"
+# Bazel owns build, test, lint and typecheck -- ruff and pyrefly are real
+# Bazel targets (see BUILD.bazel and requirements.in), not commands shelled
+# out to. `just` itself is not vendored into this repo; install it via your
+# platform's package manager (e.g. a Nix flake, cargo, or
+# https://github.com/casey/just).
 
 # Build every target.
 build:
@@ -18,23 +16,27 @@ test *args:
 
 # Ruff, check-only.
 lint:
-    uvx ruff@{{RUFF_VERSION}} check .
+    bazel test //:lint
 
 # Ruff, format-check-only -- what CI runs.
 fmt-check:
-    uvx ruff@{{RUFF_VERSION}} format --check .
+    bazel test //:fmt_check
 
-# Ruff, mutates files.
+# Ruff, mutates files. Runs against the real checkout, not a sandbox.
 fmt:
-    uvx ruff@{{RUFF_VERSION}} format .
+    bazel run //:fmt
 
 # pyrefly, strict (see pyproject.toml's [tool.pyrefly]).
 typecheck:
-    uvx pyrefly@{{PYREFLY_VERSION}} check
+    bazel test //:typecheck
+
+# Checks requirements_lock.txt hasn't drifted from requirements.in.
+lock-check:
+    bazel test //:requirements.test
 
 # Validate the plugin manifest and marketplace.
 validate-plugin:
     claude plugin validate ./plugins/claude
 
 # Everything CI runs.
-ci: build test lint fmt-check typecheck validate-plugin
+ci: build test lint fmt-check typecheck lock-check validate-plugin
