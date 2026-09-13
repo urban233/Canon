@@ -197,5 +197,41 @@ class LogDecisionTests(unittest.TestCase):
                 self.fail("log_decision must never raise")
 
 
+class GitDerivationTests(unittest.TestCase):
+    def test_current_branch_returns_trimmed_output(self) -> None:
+        completed = mock.Mock(returncode=0, stdout="feature/widget\n")
+        with mock.patch("subprocess.run", return_value=completed):
+            self.assertEqual(_common.current_branch(Path("/repo")), "feature/widget")
+
+    def test_current_branch_returns_none_on_failure(self) -> None:
+        completed = mock.Mock(returncode=128, stdout="")
+        with mock.patch("subprocess.run", return_value=completed):
+            self.assertIsNone(_common.current_branch(Path("/repo")))
+
+    def test_current_branch_returns_none_when_git_is_unreachable(self) -> None:
+        with mock.patch("subprocess.run", side_effect=OSError("no git")):
+            self.assertIsNone(_common.current_branch(Path("/repo")))
+
+    def test_default_branch_strips_origin_prefix(self) -> None:
+        completed = mock.Mock(returncode=0, stdout="origin/develop\n")
+        with mock.patch("subprocess.run", return_value=completed):
+            self.assertEqual(_common.default_branch(Path("/repo")), "develop")
+
+    def test_default_branch_falls_back_to_main_without_a_remote(self) -> None:
+        completed = mock.Mock(returncode=128, stdout="")
+        with mock.patch("subprocess.run", return_value=completed):
+            self.assertEqual(_common.default_branch(Path("/repo")), "main")
+
+    def test_merge_base_returns_a_short_sha(self) -> None:
+        completed = mock.Mock(returncode=0, stdout="abcdef0123456789\n")
+        with mock.patch("subprocess.run", return_value=completed):
+            self.assertEqual(_common.merge_base(Path("/repo"), "main"), "abcdef012")
+
+    def test_merge_base_returns_none_on_failure(self) -> None:
+        completed = mock.Mock(returncode=1, stdout="")
+        with mock.patch("subprocess.run", return_value=completed):
+            self.assertIsNone(_common.merge_base(Path("/repo"), "main"))
+
+
 if __name__ == "__main__":
     unittest.main()
