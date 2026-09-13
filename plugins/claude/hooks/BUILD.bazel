@@ -6,7 +6,7 @@ load("@rules_python//python:defs.bzl", "py_library")
 # the same way.
 py_library(
     name = "hooks_lib",
-    srcs = ["_common.py", "_config.py", "__init__.py"],
+    srcs = ["_common.py", "_config.py", "stop.py", "__init__.py"],
     imports = ["."],
     visibility = ["//tests:__pkg__"],
 )
