@@ -1,0 +1,36 @@
+# canon-mcp: Canon's MCP server (see docs/plan.md §05, §08). Delivered as
+# its own installable package via `uvx` (see pyproject.toml and
+# plugins/claude/.mcp.json), not built as a Bazel wheel -- see the
+# Non-goals in the plan this was built from. The nested canon_mcp/
+# directory (rather than these files sitting flat next to pyproject.toml)
+# is what hatchling's zero-config packaging auto-detects; confirmed
+# directly by building a package both ways before settling on this.
+
+load("@rules_python//python:defs.bzl", "py_library")
+
+# Only the stdlib-only modules -- server.py is deliberately excluded so
+# this target never needs `mcp` as a Bazel dependency (see server.py's
+# own module docstring for why it isn't Bazel-tested).
+py_library(
+    name = "canon_mcp_lib",
+    srcs = [
+        "canon_mcp/__init__.py",
+        "canon_mcp/_config.py",
+        "canon_mcp/_gh.py",
+        "canon_mcp/_git.py",
+        "canon_mcp/_plan.py",
+        "canon_mcp/plan.py",
+        "canon_mcp/position.py",
+    ],
+    imports = ["."],
+    visibility = ["//tests:__pkg__"],
+)
+
+# Exposes this package's own .py files (server.py included) to the root
+# package's lint/typecheck targets -- see plugins/claude/hooks/BUILD.bazel's
+# py_sources for why.
+filegroup(
+    name = "py_sources",
+    srcs = glob(["canon_mcp/*.py"]),
+    visibility = ["//:__pkg__"],
+)
