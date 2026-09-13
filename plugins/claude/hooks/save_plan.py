@@ -19,9 +19,16 @@ hook a silent no-op, which is what keeps it correct regardless of
 whether `PostToolUse` fires on every `ExitPlanMode` call or only on
 approved ones.
 
-The header fills in only what's genuinely derivable (`status`, `base`,
-`verify`) and leaves the rest blank rather than inventing it -- per
-docs/plan.md §06's own rule. This hook never runs `git add` or
+The header fills in only what's genuinely derivable and leaves the rest
+blank rather than inventing it -- per docs/plan.md §06's own rule.
+
+`verify:` is deliberately *not* copied from `.canon/config.json`. Once
+§07's "overrides it for that branch" is honoured, a copy taken at
+approval time stops being a record and becomes a pin: every later edit
+to the repository's own verify command would be silently ignored on
+every branch whose plan predates it. So the field is written only when
+the plan states an override itself, and is otherwise left blank for the
+config to answer. This hook never runs `git add` or
 `git commit`: per §12, the saved plan rides inside whatever commit the
 developer's own work produces.
 
@@ -46,7 +53,6 @@ import re
 from pathlib import Path
 
 import _common
-import _config
 
 _PLANS_DIR_RELATIVE = ".canon/plans"
 _FEATURE_PLANS_DIR_RELATIVE = ".canon/plans/features"
@@ -69,6 +75,8 @@ _BACKTICKED = re.compile(r"`([^`]+)`")
 _PATH_TOKEN = re.compile(r"^[A-Za-z0-9_./*?\[\]{}-]+$")
 _MAX_SCOPE_PATTERNS = 40
 _MAX_DONE_CHARS = 200
+_VERIFICATION_SECTION_KEYS = ("verification",)
+_LONE_BACKTICKED = re.compile(r"^`([^`]+)`$")
 _SLUG_INVALID_CHARS = re.compile(r"[^a-z0-9]+")
 _MAX_SLUG_LENGTH = 60
 
@@ -187,6 +195,38 @@ def _done_line(section: str) -> str | None:
     return None
 
 
+def _verify_override(section: str) -> str | None:
+    """A per-branch `verify:` override read out of `## Verification`.
+
+    Recognised only in one exact shape: the section's first non-empty
+    line consisting of a single backticked span, e.g.
+
+        ## Verification
+        `pytest tests/slugs/ -x`
+
+        Confirm the new test fails without the fix.
+
+    Anything else -- prose, a bare line, several commands -- yields None.
+    docs/plan.md \u00a707's rule is that wrong-but-plausible is worse than
+    absent, and this is the field that decides which command gates every
+    turn end on this branch: guessing a command out of a sentence is
+    exactly the failure that rule exists to prevent.
+
+    Note the asymmetry with `scope:`/`done:`: those are derived from a
+    section that describes the same thing the field holds, so reading
+    them back is recovery. A `verify:` override is a *deviation* from
+    the repository's answer, so it has to be stated deliberately rather
+    than inferred.
+    """
+    for line in section.splitlines():
+        stripped = line.strip()
+        if not stripped:
+            continue
+        match = _LONE_BACKTICKED.match(stripped)
+        return match.group(1).strip() or None if match else None
+    return None
+
+
 def _parent_path(root: Path, section: str) -> str | None:
     """A `## Parent` section resolved to a feature plan that exists.
 
@@ -267,13 +307,6 @@ def main() -> None:
     default_branch = _common.default_branch(root)
     base = _common.merge_base(root, default_branch)
 
-    config = _config.load_config(root)
-    verify = None
-    if config is not None and _config.has_verification_signal(config):
-        verify_value = config.get("verify")
-        if isinstance(verify_value, str):
-            verify = verify_value
-
     notes = [
         f"{_REQUIRED_SECTION_LABELS[name]} section is missing or empty"
         for name in _missing_required_sections(body)
@@ -282,7 +315,7 @@ def main() -> None:
     sections = _common.plan_sections(body)
     header = _format_header(
         base=base,
-        verify=verify,
+        verify=_verify_override(_section_text(sections, _VERIFICATION_SECTION_KEYS)),
         scope=_scope_patterns(_section_text(sections, _SCOPE_SECTION_KEYS)),
         done=_done_line(_section_text(sections, _DONE_SECTION_KEYS)),
         parent=_parent_path(root, _section_text(sections, _PARENT_SECTION_KEYS)),

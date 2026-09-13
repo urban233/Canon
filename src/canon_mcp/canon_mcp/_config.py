@@ -16,6 +16,8 @@ import json
 from pathlib import Path
 from typing import Any
 
+from ._plan import read_plan_file
+
 _CONFIG_PATH_RELATIVE = ".canon/config.json"
 
 
@@ -45,6 +47,32 @@ def has_verification_signal(config: dict[str, Any] | None) -> bool:
         return False
     verify = config.get("verify")
     return isinstance(verify, str) and verify.strip() != ""
+
+
+_PLANS_DIR_RELATIVE = ".canon/plans"
+
+
+def resolve_verify_command(
+    root: Path, branch: str | None, config: dict[str, Any] | None
+) -> str | None:
+    """The command that should pass on this branch: the plan header's
+    `verify:` if it names one, else the config's.
+
+    Duplicated from plugins/claude/hooks/_config.py under the same
+    copied-and-forked rule as the rest of this module -- see _git.py's
+    docstring. It exists here so a local re-run in `evidence.py` and the
+    `Stop` gate can never disagree about which command counts.
+    """
+    if branch:
+        plan = read_plan_file(root, f"{_PLANS_DIR_RELATIVE}/{branch}.md")
+        if plan is not None:
+            override = str(plan["header"].get("verify", "")).strip()
+            if override:
+                return override
+    if config is None:
+        return None
+    verify = config.get("verify")
+    return verify.strip() if isinstance(verify, str) and verify.strip() else None
 
 
 _VALID_MODES = {"pair", "solo", "async"}

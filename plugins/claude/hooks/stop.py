@@ -184,7 +184,10 @@ def main() -> None:
         _common.block(_first_run_reason(root))
         return
 
-    command = config["verify"]
+    command = _config.resolve_verify_command(root, _common.current_branch(root), config)
+    if command is None:  # pragma: no cover - has_verification_signal implies one
+        _common.allow()
+        return
     passed, detail = _run_verification(root, command)
     if passed:
         _write_refusal_count(state_dir, 0)

@@ -21,6 +21,8 @@ import re
 from pathlib import Path
 from typing import Any
 
+import _common
+
 _CONFIG_PATH_RELATIVE = ".canon/config.json"
 
 _JUSTFILE_TEST_RECIPE = re.compile(r"^test\b.*:")
@@ -130,6 +132,49 @@ def interaction_mode(config: dict[str, Any] | None) -> str:
         return _DEFAULT_MODE
     mode = config.get("mode")
     return mode if mode in _VALID_MODES else _DEFAULT_MODE
+
+
+_PLANS_DIR_RELATIVE = ".canon/plans"
+
+
+def plan_verify_command(root: Path, branch: str | None) -> str | None:
+    """The `verify:` a branch's saved plan header names, or None.
+
+    docs/plan.md §07's third row: "`verify:` in a plan header |
+    Overrides it for that branch | One branch, where the work needs
+    something different." Never raises; a missing or malformed plan file
+    is simply "no override".
+    """
+    if not branch:
+        return None
+    try:
+        text = (root / _PLANS_DIR_RELATIVE / f"{branch}.md").read_text(encoding="utf-8")
+    except OSError:
+        return None
+    verify = _common.parse_header(text).get("verify", "")
+    return verify.strip() or None
+
+
+def resolve_verify_command(
+    root: Path, branch: str | None, config: dict[str, Any] | None
+) -> str | None:
+    """The command that should pass before a turn ends on this branch.
+
+    The plan header wins over `.canon/config.json`; the config is the
+    repository-wide answer and the header is the one-branch exception.
+
+    Note what this is *not* used for: `canon_is_active`. Whether Canon
+    participates at all is a repository-level question answered by the
+    config alone, so a plan header cannot switch an otherwise-inert Canon
+    on for one branch. The first-run question is about the repository.
+    """
+    override = plan_verify_command(root, branch)
+    if override:
+        return override
+    if config is None:
+        return None
+    verify = config.get("verify")
+    return verify.strip() if isinstance(verify, str) and verify.strip() else None
 
 
 def suggest_verify_command(root: Path) -> str | None:

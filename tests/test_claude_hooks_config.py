@@ -219,5 +219,81 @@ class InteractionModeTests(unittest.TestCase):
         self.assertEqual(_config.interaction_mode({"mode": "async"}), "async")
 
 
+class ResolveVerifyCommandTests(unittest.TestCase):
+    """§07: "`verify:` in a plan header | Overrides it for that branch"."""
+
+    def _repo(self, root: Path, header_verify: str | None) -> None:
+        plan = root / ".canon" / "plans" / "feature"
+        plan.mkdir(parents=True, exist_ok=True)
+        value = f'"{header_verify}"' if header_verify else ""
+        (plan / "widget.md").write_text(
+            f"---\nstatus: approved\nverify: {value}\n---\n\n## Approach\nx\n",
+            encoding="utf-8",
+        )
+
+    def test_header_overrides_the_config(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            self._repo(root, "pytest tests/slugs/ -x")
+            self.assertEqual(
+                _config.resolve_verify_command(
+                    root, "feature/widget", {"verify": "just test"}
+                ),
+                "pytest tests/slugs/ -x",
+            )
+
+    def test_blank_header_falls_back_to_the_config(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            self._repo(root, None)
+            self.assertEqual(
+                _config.resolve_verify_command(
+                    root, "feature/widget", {"verify": "just test"}
+                ),
+                "just test",
+            )
+
+    def test_a_config_edit_reaches_a_branch_whose_plan_predates_it(self) -> None:
+        """The regression this step exists to prevent. If `save_plan`
+        pinned the config value into every header, a later change to
+        `.canon/config.json` would be silently ignored here."""
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            self._repo(root, None)  # plan saved under the old config
+            self.assertEqual(
+                _config.resolve_verify_command(
+                    root, "feature/widget", {"verify": "just check"}
+                ),
+                "just check",
+            )
+
+    def test_no_plan_file_falls_back_to_the_config(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            self.assertEqual(
+                _config.resolve_verify_command(
+                    Path(tmp), "feature/widget", {"verify": "just test"}
+                ),
+                "just test",
+            )
+
+    def test_none_branch_falls_back_to_the_config(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            self.assertEqual(
+                _config.resolve_verify_command(Path(tmp), None, {"verify": "x"}),
+                "x",
+            )
+
+    def test_no_config_and_no_header_is_none(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            self.assertIsNone(
+                _config.resolve_verify_command(Path(tmp), "feature/widget", None)
+            )
+
+    def test_a_header_override_does_not_activate_an_inert_canon(self) -> None:
+        """Whether Canon participates is a repository-level question the
+        config alone answers -- a plan header must not switch it on."""
+        self.assertFalse(_config.canon_is_active(None))
+
+
 if __name__ == "__main__":
     unittest.main()

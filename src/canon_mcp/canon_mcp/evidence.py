@@ -22,9 +22,9 @@ import subprocess
 from pathlib import Path
 from typing import Any
 
-from ._config import has_verification_signal, load_config
+from ._config import has_verification_signal, load_config, resolve_verify_command
 from ._gh import ci_runs_for_commit
-from ._git import full_head_sha, is_pushed
+from ._git import current_branch, full_head_sha, is_pushed
 
 _VERIFY_TIMEOUT_SECONDS = 300
 _OUTPUT_TAIL_CHARS = 4000
@@ -100,8 +100,15 @@ def build_evidence(root: Path) -> dict[str, Any]:
             "green": None,
             "message": "not pushed, and no verify command configured yet",
         }
-    assert config is not None  # has_verification_signal(None) is False, above
-    command = config["verify"]
+    command = resolve_verify_command(root, current_branch(root), config)
+    if command is None:  # pragma: no cover - has_verification_signal implies one
+        return {
+            "head": sha,
+            "pushed": False,
+            "source": None,
+            "green": None,
+            "message": "not pushed, and no verify command configured yet",
+        }
     passed, detail = _run_local_check(root, command)
     return {
         "head": sha,
