@@ -14,14 +14,18 @@ For `Bash`: denies a `git checkout -b`/`git switch -c` that would nest a
 new branch under one the developer already made by hand, and a `git
 commit` attempted directly on the default branch.
 
-Every deny here is unconditional (`_common.deny`, never `_common.ask`):
-interaction modes (docs/plan.md §09) aren't built yet, and an `ask`
-silently degrades to an unexplained `deny` with no interactive
-terminal -- so this hook is always explicit rather than sometimes
-silent. No session-scoped counter is needed for "ask once": the checks
-below stop finding anything to deny the moment their own condition
-resolves (a plan gets saved; the branch changes), which is "once" for
-free, per Invariant II -- nothing stored to keep in sync.
+Mode-aware (docs/plan.md §09): in `pair` and `solo` (the default), a
+gate here uses `_common.ask`, an interactive confirmation. In `async`,
+it never asks -- confirmed directly against Claude Code's own docs
+that a hook has no controlling terminal to detect interactivity with
+either way, so this is read from `.canon/config.json`'s `mode` key,
+not sniffed at runtime -- it `_common.deny`s instead, with a reason
+that tells the agent to surface the question as its final message
+rather than silently proceeding or silently failing. No session-scoped
+counter is needed for "ask once": the checks below stop finding
+anything to gate on the moment their own condition resolves (a plan
+gets saved; the branch changes), which is "once" for free, per
+Invariant II -- nothing stored to keep in sync.
 """
 
 from __future__ import annotations
@@ -44,25 +48,39 @@ def _plan_exists(root: Path, branch: str) -> bool:
     return (root / _PLANS_DIR_RELATIVE / f"{branch}.md").is_file()
 
 
-def _deny(root: Path, reason: str) -> None:
-    _common.log_decision(root, "plan_gate.py", "deny", reason=reason)
-    _common.deny(reason)
+_ASYNC_SUFFIX = (
+    " This session can't wait for an interactive answer, so treat this"
+    " as declined for now -- surface the question above as your final"
+    " message and let the developer decide."
+)
+
+
+def _gate(root: Path, mode: str, reason: str) -> None:
+    if mode == "async":
+        full_reason = reason + _ASYNC_SUFFIX
+        _common.log_decision(root, "plan_gate.py", "deny", reason=full_reason)
+        _common.deny(full_reason)
+        return
+    _common.log_decision(root, "plan_gate.py", "ask", reason=reason)
+    _common.ask(reason)
 
 
 def _handle_edit_or_write(
-    root: Path, branch: str, default: str, guard_default: bool
+    root: Path, branch: str, default: str, guard_default: bool, mode: str
 ) -> None:
     if guard_default and branch == default:
-        _deny(
+        _gate(
             root,
+            mode,
             f"You're on the default branch ({default}) -- branch before "
             "editing. If this repository is genuinely trunk-based, set "
             '"guard_default_branch": false in .canon/config.json.',
         )
         return
     if not _plan_exists(root, branch):
-        _deny(
+        _gate(
             root,
+            mode,
             f"No plan is saved for branch '{branch}' yet -- enter plan mode "
             "and get one approved before editing.",
         )
@@ -71,11 +89,12 @@ def _handle_edit_or_write(
 
 
 def _handle_bash(
-    root: Path, command: str, branch: str, default: str, guard_default: bool
+    root: Path, command: str, branch: str, default: str, guard_default: bool, mode: str
 ) -> None:
     if _BRANCH_CREATION_PATTERN.search(command) and branch != default:
-        _deny(
+        _gate(
             root,
+            mode,
             f"'{branch}' is a branch you made yourself -- adopt it rather "
             "than nesting a new branch under it. If this is genuinely a "
             f"separate change, say explicitly whether to stack on "
@@ -83,8 +102,9 @@ def _handle_bash(
         )
         return
     if guard_default and _COMMIT_PATTERN.search(command) and branch == default:
-        _deny(
+        _gate(
             root,
+            mode,
             f"You're on the default branch ({default}) -- branch before "
             "committing. If this repository is genuinely trunk-based, set "
             '"guard_default_branch": false in .canon/config.json.',
@@ -106,17 +126,19 @@ def main() -> None:
     if branch is None:
         return  # can't reliably tell -- don't block on uncertainty
     default = _common.default_branch(root)
-    guard_default = _config.guard_default_branch(_config.load_config(root))
+    config = _config.load_config(root)
+    guard_default = _config.guard_default_branch(config)
+    mode = _config.interaction_mode(config)
 
     if tool_name in ("Edit", "Write"):
-        _handle_edit_or_write(root, branch, default, guard_default)
+        _handle_edit_or_write(root, branch, default, guard_default, mode)
         return
 
     tool_input = payload.get("tool_input")
     command = tool_input.get("command") if isinstance(tool_input, dict) else None
     if not isinstance(command, str) or not command:
         return
-    _handle_bash(root, command, branch, default, guard_default)
+    _handle_bash(root, command, branch, default, guard_default, mode)
 
 
 if __name__ == "__main__":

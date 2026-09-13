@@ -45,3 +45,17 @@ def has_verification_signal(config: dict[str, Any] | None) -> bool:
         return False
     verify = config.get("verify")
     return isinstance(verify, str) and verify.strip() != ""
+
+
+_VALID_MODES = {"pair", "solo", "async"}
+_DEFAULT_MODE = "solo"
+
+
+def interaction_mode(config: dict[str, Any] | None) -> str:
+    """Canon's one interaction-mode setting (docs/plan.md §09): "pair",
+    "solo", or "async". Defaults to "solo" for a missing config, a
+    missing key, or any value that isn't one of the three literals."""
+    if config is None:
+        return _DEFAULT_MODE
+    mode = config.get("mode")
+    return mode if mode in _VALID_MODES else _DEFAULT_MODE

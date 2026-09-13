@@ -202,5 +202,22 @@ class GuardDefaultBranchTests(unittest.TestCase):
         self.assertTrue(_config.guard_default_branch({"guard_default_branch": True}))
 
 
+class InteractionModeTests(unittest.TestCase):
+    def test_defaults_to_solo_when_no_config(self) -> None:
+        self.assertEqual(_config.interaction_mode(None), "solo")
+
+    def test_defaults_to_solo_when_key_absent(self) -> None:
+        self.assertEqual(_config.interaction_mode({}), "solo")
+
+    def test_defaults_to_solo_on_an_unrecognized_value(self) -> None:
+        self.assertEqual(_config.interaction_mode({"mode": "yolo"}), "solo")
+
+    def test_reads_pair(self) -> None:
+        self.assertEqual(_config.interaction_mode({"mode": "pair"}), "pair")
+
+    def test_reads_async(self) -> None:
+        self.assertEqual(_config.interaction_mode({"mode": "async"}), "async")
+
+
 if __name__ == "__main__":
     unittest.main()

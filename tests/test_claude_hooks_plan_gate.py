@@ -48,6 +48,12 @@ def _write_plan(root: Path, branch: str) -> None:
     plan_path.write_text("---\nstatus: approved\n---\n\n## Approach\nx\n", "utf-8")
 
 
+def _write_config(root: Path, config: dict[str, Any]) -> None:
+    config_path = root / ".canon" / "config.json"
+    config_path.parent.mkdir(parents=True, exist_ok=True)
+    config_path.write_text(json.dumps(config), encoding="utf-8")
+
+
 def _invoke_main(payload: dict[str, Any]) -> str:
     buffer = io.StringIO()
     with mock.patch.object(sys, "stdin", io.StringIO(json.dumps(payload))):
@@ -58,7 +64,7 @@ def _invoke_main(payload: dict[str, Any]) -> str:
 
 
 class EditOrWriteTests(unittest.TestCase):
-    def test_denied_on_default_branch(self) -> None:
+    def test_asks_on_default_branch_by_default(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             _init_repo(root, "main")
@@ -70,15 +76,13 @@ class EditOrWriteTests(unittest.TestCase):
                 }
             )
             payload = json.loads(output)
-            self.assertEqual(
-                payload["hookSpecificOutput"]["permissionDecision"], "deny"
-            )
+            self.assertEqual(payload["hookSpecificOutput"]["permissionDecision"], "ask")
             self.assertIn(
                 "default branch",
                 payload["hookSpecificOutput"]["permissionDecisionReason"],
             )
 
-    def test_denied_on_feature_branch_with_no_plan(self) -> None:
+    def test_asks_on_feature_branch_with_no_plan_by_default(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             _init_repo(root, "feature/x")
@@ -90,9 +94,7 @@ class EditOrWriteTests(unittest.TestCase):
                 }
             )
             payload = json.loads(output)
-            self.assertEqual(
-                payload["hookSpecificOutput"]["permissionDecision"], "deny"
-            )
+            self.assertEqual(payload["hookSpecificOutput"]["permissionDecision"], "ask")
             self.assertIn(
                 "No plan is saved",
                 payload["hookSpecificOutput"]["permissionDecisionReason"],
@@ -117,11 +119,7 @@ class EditOrWriteTests(unittest.TestCase):
             root = Path(tmp)
             _init_repo(root, "main")
             _write_plan(root, "main")
-            config_path = root / ".canon" / "config.json"
-            config_path.parent.mkdir(parents=True, exist_ok=True)
-            config_path.write_text(
-                json.dumps({"guard_default_branch": False}), encoding="utf-8"
-            )
+            _write_config(root, {"guard_default_branch": False})
             output = _invoke_main(
                 {
                     "cwd": str(root),
@@ -133,7 +131,7 @@ class EditOrWriteTests(unittest.TestCase):
 
 
 class BashTests(unittest.TestCase):
-    def test_denies_nesting_a_branch_under_a_hand_made_one(self) -> None:
+    def test_asks_nesting_a_branch_under_a_hand_made_one_by_default(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             _init_repo(root, "feature/x")
@@ -145,9 +143,7 @@ class BashTests(unittest.TestCase):
                 }
             )
             payload = json.loads(output)
-            self.assertEqual(
-                payload["hookSpecificOutput"]["permissionDecision"], "deny"
-            )
+            self.assertEqual(payload["hookSpecificOutput"]["permissionDecision"], "ask")
             self.assertIn(
                 "adopt it", payload["hookSpecificOutput"]["permissionDecisionReason"]
             )
@@ -165,7 +161,7 @@ class BashTests(unittest.TestCase):
             )
             self.assertEqual(output, "")
 
-    def test_denies_committing_on_the_default_branch(self) -> None:
+    def test_asks_committing_on_the_default_branch_by_default(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             _init_repo(root, "main")
@@ -177,9 +173,7 @@ class BashTests(unittest.TestCase):
                 }
             )
             payload = json.loads(output)
-            self.assertEqual(
-                payload["hookSpecificOutput"]["permissionDecision"], "deny"
-            )
+            self.assertEqual(payload["hookSpecificOutput"]["permissionDecision"], "ask")
             self.assertIn(
                 "default branch",
                 payload["hookSpecificOutput"]["permissionDecisionReason"],
@@ -210,6 +204,44 @@ class BashTests(unittest.TestCase):
                 }
             )
             self.assertEqual(output, "")
+
+
+class InteractionModeTests(unittest.TestCase):
+    def test_async_mode_denies_instead_of_asking(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            _init_repo(root, "main")
+            _write_config(root, {"mode": "async"})
+            output = _invoke_main(
+                {
+                    "cwd": str(root),
+                    "tool_name": "Edit",
+                    "tool_input": {"file_path": str(root / "a.py")},
+                }
+            )
+            payload = json.loads(output)
+            hook_output = payload["hookSpecificOutput"]
+            self.assertEqual(hook_output["permissionDecision"], "deny")
+            self.assertIn("default branch", hook_output["permissionDecisionReason"])
+            self.assertIn(
+                "surface the question above as your final message",
+                hook_output["permissionDecisionReason"],
+            )
+
+    def test_pair_mode_asks_the_same_as_the_default(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            _init_repo(root, "main")
+            _write_config(root, {"mode": "pair"})
+            output = _invoke_main(
+                {
+                    "cwd": str(root),
+                    "tool_name": "Edit",
+                    "tool_input": {"file_path": str(root / "a.py")},
+                }
+            )
+            payload = json.loads(output)
+            self.assertEqual(payload["hookSpecificOutput"]["permissionDecision"], "ask")
 
 
 class MiscTests(unittest.TestCase):

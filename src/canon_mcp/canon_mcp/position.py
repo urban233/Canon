@@ -16,7 +16,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
-from ._config import has_verification_signal, load_config
+from ._config import has_verification_signal, interaction_mode, load_config
 from ._gh import pr_view
 from ._git import commits_ahead, current_branch, default_branch, head_sha, merge_base
 from ._plan import read_plan_file
@@ -111,7 +111,9 @@ def build_position(root: Path) -> dict[str, Any]:
     head = head_sha(root)
     ahead = commits_ahead(root, base)
     plan = read_plan_file(root, f".canon/plans/{branch}.md")
-    verify_ok = has_verification_signal(load_config(root))
+    config = load_config(root)
+    verify_ok = has_verification_signal(config)
+    mode = interaction_mode(config)
     # No PR to ask about while standing on the default branch itself.
     pr = pr_view(root, branch) if branch != default else None
     review = build_review(root)
@@ -124,6 +126,7 @@ def build_position(root: Path) -> dict[str, Any]:
         "head": head,
         "commits_ahead": ahead,
         "verify_configured": verify_ok,
+        "mode": mode,
         "plan": _plan_summary(plan),
         "pull_request": pr,
         "review": review,
