@@ -40,6 +40,20 @@ def _init_repo(root: Path, branch: str) -> None:
     )
     if branch != "main":
         _run_git(root, "checkout", "-q", "-b", branch)
+    _activate(root)
+
+
+def _activate(root: Path) -> None:
+    """Give `root` a verification signal.
+
+    Canon is inert without one (docs/plan.md §07, "No signal, no
+    Canon"), so a fixture with no `verify` command exercises the inert
+    path rather than the behaviour under test. Every test here that is
+    not specifically about going inert calls this.
+    """
+    config_path = root / ".canon" / "config.json"
+    config_path.parent.mkdir(parents=True, exist_ok=True)
+    config_path.write_text(json.dumps({"verify": "true"}), encoding="utf-8")
 
 
 def _write_plan(root: Path, branch: str) -> None:
@@ -49,9 +63,15 @@ def _write_plan(root: Path, branch: str) -> None:
 
 
 def _write_config(root: Path, config: dict[str, Any]) -> None:
+    """Write a config, keeping the verification signal `_init_repo` set.
+
+    A caller here is varying `mode` or `guard_default_branch`, never
+    testing the inert path -- overwriting `verify` away would silently
+    turn every such test into an assertion about inertness instead.
+    """
     config_path = root / ".canon" / "config.json"
     config_path.parent.mkdir(parents=True, exist_ok=True)
-    config_path.write_text(json.dumps(config), encoding="utf-8")
+    config_path.write_text(json.dumps({"verify": "true", **config}), encoding="utf-8")
 
 
 def _invoke_main(payload: dict[str, Any]) -> str:
@@ -261,6 +281,42 @@ class MiscTests(unittest.TestCase):
                 with mock.patch("sys.stdout", buffer):
                     plan_gate.main()
                 self.assertEqual(buffer.getvalue(), "")
+
+
+class InertWithoutVerificationSignalTests(unittest.TestCase):
+    """docs/plan.md §07: "Not the gate alone -- the whole plugin."
+
+    See docs/decisions/0001-what-inert-means.md for the two hooks this
+    deliberately does not apply to.
+    """
+
+    def test_editing_on_the_default_branch_is_not_gated(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            _init_repo(root, "main")
+            (root / ".canon" / "config.json").unlink()
+            output = _invoke_main(
+                {
+                    "cwd": str(root),
+                    "tool_name": "Edit",
+                    "tool_input": {"file_path": str(root / "a.py")},
+                }
+            )
+            self.assertEqual(output, "")
+
+    def test_a_missing_plan_is_not_gated(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            _init_repo(root, "feature/x")
+            (root / ".canon" / "config.json").unlink()
+            output = _invoke_main(
+                {
+                    "cwd": str(root),
+                    "tool_name": "Edit",
+                    "tool_input": {"file_path": str(root / "a.py")},
+                }
+            )
+            self.assertEqual(output, "")
 
 
 if __name__ == "__main__":

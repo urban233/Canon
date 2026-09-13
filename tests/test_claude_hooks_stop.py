@@ -78,13 +78,47 @@ class FirstRunTests(unittest.TestCase):
             self.assertIsNotNone(first)
             self.assertIsNone(second)
 
-    def test_missing_scratchpad_dir_asks_every_time(self) -> None:
+    def test_missing_scratchpad_dir_falls_back_to_stop_hook_active(self) -> None:
+        """With no scratchpad there is no prompted-once marker, so the
+        harness's own `stop_hook_active` stands in for it.
+
+        This models the real payload sequence: Claude Code sets the flag
+        on the `Stop` that follows a block. Without this fallback the
+        first-run question is asked on every single turn end.
+        """
         with tempfile.TemporaryDirectory() as root:
-            payload = {"cwd": root}
-            first = _invoke_main(payload)
-            second = _invoke_main(payload)
+            first = _invoke_main({"cwd": root})
+            second = _invoke_main({"cwd": root, "stop_hook_active": True})
             self.assertIsNotNone(first)
-            self.assertIsNotNone(second)
+            self.assertIsNone(second)
+
+    def test_stop_hook_active_is_ignored_when_a_scratchpad_exists(self) -> None:
+        """The marker is the mechanism; the flag is only a fallback. A
+        healthy session must still get its question asked once."""
+        with (
+            tempfile.TemporaryDirectory() as root,
+            tempfile.TemporaryDirectory() as scratch,
+        ):
+            first = _invoke_main(
+                {"cwd": root, "scratchpad_dir": scratch, "stop_hook_active": True}
+            )
+            self.assertIsNotNone(first)
+            assert first is not None
+            self.assertEqual(first["decision"], "block")
+
+    def test_still_asks_when_canon_is_otherwise_inert(self) -> None:
+        """`stop.py` is the one gate that must not go inert without a
+        signal -- its block is the only route to acquiring one. See
+        docs/decisions/0001-what-inert-means.md."""
+        with (
+            tempfile.TemporaryDirectory() as root,
+            tempfile.TemporaryDirectory() as scratch,
+        ):
+            self.assertFalse((Path(root) / ".canon" / "config.json").exists())
+            result = _invoke_main({"cwd": root, "scratchpad_dir": scratch})
+            self.assertIsNotNone(result)
+            assert result is not None
+            self.assertEqual(result["decision"], "block")
 
 
 class VerificationRunTests(unittest.TestCase):
@@ -157,6 +191,50 @@ class VerificationRunTests(unittest.TestCase):
             assert logged is not None
             self.assertEqual(logged["decision"], "allow")
             self.assertIn("giving up after", logged["reason"])
+
+    def test_red_run_without_a_scratchpad_gives_up_rather_than_blocking(
+        self,
+    ) -> None:
+        """Without a counter, `refusals` is always 1 and the cap is
+        unreachable -- a persistently red repository would block every
+        turn end for good. `stop_hook_active` is what ends the run."""
+        with tempfile.TemporaryDirectory() as root:
+            config_path = Path(root) / ".canon" / "config.json"
+            config_path.parent.mkdir(parents=True)
+            config_path.write_text(json.dumps({"verify": "false"}), encoding="utf-8")
+
+            first = _invoke_main({"cwd": root})
+            second = _invoke_main({"cwd": root, "stop_hook_active": True})
+
+            self.assertIsNotNone(first)
+            assert first is not None
+            self.assertEqual(first["decision"], "block")
+            self.assertIsNone(second)
+            logged = _common.last_decision(Path(root), "stop.py")
+            assert logged is not None
+            self.assertEqual(logged["decision"], "allow")
+            self.assertIn("no session state to count refusals", logged["reason"])
+
+    def test_red_run_with_a_scratchpad_still_uses_the_counter(self) -> None:
+        """`stop_hook_active` must not short-circuit a healthy session's
+        three attempts down to one."""
+        with (
+            tempfile.TemporaryDirectory() as root,
+            tempfile.TemporaryDirectory() as scratch,
+        ):
+            config_path = Path(root) / ".canon" / "config.json"
+            config_path.parent.mkdir(parents=True)
+            config_path.write_text(json.dumps({"verify": "false"}), encoding="utf-8")
+
+            result = _invoke_main(
+                {"cwd": root, "scratchpad_dir": scratch, "stop_hook_active": True}
+            )
+
+            self.assertIsNotNone(result)
+            assert result is not None
+            self.assertEqual(result["decision"], "block")
+            counter = Path(scratch) / "canon" / "consecutive_refusals"
+            self.assertEqual(counter.read_text(encoding="utf-8"), "1")
 
     def test_verify_timeout_counts_as_red(self) -> None:
         with (

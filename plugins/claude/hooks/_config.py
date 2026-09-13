@@ -74,6 +74,29 @@ def has_verification_signal(config: dict[str, Any] | None) -> bool:
     return isinstance(verify, str) and verify.strip() != ""
 
 
+def canon_is_active(config: dict[str, Any] | None) -> bool:
+    """Whether Canon may gate, guard or capture anything at all.
+
+    docs/plan.md §07 is unambiguous: "If no command can be established,
+    Canon **stays inert** rather than running without it. Not the gate
+    alone -- the whole plugin." A tool whose central promise is that
+    nothing ships on the agent's own word has no business operating
+    where it cannot check that word.
+
+    Delegates to `has_verification_signal` -- the condition is the same
+    one -- but the name is what a call site should read, because the two
+    ask different questions. `has_verification_signal` asks "can I run
+    the check?"; this asks "may I act at all?"
+
+    Two hooks deliberately do not consult this, and the reasoning is in
+    docs/decisions/0001-what-inert-means.md: `stop.py`, which is the
+    only path to configuring Canon in the first place, and
+    `session_start.py`, which never gates anything and is how a
+    developer learns Canon is inert rather than broken.
+    """
+    return has_verification_signal(config)
+
+
 def guard_default_branch(config: dict[str, Any] | None) -> bool:
     """Whether Canon should gate edits and commits made directly on the
     default branch.

@@ -22,11 +22,17 @@ Writes through the existing `.canon/hooks/decisions.jsonl` log (see
 `_common.log_decision`) rather than a new storage mechanism -- that
 file is already documented as read-for-display-only, which is exactly
 `canon_review`'s job.
+
+Inert without a verification signal (docs/plan.md §07, "No signal, no
+Canon"): with no `verify` command in `.canon/config.json` this hook is a
+silent no-op. See docs/decisions/0001-what-inert-means.md for why
+`stop.py` and `session_start.py` are the two exceptions.
 """
 
 from __future__ import annotations
 
 import _common
+import _config
 
 _DECISIONS = (
     "READY FOR HUMAN APPROVAL",
@@ -70,6 +76,10 @@ def main() -> None:
         return
 
     root = _common.repo_root(payload)
+    if not _config.canon_is_active(_config.load_config(root)):
+        # Inert: this verdict is what `canon_ship` gates on, so capturing
+        # it here would accumulate evidence for a check that must not run.
+        return
     reason = message.strip()[:_REASON_PREVIEW_CHARS]
     _common.log_decision(
         root,

@@ -24,8 +24,19 @@ docstring and `AGENTS.md`: a same-session marker (so the first-run
 question is asked once, not on every `Stop`) and a consecutive-refusal
 counter (so a run of red results doesn't block forever). Both live under
 the `scratchpad_dir` Claude Code includes in the `Stop` payload -- never
-under the repository -- and both fail open to their empty state if that
-field is missing.
+under the repository.
+
+When that field is absent both degrade to their empty state, and an
+empty state is not a safe one here: an always-zero counter never reaches
+its cap, so a persistently red repository would block every turn end for
+good, and an always-absent marker asks the first-run question on every
+`Stop` rather than once. So `stop_hook_active` -- the harness's own
+signal that this turn is already continuing because a `Stop` hook
+blocked it -- stands in for both, but *only* when there is no scratchpad
+to count with. It cannot count, so it is a strictly weaker guarantee
+than three attempts: one block, then through. That is the right trade
+for a degraded payload and the wrong one for a healthy session, which is
+why it is a fallback rather than the mechanism.
 """
 
 from __future__ import annotations
@@ -33,6 +44,7 @@ from __future__ import annotations
 import shlex
 import subprocess
 from pathlib import Path
+from typing import Any
 
 import _common
 import _config
@@ -45,8 +57,16 @@ _PROMPTED_MARKER_NAME = "verify_prompted"
 _REFUSAL_COUNTER_NAME = "consecutive_refusals"
 
 
-def _has_been_prompted(state_dir: Path | None) -> bool:
-    return state_dir is not None and (state_dir / _PROMPTED_MARKER_NAME).exists()
+def _stop_hook_active(payload: dict[str, Any] | None) -> bool:
+    """Whether the harness says this turn is already continuing because a
+    `Stop` hook blocked it. Absent or non-boolean reads as False."""
+    return bool(payload.get("stop_hook_active")) if payload else False
+
+
+def _has_been_prompted(state_dir: Path | None, stop_hook_active: bool) -> bool:
+    if state_dir is None:
+        return stop_hook_active
+    return (state_dir / _PROMPTED_MARKER_NAME).exists()
 
 
 def _mark_prompted(state_dir: Path | None) -> None:
@@ -77,6 +97,30 @@ def _write_refusal_count(state_dir: Path | None, count: int) -> None:
         (state_dir / _REFUSAL_COUNTER_NAME).write_text(str(count), encoding="utf-8")
     except OSError:
         pass
+
+
+def _should_give_up(
+    state_dir: Path | None, stop_hook_active: bool, refusals: int
+) -> bool:
+    """Whether a red result should be let through rather than blocked again.
+
+    With a scratchpad, that's the counter reaching its cap. Without one
+    there is no counter, so the harness's own loop guard is all that can
+    end the run -- see the module docstring for why a one-shot backstop
+    is accepted there and only there.
+    """
+    if state_dir is None:
+        return stop_hook_active
+    return refusals > _MAX_CONSECUTIVE_REFUSALS
+
+
+def _give_up_reason(state_dir: Path | None, refusals: int, detail: str) -> str:
+    if state_dir is None:
+        return (
+            "giving up: no session state to count refusals with, and the "
+            f"harness reports this turn already continued once -- {detail}"
+        )
+    return f"giving up after {refusals} consecutive failures: {detail}"
 
 
 def _first_run_reason(root: Path) -> str:
@@ -129,10 +173,11 @@ def main() -> None:
     payload = _common.read_payload()
     root = _common.repo_root(payload)
     state_dir = _common.state_dir(payload)
+    stop_hook_active = _stop_hook_active(payload)
     config = _config.load_config(root)
 
     if config is None or not _config.has_verification_signal(config):
-        if _has_been_prompted(state_dir):
+        if _has_been_prompted(state_dir, stop_hook_active):
             _common.allow()
             return
         _mark_prompted(state_dir)
@@ -148,13 +193,13 @@ def main() -> None:
         return
 
     refusals = _read_refusal_count(state_dir) + 1
-    if refusals > _MAX_CONSECUTIVE_REFUSALS:
+    if _should_give_up(state_dir, stop_hook_active, refusals):
         _write_refusal_count(state_dir, 0)
         _common.log_decision(
             root,
             "stop.py",
             "allow",
-            reason=f"giving up after {refusals} consecutive failures: {detail}",
+            reason=_give_up_reason(state_dir, refusals, detail),
         )
         _common.allow()
         return

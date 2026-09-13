@@ -20,6 +20,11 @@ Not implemented here: formatting the touched file (§07 also mentions
 this for the same hook slot) -- hooks are stdlib-only and run via bare
 `python3`, with no guaranteed access to a resolved formatter binary;
 that's a separate decision, not a bolt-on to this one.
+
+Inert without a verification signal (docs/plan.md §07, "No signal, no
+Canon"): with no `verify` command in `.canon/config.json` this hook is a
+silent no-op. See docs/decisions/0001-what-inert-means.md for why
+`stop.py` and `session_start.py` are the two exceptions.
 """
 
 from __future__ import annotations
@@ -28,6 +33,7 @@ import fnmatch
 from pathlib import Path
 
 import _common
+import _config
 
 _PLANS_DIR_RELATIVE = ".canon/plans"
 _COUNTER_NAME = "consecutive_scope_departures"
@@ -121,6 +127,8 @@ def main() -> None:
         return
 
     root = _common.repo_root(payload)
+    if not _config.canon_is_active(_config.load_config(root)):
+        return  # no verification signal: Canon is inert, not checking scope
     relative_path = _relative_path(root, file_path)
     if relative_path is None:
         return

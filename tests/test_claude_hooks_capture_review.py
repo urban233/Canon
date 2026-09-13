@@ -41,6 +41,29 @@ class ExtractDecisionTests(unittest.TestCase):
         self.assertEqual(capture_review._extract_decision(message), _READY)
 
 
+def _activate(root: Path) -> None:
+    """Give `root` a verification signal.
+
+    Canon is inert without one (docs/plan.md §07, "No signal, no
+    Canon"), so a fixture with no `verify` command exercises the inert
+    path rather than the behaviour under test. Every test here that is
+    not specifically about going inert calls this.
+    """
+    config_path = root / ".canon" / "config.json"
+    config_path.parent.mkdir(parents=True, exist_ok=True)
+    config_path.write_text(json.dumps({"verify": "true"}), encoding="utf-8")
+
+
+def _decisions_log(root: Path) -> Path:
+    """The one file this hook writes.
+
+    Asserted against rather than the whole `.canon/` tree, which now also
+    holds the `config.json` a fixture writes to give Canon a verification
+    signal -- see `_activate`.
+    """
+    return root / ".canon" / "hooks" / "decisions.jsonl"
+
+
 def _invoke_main(payload: dict[str, object]) -> None:
     with mock.patch.object(sys, "stdin", io.StringIO(json.dumps(payload))):
         with mock.patch("sys.exit"):
@@ -51,6 +74,7 @@ class MainTests(unittest.TestCase):
     def test_captures_a_verdict_from_the_reviewer(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
+            _activate(root)
             completed = mock.Mock(returncode=0, stdout="abc1234def\n")
             with mock.patch("subprocess.run", return_value=completed):
                 _invoke_main(
@@ -72,6 +96,7 @@ class MainTests(unittest.TestCase):
     def test_captures_a_verdict_from_the_risk_reviewer(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
+            _activate(root)
             completed = mock.Mock(returncode=0, stdout="abc1234def\n")
             with mock.patch("subprocess.run", return_value=completed):
                 _invoke_main(
@@ -91,6 +116,7 @@ class MainTests(unittest.TestCase):
     def test_noop_when_agent_type_does_not_match(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
+            _activate(root)
             _invoke_main(
                 {
                     "cwd": str(root),
@@ -98,11 +124,12 @@ class MainTests(unittest.TestCase):
                     "last_assistant_message": _READY,
                 }
             )
-            self.assertFalse((root / ".canon").exists())
+            self.assertFalse(_decisions_log(root).exists())
 
     def test_noop_when_no_decision_string_present(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
+            _activate(root)
             _invoke_main(
                 {
                     "cwd": str(root),
@@ -110,17 +137,19 @@ class MainTests(unittest.TestCase):
                     "last_assistant_message": "still thinking it over",
                 }
             )
-            self.assertFalse((root / ".canon").exists())
+            self.assertFalse(_decisions_log(root).exists())
 
     def test_noop_when_last_assistant_message_is_missing(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
+            _activate(root)
             _invoke_main({"cwd": str(root), "agent_type": "reviewer"})
-            self.assertFalse((root / ".canon").exists())
+            self.assertFalse(_decisions_log(root).exists())
 
     def test_reason_is_truncated(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
+            _activate(root)
             long_message = ("x" * 500) + f"\n\n{_BLOCKED}"
             completed = mock.Mock(returncode=0, stdout="abc1234def\n")
             with mock.patch("subprocess.run", return_value=completed):
@@ -137,6 +166,30 @@ class MainTests(unittest.TestCase):
             self.assertEqual(
                 len(record["reason"]), capture_review._REASON_PREVIEW_CHARS
             )
+
+
+class InertWithoutVerificationSignalTests(unittest.TestCase):
+    """docs/plan.md §07: "Not the gate alone -- the whole plugin."
+
+    See docs/decisions/0001-what-inert-means.md for the two hooks this
+    deliberately does not apply to.
+    """
+
+    def test_a_verdict_is_not_captured(self) -> None:
+        """The verdict is what `canon_ship` gates on, so capturing it
+        while inert accumulates evidence for a check that must not run."""
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            completed = mock.Mock(returncode=0, stdout="abc1234def\n")
+            with mock.patch("subprocess.run", return_value=completed):
+                _invoke_main(
+                    {
+                        "cwd": str(root),
+                        "agent_type": "reviewer",
+                        "last_assistant_message": f"All clear.\n\n{_READY}",
+                    }
+                )
+            self.assertFalse(_decisions_log(root).exists())
 
 
 if __name__ == "__main__":

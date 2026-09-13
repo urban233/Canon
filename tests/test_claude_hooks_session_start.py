@@ -310,5 +310,21 @@ class MainTests(unittest.TestCase):
             self.assertNotIn("Post-compaction recap", context)
 
 
+class StaysLiveWhenCanonIsInertTests(unittest.TestCase):
+    def test_still_injects_position_with_no_verify_configured(self) -> None:
+        """Pure context, never a gate. Silencing it would make an inert
+        Canon indistinguishable from a broken or uninstalled one -- see
+        docs/decisions/0001-what-inert-means.md."""
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            subprocess.run(
+                ["git", "init", "-q"], cwd=root, check=True, capture_output=True
+            )
+            self.assertFalse((root / ".canon" / "config.json").exists())
+            output = _invoke_main({"cwd": str(root), "source": "startup"})
+            self.assertIn("Canon position:", output)
+            self.assertIn("not configured yet", output)
+
+
 if __name__ == "__main__":
     unittest.main()
