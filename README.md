@@ -26,13 +26,37 @@ In place of that, Canon rebuilds on four Claude Code primitives:
 
 ## Status
 
-Phase 0, Phase 1, and Phase 2 are done: plan persistence and feature
-plans, the position/scope/verification/git-guard hooks, first-run
-setup, the reviewer and risk-reviewer subagents, the `ship`/`decide`/
-`frame` skills, interaction modes, and all five `canon-mcp` tools
+Phases 0, 1 and 2 are complete, and a follow-up audit against
+[`docs/plan.md`](docs/plan.md) closed eight deviations between the
+document and the code — among them the "no signal, no Canon"
+precondition, the plan header fields `check_scope` depends on, the
+per-branch `verify:` override, and notebook handling. The work is
+recorded as a feature plan in
+[`.canon/plans/features/`](.canon/plans/features/), with the choices that
+had a real alternative written up in [`docs/decisions/`](docs/decisions/).
+
+In place now: plan persistence and feature plans, the
+position/scope/verification/git-guard hooks, first-run setup, the
+reviewer and risk-reviewer subagents, the `ship`/`decide`/`frame`/`plan`
+skills, interaction modes, and all five `canon-mcp` tools
 (`canon_position`, `canon_plan`, `canon_review`, `canon_evidence`,
-`canon_ship`) are in place. Phase 3 (ablation -- the `claude plugin
-eval` suite) is next.
+`canon_ship`).
+
+One known gap: `async` mode has unit coverage but has never been
+exercised against a real headless run, which Phase 2 asked for. The test
+needs an API key in CI and is deliberately not built at this stage.
+
+Canon now runs on its own development — [`.canon/config.json`](.canon/config.json)
+names the command that must pass before a turn ends, so the `Stop` gate,
+the plan gate, the scope check and the git guard are all live in this
+repository rather than only shipped from it. It names
+`bazel test //tests/...` rather than `just test`, which is what that
+recipe expands to: `just` is not always on `PATH` (see the
+[`Justfile`](Justfile)), and a verify command that cannot be run blocks
+every turn end instead of gating one. Change it to `just test` if `just`
+is reliably on yours.
+
+Phase 3 (ablation — the `claude plugin eval` suite) is next.
 
 ## The plan
 

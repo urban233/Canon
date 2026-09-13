@@ -52,6 +52,33 @@ class ParseStepsTests(unittest.TestCase):
         self.assertEqual(_steps.parse_steps(""), [])
 
 
+class NestedContentTests(unittest.TestCase):
+    """Both cases were found by pointing this at Canon's own feature
+    plan, which reported 30 steps where there are 9."""
+
+    def test_indented_bullets_are_sub_points_not_steps(self) -> None:
+        section = (
+            "- slugs: make duplicate slugs raise\n"
+            "  - first narrow the regex\n"
+            "  - then add the test\n"
+            "- docs: write the migration note\n"
+        )
+        steps = _steps.parse_steps(section)
+        self.assertEqual([s["slug"] for s in steps], ["slugs", "docs"])
+
+    def test_a_subsection_heading_ends_the_list(self) -> None:
+        """A `## Steps` section carrying per-step detail in `###`
+        subsections must not contribute every bullet in that prose."""
+        section = (
+            "- slugs: make duplicate slugs raise\n"
+            "\n### 1 - slugs, in detail\n"
+            "- Change the regex\n"
+            "- Add a regression test\n"
+        )
+        steps = _steps.parse_steps(section)
+        self.assertEqual([s["slug"] for s in steps], ["slugs"])
+
+
 class AnnotateTests(unittest.TestCase):
     @property
     def steps(self) -> list[dict[str, Any]]:
@@ -122,6 +149,39 @@ class AnnotateTests(unittest.TestCase):
         )
         self.assertEqual(annotated[0]["status"], _steps.STATUS_UNMATCHED)
         self.assertIsNone(annotated[0]["branch"])
+
+
+class DeletedBranchTests(unittest.TestCase):
+    """With "automatically delete head branches" enabled there is no
+    branch left once a step lands, so the pull request's head ref is the
+    only surviving record -- and it carries the branch's prefix.
+
+    Matching pulls by exact slug alone reported every completed step as
+    `not started`, which would have left a finished feature reporting as
+    stuck on step one forever.
+    """
+
+    def test_a_prefixed_pull_request_head_matches_its_step(self) -> None:
+        steps = _steps.parse_steps("- 8-notebooks: do the notebooks")
+        annotated = _steps.annotate(
+            steps,
+            branches=set(),
+            pulls={"gap/8-notebooks": {"number": 27, "state": "MERGED"}},
+            merged_branches=set(),
+        )
+        self.assertEqual(annotated[0]["status"], _steps.STATUS_MERGED)
+        self.assertEqual(annotated[0]["pull_request"]["number"], 27)
+        self.assertEqual(annotated[0]["branch"], "gap/8-notebooks")
+
+    def test_a_prefixed_merged_branch_matches_its_step(self) -> None:
+        steps = _steps.parse_steps("- 8-notebooks: do the notebooks")
+        annotated = _steps.annotate(
+            steps,
+            branches={"gap/8-notebooks"},
+            pulls={},
+            merged_branches={"gap/8-notebooks"},
+        )
+        self.assertEqual(annotated[0]["status"], _steps.STATUS_MERGED)
 
 
 class SummarizeTests(unittest.TestCase):
