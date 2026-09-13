@@ -72,6 +72,12 @@ class DestructiveCommandTests(unittest.TestCase):
     def test_merge(self) -> None:
         self._assert_denied("git merge feature/x")
 
+    def test_merge_with_flags(self) -> None:
+        self._assert_denied("git merge --no-ff feature/x")
+
+    def test_remote_branch_delete_via_empty_refspec(self) -> None:
+        self._assert_denied("git push origin :feature/x")
+
     def test_safe_push_is_allowed(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -100,6 +106,42 @@ class DestructiveCommandTests(unittest.TestCase):
             self.assertEqual(
                 payload["hookSpecificOutput"]["permissionDecision"], "deny"
             )
+
+
+class NearMissTests(unittest.TestCase):
+    """Commands that a looser pattern would deny, and must not.
+
+    Every entry here was denied before this test class existed. A
+    `deny` from this hook has no `ask` and no override, so a false
+    positive is a command the developer simply cannot run -- worth a
+    named regression test each rather than one blanket assertion.
+    """
+
+    def _assert_allowed(self, command: str) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            _init_repo(root)
+            self.assertEqual(_invoke_main(_payload(root, command)), "")
+
+    def test_merge_base_is_read_only(self) -> None:
+        """canon-mcp's own `_git.merge_base` shells out to exactly this."""
+        self._assert_allowed("git merge-base HEAD main")
+
+    def test_merge_file_is_not_a_branch_merge(self) -> None:
+        self._assert_allowed("git merge-file a.txt base.txt b.txt")
+
+    def test_merge_abort_is_recovery_not_a_merge(self) -> None:
+        self._assert_allowed("git merge --abort")
+
+    def test_merge_quit_is_recovery(self) -> None:
+        self._assert_allowed("git merge --quit")
+
+    def test_colon_refspec_push_is_an_ordinary_push(self) -> None:
+        """Only an *empty* source side deletes; this one creates."""
+        self._assert_allowed("git push origin HEAD:refs/heads/feature/x")
+
+    def test_log_merges_is_read_only(self) -> None:
+        self._assert_allowed("git log --merges")
 
 
 class AttributionStrippingTests(unittest.TestCase):

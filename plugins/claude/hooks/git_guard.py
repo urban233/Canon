@@ -13,6 +13,15 @@ casually" spine-table row and §12's authorship section:
    and `tag` deletion are in §12's broader table too, but both need a
    "is this actually shared" judgement this hook doesn't make, so
    they're left out rather than guessed at.
+
+   Each pattern is written to match the destructive operation and
+   nothing adjacent to it. That cuts both ways: a false negative here
+   lets through something 12 says never to run, but a false positive
+   is a `deny` with no `ask` and no override, against a command the
+   developer had every right to run -- and the two commands most easily
+   caught by a loose pattern, `git merge-base` and a `HEAD:refs/...`
+   refspec, are both read-only or routine. The tests name every
+   near-miss explicitly for that reason.
 2. `git commit` commands carrying a `Co-Authored-By:` trailer have it
    stripped via `updatedInput` before the commit runs -- the mechanised
    half of §12's authorship guidance ("the git guard, which is already
@@ -56,10 +65,24 @@ _DESTRUCTIVE_PATTERNS = [
         "a branch deletion",
     ),
     (
-        re.compile(rf"\bgit\s+push\b{_NON_DELIMITER}(--delete\b|:\S)"),
+        # `\s:\S` -- a refspec whose *source* side is empty (`git push
+        # origin :old`) is the deletion form. A colon in the middle of a
+        # refspec (`git push origin HEAD:refs/heads/x`) is an ordinary
+        # push and must not match.
+        re.compile(rf"\bgit\s+push\b{_NON_DELIMITER}(--delete\b|\s:\S)"),
         "a remote branch deletion",
     ),
-    (re.compile(r"\bgit\s+merge\b"), "a merge"),
+    (
+        # `(?![-\w])` keeps the read-only `git merge-base` and
+        # `git merge-file` out of this; the second lookahead keeps the
+        # recovery forms out. Aborting a merge is how you get *out* of
+        # one, not the operation 12 marks "never".
+        re.compile(
+            rf"\bgit\s+merge(?![-\w])"
+            rf"(?!{_NON_DELIMITER}--(abort|quit|continue)\b)"
+        ),
+        "a merge",
+    ),
 ]
 
 _COMMIT_PATTERN = re.compile(r"\bgit\s+commit\b", re.IGNORECASE)
