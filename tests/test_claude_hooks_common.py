@@ -186,6 +186,20 @@ class LogDecisionTests(unittest.TestCase):
             )
             self.assertEqual(len(lines), 2)
 
+    def test_extra_fields_are_merged_into_the_record(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            _common.log_decision(
+                root,
+                "reviewer",
+                "READY FOR HUMAN APPROVAL",
+                extra={"head": "abc1234d"},
+            )
+            log_path = root / ".canon" / "hooks" / "decisions.jsonl"
+            record = json.loads(log_path.read_text(encoding="utf-8").strip())
+            self.assertEqual(record["head"], "abc1234d")
+            self.assertEqual(record["decision"], "READY FOR HUMAN APPROVAL")
+
     def test_never_raises_when_the_path_is_unwritable(self) -> None:
         # A path under a file (not a directory) cannot be mkdir'd into.
         import tempfile
@@ -232,6 +246,16 @@ class GitDerivationTests(unittest.TestCase):
         completed = mock.Mock(returncode=1, stdout="")
         with mock.patch("subprocess.run", return_value=completed):
             self.assertIsNone(_common.merge_base(Path("/repo"), "main"))
+
+    def test_head_sha_returns_a_short_sha(self) -> None:
+        completed = mock.Mock(returncode=0, stdout="0123456789abcdef\n")
+        with mock.patch("subprocess.run", return_value=completed):
+            self.assertEqual(_common.head_sha(Path("/repo")), "012345678")
+
+    def test_head_sha_returns_none_on_failure(self) -> None:
+        completed = mock.Mock(returncode=128, stdout="")
+        with mock.patch("subprocess.run", return_value=completed):
+            self.assertIsNone(_common.head_sha(Path("/repo")))
 
 
 class PlanSectionsTests(unittest.TestCase):

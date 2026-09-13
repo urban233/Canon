@@ -16,11 +16,13 @@ py_library(
     srcs = [
         "canon_mcp/__init__.py",
         "canon_mcp/_config.py",
+        "canon_mcp/_decisions.py",
         "canon_mcp/_gh.py",
         "canon_mcp/_git.py",
         "canon_mcp/_plan.py",
         "canon_mcp/plan.py",
         "canon_mcp/position.py",
+        "canon_mcp/review.py",
     ],
     imports = ["."],
     visibility = ["//tests:__pkg__"],

@@ -15,6 +15,18 @@ def _empty_plan() -> dict[str, Any]:
     return {"header": {}, "sections": {}}
 
 
+def _no_review() -> dict[str, Any]:
+    return {"reviewers_called_for": ["reviewer"], "verdict": None}
+
+
+def _review(decision: str, *, stale: bool = False, reason: str = "") -> dict[str, Any]:
+    return {
+        "reviewers_called_for": ["reviewer"],
+        "verdict": {"decision": decision, "reason": reason},
+        "stale": stale,
+    }
+
+
 class CheckStateTests(unittest.TestCase):
     def test_no_checks_is_all_clear(self) -> None:
         pr: dict[str, Any] = {"statusCheckRollup": []}
@@ -43,22 +55,22 @@ class CheckStateTests(unittest.TestCase):
 
 class NextStepTests(unittest.TestCase):
     def test_no_verify_signal_wins_first(self) -> None:
-        step = position._next_step(False, None, None)
+        step = position._next_step(False, None, None, _no_review())
         self.assertIn("first-run setup", step)
 
     def test_no_plan_when_verified(self) -> None:
-        step = position._next_step(True, None, None)
+        step = position._next_step(True, None, None, _no_review())
         self.assertIn("plan mode", step)
 
     def test_no_pr_when_plan_exists(self) -> None:
         plan = _empty_plan()
-        step = position._next_step(True, plan, None)
+        step = position._next_step(True, plan, None, _no_review())
         self.assertIn("open a pull request", step)
 
     def test_closed_pr_is_reported(self) -> None:
         plan = _empty_plan()
         pr: dict[str, Any] = {"number": 6, "state": "MERGED", "statusCheckRollup": []}
-        step = position._next_step(True, plan, pr)
+        step = position._next_step(True, plan, pr, _no_review())
         self.assertIn("#6", step)
         self.assertIn("merged", step)
 
@@ -67,12 +79,11 @@ class NextStepTests(unittest.TestCase):
         pr = {
             "number": 7,
             "state": "OPEN",
-            "reviewDecision": "",
             "statusCheckRollup": [
                 {"name": "ci", "conclusion": "FAILURE", "status": "COMPLETED"}
             ],
         }
-        step = position._next_step(True, plan, pr)
+        step = position._next_step(True, plan, pr, _no_review())
         self.assertIn("fix the failing check (ci)", step)
 
     def test_incomplete_check_asks_to_wait(self) -> None:
@@ -80,44 +91,44 @@ class NextStepTests(unittest.TestCase):
         pr = {
             "number": 7,
             "state": "OPEN",
-            "reviewDecision": "",
             "statusCheckRollup": [{"name": "ci", "status": "IN_PROGRESS"}],
         }
-        step = position._next_step(True, plan, pr)
+        step = position._next_step(True, plan, pr, _no_review())
         self.assertIn("wait for CI", step)
 
-    def test_empty_review_decision_asks_a_human(self) -> None:
+    def test_no_verdict_yet_asks_to_dispatch_the_reviewer(self) -> None:
         plan = _empty_plan()
-        pr: dict[str, Any] = {
-            "number": 7,
-            "state": "OPEN",
-            "reviewDecision": "",
-            "statusCheckRollup": [],
-        }
-        step = position._next_step(True, plan, pr)
-        self.assertIn("ask a human to review", step)
-        self.assertIn("Phase 1", step)
+        pr: dict[str, Any] = {"number": 7, "state": "OPEN", "statusCheckRollup": []}
+        step = position._next_step(True, plan, pr, _no_review())
+        self.assertIn("dispatch the reviewer", step)
 
-    def test_changes_requested(self) -> None:
+    def test_stale_verdict_asks_to_dispatch_again(self) -> None:
         plan = _empty_plan()
-        pr: dict[str, Any] = {
-            "number": 7,
-            "state": "OPEN",
-            "reviewDecision": "CHANGES_REQUESTED",
-            "statusCheckRollup": [],
-        }
-        step = position._next_step(True, plan, pr)
-        self.assertIn("address the requested changes", step)
+        pr: dict[str, Any] = {"number": 7, "state": "OPEN", "statusCheckRollup": []}
+        review = _review("READY FOR HUMAN APPROVAL", stale=True)
+        step = position._next_step(True, plan, pr, review)
+        self.assertIn("dispatch the reviewer again", step)
 
-    def test_approved_and_green_is_ready_to_merge(self) -> None:
+    def test_changes_required(self) -> None:
         plan = _empty_plan()
-        pr: dict[str, Any] = {
-            "number": 7,
-            "state": "OPEN",
-            "reviewDecision": "APPROVED",
-            "statusCheckRollup": [],
-        }
-        step = position._next_step(True, plan, pr)
+        pr: dict[str, Any] = {"number": 7, "state": "OPEN", "statusCheckRollup": []}
+        review = _review("CHANGES REQUIRED")
+        step = position._next_step(True, plan, pr, review)
+        self.assertIn("address the reviewer's requested changes", step)
+
+    def test_blocked_by_missing_evidence(self) -> None:
+        plan = _empty_plan()
+        pr: dict[str, Any] = {"number": 7, "state": "OPEN", "statusCheckRollup": []}
+        review = _review("BLOCKED BY MISSING EVIDENCE", reason="no diff supplied")
+        step = position._next_step(True, plan, pr, review)
+        self.assertIn("resolve what's blocking review", step)
+        self.assertIn("no diff supplied", step)
+
+    def test_ready_for_human_approval_is_ready_to_merge(self) -> None:
+        plan = _empty_plan()
+        pr: dict[str, Any] = {"number": 7, "state": "OPEN", "statusCheckRollup": []}
+        review = _review("READY FOR HUMAN APPROVAL")
+        step = position._next_step(True, plan, pr, review)
         self.assertIn("ready for a human to merge", step)
 
 
@@ -132,6 +143,7 @@ class BuildPositionTests(unittest.TestCase):
             mock.patch("canon_mcp.position.read_plan_file", return_value=None),
             mock.patch("canon_mcp.position.load_config", return_value=None),
             mock.patch("canon_mcp.position.pr_view") as pr_view_mock,
+            mock.patch("canon_mcp.position.build_review", return_value=_no_review()),
         ):
             result = position.build_position(Path("/repo"))
 
@@ -142,16 +154,12 @@ class BuildPositionTests(unittest.TestCase):
         self.assertIn("first-run setup", result["next_step"])
 
     def test_looks_up_the_pr_on_a_feature_branch(self) -> None:
-        pr: dict[str, Any] = {
-            "number": 7,
-            "state": "OPEN",
-            "reviewDecision": "APPROVED",
-            "statusCheckRollup": [],
-        }
+        pr: dict[str, Any] = {"number": 7, "state": "OPEN", "statusCheckRollup": []}
         _saved_plan: dict[str, Any] = {
             "header": {"status": "approved", "done": "", "verify": "just test"},
             "sections": {},
         }
+        review = _review("READY FOR HUMAN APPROVAL")
         with (
             mock.patch(
                 "canon_mcp.position.current_branch", return_value="feature/widget"
@@ -168,10 +176,12 @@ class BuildPositionTests(unittest.TestCase):
                 "canon_mcp.position.load_config", return_value={"verify": "just test"}
             ),
             mock.patch("canon_mcp.position.pr_view", return_value=pr),
+            mock.patch("canon_mcp.position.build_review", return_value=review),
         ):
             result = position.build_position(Path("/repo"))
 
         self.assertEqual(result["pull_request"], pr)
+        self.assertEqual(result["review"], review)
         self.assertTrue(result["verify_configured"])
         self.assertEqual(result["plan"]["verify"], "just test")
         self.assertIn("ready for a human to merge", result["next_step"])
