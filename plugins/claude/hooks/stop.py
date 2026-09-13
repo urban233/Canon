@@ -41,23 +41,8 @@ _MAX_CONSECUTIVE_REFUSALS = 3
 _VERIFY_TIMEOUT_SECONDS = 300
 _OUTPUT_TAIL_CHARS = 4000
 
-_STATE_SUBDIR = "canon"
 _PROMPTED_MARKER_NAME = "verify_prompted"
 _REFUSAL_COUNTER_NAME = "consecutive_refusals"
-
-
-def _state_dir(payload: dict[str, object] | None) -> Path | None:
-    """The session-scoped directory this hook may write to, if any.
-
-    None when the payload carries no `scratchpad_dir` -- callers must
-    treat that as "remember nothing," not as an error.
-    """
-    if payload is None:
-        return None
-    raw = payload.get("scratchpad_dir")
-    if isinstance(raw, str) and raw:
-        return Path(raw) / _STATE_SUBDIR
-    return None
 
 
 def _has_been_prompted(state_dir: Path | None) -> bool:
@@ -143,7 +128,7 @@ def _run_verification(root: Path, command: str) -> tuple[bool, str]:
 def main() -> None:
     payload = _common.read_payload()
     root = _common.repo_root(payload)
-    state_dir = _state_dir(payload)
+    state_dir = _common.state_dir(payload)
     config = _config.load_config(root)
 
     if config is None or not _config.has_verification_signal(config):

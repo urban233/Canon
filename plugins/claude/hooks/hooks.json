@@ -19,6 +19,15 @@
             "command": "python3 ${CLAUDE_PLUGIN_ROOT}/hooks/save_plan.py"
           }
         ]
+      },
+      {
+        "matcher": "Edit|Write",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 ${CLAUDE_PLUGIN_ROOT}/hooks/check_scope.py"
+          }
+        ]
       }
     ],
     "SessionStart": [

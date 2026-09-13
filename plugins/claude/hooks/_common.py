@@ -14,9 +14,10 @@ Every Canon gate fails open (see `fail_open`): a guardrail that errors must
 never block work. And Canon writes no repository state -- the one file this
 module writes, `.canon/hooks/decisions.jsonl`, is a gitignored local
 diagnostic that is never read back to make a decision. The single permitted
-exception is a `Stop` hook's consecutive-refusal counter, which lives in the
-session's `scratchpad_dir`, never in the repository, and is documented on
-that hook rather than here.
+exception is session-scoped counter state under `state_dir` (the session's
+`scratchpad_dir`, never the repository) -- used by `stop.py`'s
+consecutive-refusal counter and `check_scope.py`'s consecutive-departure
+counter, each documented on its own hook rather than here.
 """
 
 from __future__ import annotations
@@ -295,3 +296,101 @@ def plan_sections(body: str) -> dict[str, str]:
         end = matches[index + 1].start() if index + 1 < len(matches) else len(body)
         sections[name] = body[start:end].strip()
     return sections
+
+
+_HEADER_DELIMITER = "---\n"
+_HEADER_END_MARKER = "\n---\n"
+
+
+def _unescape_scalar(value: str) -> str:
+    """Reverse `save_plan.py`'s `_yaml_scalar` escaping: a backslash
+    always means "take the next character literally"."""
+    result: list[str] = []
+    index = 0
+    while index < len(value):
+        char = value[index]
+        if char == "\\" and index + 1 < len(value):
+            result.append(value[index + 1])
+            index += 2
+            continue
+        result.append(char)
+        index += 1
+    return "".join(result)
+
+
+def _split_document(text: str) -> tuple[str, str] | None:
+    """Split a saved plan file into (header text, body text), or None if
+    it doesn't start with a `---` header block."""
+    if not text.startswith(_HEADER_DELIMITER):
+        return None
+    rest = text[len(_HEADER_DELIMITER) :]
+    end_index = rest.find(_HEADER_END_MARKER)
+    if end_index == -1:
+        return None
+    header_text = rest[:end_index]
+    body_text = rest[end_index + len(_HEADER_END_MARKER) :].lstrip("\n")
+    return header_text, body_text
+
+
+def _parse_header_lines(header_text: str) -> dict[str, str]:
+    header: dict[str, str] = {}
+    for line in header_text.splitlines():
+        if ":" not in line:
+            continue
+        key, _, raw_value = line.partition(":")
+        key = key.strip()
+        raw_value = raw_value.strip()
+        if (
+            len(raw_value) >= 2
+            and raw_value.startswith('"')
+            and raw_value.endswith('"')
+        ):
+            header[key] = _unescape_scalar(raw_value[1:-1])
+        else:
+            header[key] = raw_value
+    return header
+
+
+def plan_header_and_body(text: str) -> tuple[dict[str, str], str]:
+    """Parse a saved plan file into (header dict, body text).
+
+    Handles exactly the shape `save_plan.py`'s own `_format_header`
+    writes: `key: "quoted value"` or a bare `key:` -- not general YAML.
+    `{}` and the whole `text` as body if there's no `---` header block
+    (e.g. a hand-written file `save_plan.py` never touched) -- degrades
+    gracefully rather than raising, same as every other reader in this
+    module.
+    """
+    split = _split_document(text)
+    if split is None:
+        return {}, text
+    header_text, body_text = split
+    return _parse_header_lines(header_text), body_text
+
+
+def parse_header(text: str) -> dict[str, str]:
+    """Parse a saved plan's `---`-delimited header into `{key: value}`.
+    See `plan_header_and_body` for the format and fallback behavior."""
+    return plan_header_and_body(text)[0]
+
+
+_STATE_SUBDIR_DEFAULT = "canon"
+
+
+def state_dir(
+    payload: dict[str, Any] | None, subdir: str = _STATE_SUBDIR_DEFAULT
+) -> Path | None:
+    """The session-scoped directory a hook may keep state under, if any.
+
+    None when the payload carries no `scratchpad_dir` -- callers must
+    treat that as "remember nothing," not as an error. This is the one
+    kind of state Canon hooks are allowed to keep (see this module's
+    docstring): never under the repository, and never read back to
+    decide anything beyond the current session.
+    """
+    if payload is None:
+        return None
+    raw = payload.get("scratchpad_dir")
+    if isinstance(raw, str) and raw:
+        return Path(raw) / subdir
+    return None
