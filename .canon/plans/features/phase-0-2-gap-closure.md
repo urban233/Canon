@@ -23,8 +23,9 @@ first is what makes Phase 3's signal mean anything.
 
 ## Success
 
-- Every numbered finding below has either a closing commit or a recorded
-  decision saying why the plan's sentence no longer applies.
+- Every numbered finding below has either a closing commit, a recorded
+  decision saying why the plan's sentence no longer applies, or an
+  explicit withdrawal saying it stays open (see step 9).
 - `.canon/config.json` exists in this repo and Canon gates its own
   development — currently it does not, so none of this is dogfooded.
 - `just ci` stays green at every step; each step is one branch and one
@@ -80,7 +81,7 @@ main
  │                             └── gap/7-feature-step-position
  │                                  └── gap/8-notebooks
  │                                       └── gap/10-docs-and-status
- └── gap/9-async-headless-test                PR → main  (independent)
+ └── (step 9 withdrawn -- see below)
 ```
 
 **Why linear rather than several parallel branches off `main`.** Almost
@@ -425,25 +426,23 @@ not have to land as one PR:
 `.ipynb` fixture, and Canon still never rewrites, strips or renders a
 notebook.
 
-### 9 · `async-headless-test` — closes finding 9
+### 9 · *withdrawn* — `async-headless-test`
 
-Phase 2's own text: *"The three interaction modes, with `async` tested
-against a **real headless run** rather than assumed."* Every `async` test
-today asserts on `interaction_mode()` reading a dict or mocks the
-payload. There is no `claude -p` invocation anywhere in `tests/` or CI.
+Was: a real headless `claude -p` run asserting `async` mode denies with
+its question surfaced, per Phase 2's "tested against a real headless run
+rather than assumed."
 
-- A test that installs the plugin into a scratch git repository with
-  `{"mode": "async"}`, runs `claude -p` against a prompt that trips the
-  plan gate, and asserts the gate denied with the surfaced question
-  rather than degrading to a silent block.
-- **It needs credentials**, so it cannot be an ordinary `bazel test`
-  target. Tag it `manual` + `external`, and have CI run it only when the
-  API-key secret is present. CI already installs
-  `@anthropic-ai/claude-code`, so the harness half exists.
-- Say plainly in the Justfile recipe that a skipped run is not a pass.
+**Withdrawn by the developer**, not deferred: a test that needs an API
+key in CI is not suited to Canon at its current stage. Finding 9 stands
+as a known gap rather than a closed one -- `async` mode keeps its unit
+coverage (config parsing, and `plan_gate` denying rather than asking)
+and remains unexercised against a real headless session.
 
-**Done when** the target exists, passes against a real headless run
-locally, and CI runs it on `main`.
+The mode itself is deliberately kept. Removing it would be worse than
+leaving it untested: without `async`, a headless or Slack run falls back
+to `ask`, which §07 records degrades silently to *deny with no
+explanation* when there is no interactive terminal -- the exact harness
+sharp edge Canon exists to absorb.
 
 ### 10 · `docs-and-status` — housekeeping
 

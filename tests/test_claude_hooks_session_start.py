@@ -326,5 +326,66 @@ class StaysLiveWhenCanonIsInertTests(unittest.TestCase):
             self.assertIn("not configured yet", output)
 
 
+class NotebookSetupCheckTests(unittest.TestCase):
+    """§07: "Canon's setup check notices `.ipynb` tracked with neither
+    configured and says so once, with the fix. It recommends and never
+    installs, the same rule as branch protection."
+    """
+
+    def _repo(self, root: Path, *, track_notebook: bool = True) -> None:
+        subprocess.run(["git", "init", "-q"], cwd=root, check=True, capture_output=True)
+        if not track_notebook:
+            return
+        (root / "analysis.ipynb").write_text("{}", encoding="utf-8")
+        subprocess.run(
+            ["git", "add", "analysis.ipynb"],
+            cwd=root,
+            check=True,
+            capture_output=True,
+        )
+
+    def test_says_so_when_neither_tool_is_configured(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            self._repo(root)
+            note = session_start._notebook_setup_note(root)
+            self.assertIsNotNone(note)
+            assert note is not None
+            self.assertIn("analysis.ipynb", note)
+            self.assertIn("nbstripout", note)
+            self.assertIn("never install", note)
+
+    def test_silent_when_nbstripout_is_configured(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            self._repo(root)
+            (root / ".gitattributes").write_text(
+                "*.ipynb filter=nbstripout\n", encoding="utf-8"
+            )
+            self.assertIsNone(session_start._notebook_setup_note(root))
+
+    def test_silent_when_jupytext_is_configured(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            self._repo(root)
+            (root / "jupytext.toml").write_text("", encoding="utf-8")
+            self.assertIsNone(session_start._notebook_setup_note(root))
+
+    def test_silent_for_a_repository_with_no_notebooks(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            self._repo(root, track_notebook=False)
+            self.assertIsNone(session_start._notebook_setup_note(root))
+
+    def test_an_untracked_notebook_does_not_trigger_it(self) -> None:
+        """A scratch notebook nobody committed is not a repository
+        configuration problem."""
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            self._repo(root, track_notebook=False)
+            (root / "scratch.ipynb").write_text("{}", encoding="utf-8")
+            self.assertIsNone(session_start._notebook_setup_note(root))
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -60,34 +60,28 @@ class MatchesRiskSurfaceTests(unittest.TestCase):
 
 
 class ReviewersCalledForTests(unittest.TestCase):
+    """`_reviewers_called_for` now takes the changed paths directly.
+
+    `build_review` resolves the base and the diff once and passes the
+    result to both this and the notebook report, rather than each
+    recomputing it -- so this is pure and needs no mocking.
+    """
+
     def test_only_reviewer_when_nothing_matches(self) -> None:
-        with (
-            mock.patch("canon_mcp.review.merge_base", return_value="abc1234"),
-            mock.patch("canon_mcp.review.default_branch", return_value="main"),
-            mock.patch("canon_mcp.review.changed_paths", return_value=["README.md"]),
-        ):
-            self.assertEqual(review._reviewers_called_for(Path("/repo")), ["reviewer"])
+        self.assertEqual(review._reviewers_called_for(["README.md"]), ["reviewer"])
 
     def test_risk_reviewer_joins_on_a_matching_path(self) -> None:
-        with (
-            mock.patch("canon_mcp.review.merge_base", return_value="abc1234"),
-            mock.patch("canon_mcp.review.default_branch", return_value="main"),
-            mock.patch(
-                "canon_mcp.review.changed_paths",
-                return_value=["migrations/0007.py"],
-            ),
-        ):
-            self.assertEqual(
-                review._reviewers_called_for(Path("/repo")),
-                ["reviewer", "risk-reviewer"],
-            )
+        self.assertEqual(
+            review._reviewers_called_for(["migrations/0007.py"]),
+            ["reviewer", "risk-reviewer"],
+        )
 
     def test_only_reviewer_when_base_is_unknown(self) -> None:
-        with (
-            mock.patch("canon_mcp.review.merge_base", return_value=None),
-            mock.patch("canon_mcp.review.default_branch", return_value="main"),
-        ):
-            self.assertEqual(review._reviewers_called_for(Path("/repo")), ["reviewer"])
+        """No base means no diff to inspect, which reaches here as None."""
+        self.assertEqual(review._reviewers_called_for(None), ["reviewer"])
+
+    def test_only_reviewer_for_an_empty_diff(self) -> None:
+        self.assertEqual(review._reviewers_called_for([]), ["reviewer"])
 
 
 def _verdict(decision: str, *, reason: str = "", stale: bool = False) -> dict[str, Any]:
@@ -226,6 +220,77 @@ class BuildReviewTests(unittest.TestCase):
         assert result["verdict"] is not None
         self.assertEqual(result["verdict"]["decision"], "CHANGES REQUIRED")
         self.assertFalse(result["stale"])
+
+
+def _notebook_json(*sources: str) -> str:
+    return json.dumps(
+        {
+            "cells": [
+                {
+                    "cell_type": "code",
+                    "source": [s],
+                    "execution_count": 1,
+                    "outputs": [{"text": "noise"}],
+                    "metadata": {},
+                }
+                for s in sources
+            ],
+            "metadata": {},
+            "nbformat": 4,
+            "nbformat_minor": 5,
+        }
+    )
+
+
+class NotebookReportTests(unittest.TestCase):
+    """\u00a707: hand the reviewer the jupytext `.py` where one exists,
+    otherwise the extracted code-cell source -- and tell it which."""
+
+    def _report(
+        self, root: Path, before: str | None, after: str | None
+    ) -> dict[str, Any]:
+        def fake_show(_root: Path, revision: str, _path: str) -> str | None:
+            return after if revision == "HEAD" else before
+
+        with mock.patch("canon_mcp.review.file_at_revision", side_effect=fake_show):
+            return review._notebook_report(root, "abc1234", "analysis.ipynb")
+
+    def test_extracted_form_carries_source_and_says_so(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            report = self._report(
+                Path(tmp), _notebook_json("x = 1"), _notebook_json("x = 2")
+            )
+            self.assertEqual(report["form"], "extracted")
+            self.assertIn("x = 2", report["source"])
+            self.assertNotIn("noise", report["source"])
+            self.assertIn("execution_count", report["note"])
+            self.assertEqual(report["code_cells_changed"], 1)
+
+    def test_jupytext_pairing_is_preferred_over_extraction(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "analysis.py").write_text("# %%\nx = 2\n", encoding="utf-8")
+            report = self._report(
+                root, _notebook_json("x = 1"), _notebook_json("x = 2")
+            )
+            self.assertEqual(report["form"], "jupytext")
+            self.assertEqual(report["script_path"], "analysis.py")
+            self.assertNotIn("source", report)
+
+    def test_unparsable_notebook_is_reported_as_unavailable(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            report = self._report(Path(tmp), None, "not a notebook")
+            self.assertEqual(report["form"], "unavailable")
+            self.assertIsNone(report["code_cells_changed"])
+
+    def test_only_notebooks_are_reported(self) -> None:
+        with mock.patch("canon_mcp.review._notebook_report") as reported:
+            review._notebooks(Path("/repo"), "abc1234", ["a.py", "b.ipynb"])
+        self.assertEqual(reported.call_count, 1)
+        self.assertEqual(reported.call_args[0][2], "b.ipynb")
+
+    def test_no_base_means_no_notebook_report(self) -> None:
+        self.assertEqual(review._notebooks(Path("/repo"), None, ["b.ipynb"]), [])
 
 
 if __name__ == "__main__":

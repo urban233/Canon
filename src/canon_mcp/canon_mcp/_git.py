@@ -184,6 +184,16 @@ def merged_branch_names(root: Path, default_branch_name: str) -> set[str]:
     return names
 
 
+def file_at_revision(root: Path, revision: str, path: str) -> str | None:
+    """The contents of `path` as of `revision`, or None.
+
+    None covers a path that did not exist then, which is how a newly
+    added file reads -- callers treat that as "no previous version",
+    not as an error.
+    """
+    return _run_git(root, "show", f"{revision}:{path}")
+
+
 def commits_ahead(root: Path, base_sha: str | None) -> int | None:
     """How many commits HEAD is ahead of `base_sha`, or None if either
     that count or `base_sha` itself couldn't be determined."""

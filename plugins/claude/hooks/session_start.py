@@ -25,6 +25,10 @@ file (the plan, git history, `.canon/hooks/decisions.jsonl`), so nothing
 needed capturing *before* compaction -- there is no hook event that could
 have done that capture anyway.
 
+It also carries §07's notebook setup check: a repository tracking
+`.ipynb` with neither `nbstripout` nor `jupytext` configured is told so,
+once per session, with the fix -- recommended, never installed.
+
 Every piece degrades independently and silently: a missing plan file, a
 failed git command, or a missing/unauthenticated/offline `gh` each drop
 only their own piece of the message, never the whole thing. This hook
@@ -144,6 +148,69 @@ def _pr_status(root: Path) -> str:
     return f"{header}: {checks}" if checks else header
 
 
+_JUPYTEXT_CONFIG_NAMES = ("jupytext.toml", ".jupytext.toml", "jupytext.yml")
+_NOTEBOOK_CHECK_LIMIT = 1
+
+
+def _tracked_notebook(root: Path) -> str | None:
+    """One tracked `.ipynb`, or None. Asks git rather than walking the
+    tree, so an untracked scratch notebook never triggers this."""
+    try:
+        completed = subprocess.run(
+            ["git", "ls-files", "-z", "*.ipynb"],
+            cwd=root,
+            capture_output=True,
+            text=True,
+            timeout=10,
+            check=False,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return None
+    if completed.returncode != 0:
+        return None
+    for name in completed.stdout.split("\0"):
+        if name.strip():
+            return name.strip()
+    return None
+
+
+def _readable_form_configured(root: Path) -> bool:
+    """Whether an `nbstripout` git filter or a jupytext config is set up."""
+    try:
+        attributes = (root / ".gitattributes").read_text(encoding="utf-8")
+    except OSError:
+        attributes = ""
+    for line in attributes.splitlines():
+        if ".ipynb" in line and "filter=" in line:
+            return True
+    if any((root / name).is_file() for name in _JUPYTEXT_CONFIG_NAMES):
+        return True
+    try:
+        return "[tool.jupytext" in (root / "pyproject.toml").read_text(encoding="utf-8")
+    except OSError:
+        return False
+
+
+def _notebook_setup_note(root: Path) -> str | None:
+    """docs/plan.md §07: "Canon's setup check notices `.ipynb` tracked
+    with neither configured and says so once, with the fix. It
+    recommends and never installs, the same rule as branch protection."
+
+    "Once" is per session, which is what `SessionStart` gives for free.
+    """
+    notebook = _tracked_notebook(root)
+    if notebook is None or _readable_form_configured(root):
+        return None
+    return (
+        f"Notebooks: this repository tracks .ipynb files (e.g. {notebook}) with "
+        "neither nbstripout nor jupytext configured, so their diffs carry "
+        "execution_count churn and re-serialised output. Canon extracts code "
+        "cells itself for review, but a git filter (nbstripout) or a jupytext "
+        "pairing is the real fix. Recommend it if it comes up -- never install "
+        "it."
+    )
+
+
 def _position_line(
     root: Path, branch: str, default_branch: str, base: str | None
 ) -> str:
@@ -156,6 +223,9 @@ def _position_line(
         parts.append(f"Diff vs `{default_branch}`: {diff}.")
 
     parts.append(f"PR: {_pr_status(root)}.")
+    note = _notebook_setup_note(root)
+    if note is not None:
+        parts.append(note)
     return " ".join(parts)
 
 

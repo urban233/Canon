@@ -22,6 +22,13 @@ reviewer's general-correctness pass. Specifically scrutinize:
 - Whether a schema or permission change is consistent with the plan's
   `## Non-goals` -- a deliberate omission there is not a gap to report.
 
+If `canon_review` reports `notebooks`, read what it says about each one.
+A `jupytext` form means review the paired `.py`; an `extracted` form
+means you are reading code-cell source Canon pulled out of the notebook,
+where outputs and `execution_count` are absent by construction -- never
+file their absence, or their churn, as a finding. Size for a notebook is
+`code_cells_changed`, not lines.
+
 **State your full verdict in your final reply** -- there is nothing else
 reading your work afterward except your own final message. End with
 exactly one of `READY FOR HUMAN APPROVAL`, `CHANGES REQUIRED`, or
