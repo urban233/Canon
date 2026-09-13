@@ -126,10 +126,18 @@ def _approved_payload(root: Path, plan_text: str) -> dict[str, object]:
     }
 
 
-def _invoke_main(payload: dict[str, object]) -> None:
+def _invoke_main(payload: dict[str, object]) -> str:
+    """Run the hook, returning whatever `additionalContext` it emitted
+    (or "" for the silent path)."""
+    buffer = io.StringIO()
     with mock.patch.object(sys, "stdin", io.StringIO(json.dumps(payload))):
         with mock.patch("sys.exit"):
-            save_plan.main()
+            with mock.patch("sys.stdout", buffer):
+                save_plan.main()
+    raw = buffer.getvalue()
+    if not raw:
+        return ""
+    return json.loads(raw)["hookSpecificOutput"]["additionalContext"]
 
 
 class PlanBodyParsingTests(unittest.TestCase):
@@ -551,6 +559,73 @@ class DerivedHeaderFieldTests(unittest.TestCase):
         `canon_position` both follow this field."""
         with tempfile.TemporaryDirectory() as tmp:
             self.assertIsNone(save_plan._parent_path(Path(tmp), "nope.md"))
+
+
+class MissingSectionAskTests(unittest.TestCase):
+    """§06: "Missing -> it asks, once. It never rejects a plan."
+
+    The recording half already worked (a `notes:` line in the header);
+    the asking half emitted nothing, so nobody was ever told -- while
+    `canon_ship` blocked on that same note. See
+    docs/decisions/0002-ship-blocks-on-a-missing-required-section.md.
+    """
+
+    def _approve(self, root: Path, body: str) -> str:
+        return _invoke_main(_approved_payload(root, body))
+
+    def test_missing_non_goals_is_surfaced(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            _init_repo(root, "feature/widget")
+            message = self._approve(root, "## Verification\njust test\n")
+            self.assertIn("## Non-goals", message)
+            self.assertIn("scope check", message)
+
+    def test_missing_verification_is_surfaced(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            _init_repo(root, "feature/widget")
+            message = self._approve(root, "## Non-goals\nNot the parser.\n")
+            self.assertIn("## Verification", message)
+
+    def test_both_missing_are_named_together(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            _init_repo(root, "feature/widget")
+            message = self._approve(root, "## Approach\nDo it.\n")
+            self.assertIn("## Non-goals", message)
+            self.assertIn("## Verification", message)
+
+    def test_the_plan_is_saved_anyway(self) -> None:
+        """It never rejects a plan."""
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            _init_repo(root, "feature/widget")
+            self._approve(root, "## Approach\nDo it.\n")
+            saved = root / ".canon" / "plans" / "feature" / "widget.md"
+            self.assertTrue(saved.exists())
+            self.assertIn("## Approach", saved.read_text(encoding="utf-8"))
+
+    def test_a_complete_plan_says_nothing(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            _init_repo(root, "feature/widget")
+            message = self._approve(
+                root,
+                "## Non-goals\nNot the parser.\n\n## Verification\njust test\n",
+            )
+            self.assertEqual(message, "")
+
+    def test_a_feature_plan_is_exempt(self) -> None:
+        """`## Verification` has no meaning for a document that
+        describes no branch."""
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            _init_repo(root, "main")
+            message = self._approve(
+                root, "# Permalinks\n\n## Steps\n- slugs: do the slugs\n"
+            )
+            self.assertEqual(message, "")
 
 
 class VerifyOverrideTests(unittest.TestCase):

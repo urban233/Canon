@@ -32,7 +32,14 @@ def _plan_readiness(plan: dict[str, Any] | None) -> tuple[bool, str | None]:
         return False, f"plan status is '{status}', not approved"
     notes = header.get("notes")
     if notes:
-        return False, f"plan is missing required sections: {notes}"
+        # Reported here as well as asked at save time -- see
+        # docs/decisions/0002-ship-blocks-on-a-missing-required-section.md
+        # for why this stays a block rather than a warning.
+        where = plan.get("path")
+        return False, (
+            f"plan is missing required sections: {notes}"
+            + (f" -- add them to {where}" if where else "")
+        )
     return True, None
 
 

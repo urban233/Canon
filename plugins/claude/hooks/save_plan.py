@@ -32,6 +32,12 @@ config to answer. This hook never runs `git add` or
 `git commit`: per §12, the saved plan rides inside whatever commit the
 developer's own work produces.
 
+A missing required section is surfaced here rather than only recorded:
+§06 says the hook "asks, once" and never rejects the plan, so the plan
+is written first and the ask goes out as `additionalContext`. Feature
+plans are exempt -- `## Verification` has no meaning for a document that
+describes no branch.
+
 A second path, added for feature plans (§06's "planning a feature, not
 just a branch"): a non-empty `## Steps` section is the signal that this
 approval is a `frame`-shaped feature plan rather than an ordinary branch
@@ -61,6 +67,19 @@ _SAVED_PATH_PATTERN = re.compile(r"Your plan has been saved to:\s*(\S+)")
 _REQUIRED_SECTION_LABELS = {
     "non-goals": "Non-goals",
     "verification": "Verification",
+}
+# Why each required section is required -- §06's rule is that "a section
+# is required only if something actually reads it", so the ask names the
+# reader rather than asserting the requirement.
+_REQUIRED_SECTION_READERS = {
+    "non-goals": (
+        "the scope check reads it on every edit, and the reviewer reads it "
+        "so a deliberate omission is never written up as a gap"
+    ),
+    "verification": (
+        "it states what counts as done, and a lone backticked command on "
+        "its first line sets this branch's verify: override"
+    ),
 }
 _H1_HEADING_PATTERN = re.compile(r"^#\s+(.+?)\s*$", re.MULTILINE)
 # Heading aliases: plan mode phrases these a few ways, and the point is to
@@ -251,6 +270,30 @@ def _parent_path(root: Path, section: str) -> str | None:
     return None
 
 
+def _missing_sections_message(plan_relative: str, missing: list[str]) -> str:
+    """The one-time ask for a required section that was not in the plan.
+
+    docs/plan.md §06: "At save time the hook checks only that the two
+    required ones are present and non-empty. Missing -> it asks, once.
+    It never rejects a plan." The plan is already written by the time
+    this is built -- this adds context, it cannot and must not block.
+
+    "Once" needs no counter: `PostToolUse:ExitPlanMode` fires once per
+    approval, and once the section is added there is nothing left to ask
+    about. Same "once for free" property `plan_gate.py` relies on.
+    """
+    named = " and ".join(f"## {_REQUIRED_SECTION_LABELS[name]}" for name in missing)
+    reasons = "; ".join(_REQUIRED_SECTION_READERS[name] for name in missing)
+    return (
+        f"Canon saved this plan to {plan_relative}, but {named} is missing "
+        f"or empty. It matters because {reasons}. Add it to the saved plan "
+        "now, asking the developer what belongs there if it is not obvious "
+        "-- otherwise `canon_ship` will report it as missing when this "
+        "branch is ready for a human. The plan itself is saved either way; "
+        "Canon mentions this once."
+    )
+
+
 def _format_feature_header() -> str:
     return "\n".join(["---", "status: approved", "steps:", "---"])
 
@@ -307,9 +350,10 @@ def main() -> None:
     default_branch = _common.default_branch(root)
     base = _common.merge_base(root, default_branch)
 
+    missing = _missing_required_sections(body)
     notes = [
         f"{_REQUIRED_SECTION_LABELS[name]} section is missing or empty"
-        for name in _missing_required_sections(body)
+        for name in missing
     ]
 
     sections = _common.plan_sections(body)
@@ -323,9 +367,15 @@ def main() -> None:
     )
     # `branch` may contain "/" (e.g. "feature/widget"), so the plan's own
     # parent directory -- not just .canon/plans/ itself -- needs creating.
-    plan_path = root / _PLANS_DIR_RELATIVE / f"{branch}.md"
+    plan_relative = f"{_PLANS_DIR_RELATIVE}/{branch}.md"
+    plan_path = root / plan_relative
     plan_path.parent.mkdir(parents=True, exist_ok=True)
     plan_path.write_text(header + "\n\n" + body.strip("\n") + "\n", encoding="utf-8")
+
+    if missing:
+        _common.context(
+            "PostToolUse", _missing_sections_message(plan_relative, missing)
+        )
 
 
 if __name__ == "__main__":
