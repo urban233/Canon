@@ -129,6 +129,12 @@ def merge_base(root: Path, default_branch_name: str) -> str | None:
     return sha[:9] if sha else None
 
 
+def head_sha(root: Path) -> str | None:
+    """The current HEAD's short SHA, or None if that can't be determined."""
+    sha = _run_git(root, "rev-parse", "HEAD")
+    return sha[:9] if sha else None
+
+
 def _emit(payload: dict[str, Any]) -> None:
     json.dump(payload, sys.stdout)
 
@@ -218,12 +224,16 @@ def log_decision(
     decision: str,
     *,
     reason: str = "",
+    extra: dict[str, Any] | None = None,
 ) -> None:
     """Append one local, gitignored diagnostic record.
 
-    Never raises: a broken log must never change a hook's own allow/ask/deny
-    behavior, and this file is never read back by any hook to decide
-    anything -- see the module docstring's no-stored-state rule.
+    `extra` merges additional fields into the record (e.g. the HEAD SHA a
+    review verdict was captured against) without those fields colliding
+    with the base ones -- see `capture_review.py`'s use of `extra={"head":
+    ...}`. Never raises: a broken log must never change a hook's own
+    allow/ask/deny behavior, and this file is never read back by any hook
+    to decide anything -- see the module docstring's no-stored-state rule.
     """
     try:
         record: dict[str, Any] = {
@@ -232,6 +242,8 @@ def log_decision(
             "decision": decision,
             "reason": reason,
         }
+        if extra:
+            record.update(extra)
         path = root / _DECISIONS_LOG_RELATIVE
         path.parent.mkdir(parents=True, exist_ok=True)
         with path.open("a", encoding="utf-8") as handle:

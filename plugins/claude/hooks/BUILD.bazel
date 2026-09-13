@@ -12,6 +12,7 @@ py_library(
         "stop.py",
         "save_plan.py",
         "session_start.py",
+        "capture_review.py",
         "__init__.py",
     ],
     imports = ["."],

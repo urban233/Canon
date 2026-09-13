@@ -2,11 +2,13 @@
 """`canon_position` -- where the work stands, computed fresh every call.
 
 Every field is derived from git, `.canon/config.json`, the saved plan
-file, and `gh pr view` at call time -- nothing is stored, per
-docs/plan.md's Invariant II. Fields for mechanisms that don't exist yet
-(Canon's own reviewer verdict, `canon_review` -- Phase 1) are simply
-absent rather than stubbed with a fake value; `next_step` says "ask a
-human to review" instead of pretending a review verdict exists.
+file, `gh pr view`, and (as of Phase 1) `canon_review`'s own captured
+reviewer verdict at call time -- nothing is stored, per docs/plan.md's
+Invariant II. `next_step`'s review branch is driven by Canon's own
+captured verdict, not GitHub's native `reviewDecision` field (still
+visible on `pull_request` for anyone who wants it) -- that's the point
+of Invariant III: the verdict Canon acts on is the one the reviewer
+subagent produced, not a retelling of it.
 """
 
 from __future__ import annotations
@@ -18,6 +20,7 @@ from ._config import has_verification_signal, load_config
 from ._gh import pr_view
 from ._git import commits_ahead, current_branch, default_branch, head_sha, merge_base
 from ._plan import read_plan_file
+from .review import build_review
 
 _INCOMPLETE_CHECK_STATUS = "COMPLETED"
 _FAILING_CHECK_CONCLUSIONS = {
@@ -54,7 +57,10 @@ def _check_state(pr: dict[str, Any]) -> tuple[str | None, str | None]:
 
 
 def _next_step(
-    verify_ok: bool, plan: dict[str, Any] | None, pr: dict[str, Any] | None
+    verify_ok: bool,
+    plan: dict[str, Any] | None,
+    pr: dict[str, Any] | None,
+    review: dict[str, Any],
 ) -> str:
     if not verify_ok:
         return (
@@ -74,17 +80,24 @@ def _next_step(
         return f"fix the failing check ({failing}) on PR #{number}"
     if incomplete:
         return f"wait for CI to finish ({incomplete}) on PR #{number}"
-    review = pr.get("reviewDecision") or ""
-    if review == "":
+    verdict = review.get("verdict")
+    if verdict is None:
+        return f"dispatch the reviewer subagent for PR #{number}"
+    if review.get("stale"):
         return (
-            f"ask a human to review PR #{number} "
-            "(Canon has no reviewer subagent yet -- that's Phase 1)"
+            f"dispatch the reviewer again for PR #{number} -- HEAD has moved "
+            "since the last verdict"
         )
-    if review == "CHANGES_REQUESTED":
-        return f"address the requested changes on PR #{number}"
-    if review == "APPROVED":
-        return f"PR #{number} is approved and green -- ready for a human to merge"
-    return f"PR #{number} review is pending ({review})"
+    decision = verdict.get("decision")
+    if decision == "CHANGES REQUIRED":
+        return f"address the reviewer's requested changes on PR #{number}"
+    if decision == "BLOCKED BY MISSING EVIDENCE":
+        return (
+            f"resolve what's blocking review on PR #{number}: {verdict.get('reason')}"
+        )
+    if decision == "READY FOR HUMAN APPROVAL":
+        return f"PR #{number} is reviewed and green -- ready for a human to merge"
+    return f"PR #{number}'s reviewer verdict is unrecognized: {decision}"
 
 
 def build_position(root: Path) -> dict[str, Any]:
@@ -98,7 +111,8 @@ def build_position(root: Path) -> dict[str, Any]:
     verify_ok = has_verification_signal(load_config(root))
     # No PR to ask about while standing on the default branch itself.
     pr = pr_view(root, branch) if branch != default else None
-    next_step = _next_step(verify_ok, plan, pr)
+    review = build_review(root)
+    next_step = _next_step(verify_ok, plan, pr, review)
     ahead_text = str(ahead) if ahead is not None else "an unknown number of"
     return {
         "branch": branch,
@@ -109,6 +123,7 @@ def build_position(root: Path) -> dict[str, Any]:
         "verify_configured": verify_ok,
         "plan": _plan_summary(plan),
         "pull_request": pr,
+        "review": review,
         "next_step": next_step,
         "summary": (
             f"On {branch}, {ahead_text} commit(s) ahead of {default}. {next_step}"
