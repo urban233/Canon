@@ -14,6 +14,8 @@ py_library(
         "session_start.py",
         "capture_review.py",
         "check_scope.py",
+        "plan_gate.py",
+        "git_guard.py",
         "__init__.py",
     ],
     imports = ["."],

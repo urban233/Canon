@@ -188,5 +188,19 @@ class SuggestVerifyCommandTests(unittest.TestCase):
             self.assertIsNone(_config.suggest_verify_command(Path(tmp)))
 
 
+class GuardDefaultBranchTests(unittest.TestCase):
+    def test_true_when_no_config(self) -> None:
+        self.assertTrue(_config.guard_default_branch(None))
+
+    def test_true_when_key_absent(self) -> None:
+        self.assertTrue(_config.guard_default_branch({}))
+
+    def test_false_when_explicitly_opted_out(self) -> None:
+        self.assertFalse(_config.guard_default_branch({"guard_default_branch": False}))
+
+    def test_true_when_explicitly_true(self) -> None:
+        self.assertTrue(_config.guard_default_branch({"guard_default_branch": True}))
+
+
 if __name__ == "__main__":
     unittest.main()
