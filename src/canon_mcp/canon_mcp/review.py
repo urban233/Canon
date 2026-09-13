@@ -29,7 +29,19 @@ from pathlib import Path
 from typing import Any
 
 from ._decisions import last_decision
-from ._git import changed_paths, default_branch, head_sha, merge_base
+from ._git import (
+    changed_paths,
+    default_branch,
+    file_at_revision,
+    head_sha,
+    merge_base,
+)
+from ._notebook import (
+    changed_code_cells,
+    code_cell_sources,
+    is_notebook,
+    paired_script,
+)
 
 _RISK_REVIEWER = "risk-reviewer"
 _RISK_SURFACE_KEYWORDS: dict[str, list[str]] = {
@@ -53,6 +65,68 @@ _SEVERITY_ORDER = [
 ]
 
 
+_MAX_NOTEBOOKS_REPORTED = 20
+_MAX_EXTRACTED_CHARS = 20000
+
+
+def _notebook_report(root: Path, base: str, path: str) -> dict[str, Any]:
+    """What the reviewer needs in order to read one changed notebook.
+
+    docs/plan.md §07: hand over the jupytext `.py` where one exists;
+    where neither tool is configured, extract the code cells' source
+    "and tell the reviewer what it is looking at, so `execution_count`
+    churn is never filed as a finding." The `form` field is that telling
+    -- a reviewer that does not know which of the two it has been given
+    cannot judge what the absence of output means.
+
+    Nothing is written to the repository: the extracted source is
+    returned inline, capped, since it exists to be read once.
+    """
+    after = file_at_revision(root, "HEAD", path)
+    before = file_at_revision(root, base, path)
+    report: dict[str, Any] = {
+        "path": path,
+        "code_cells_changed": changed_code_cells(before, after),
+    }
+    script = paired_script(root, path)
+    if script is not None:
+        report["form"] = "jupytext"
+        report["script_path"] = script
+        report["note"] = (
+            f"Review {script}, the jupytext pairing of this notebook, rather "
+            "than the .ipynb JSON."
+        )
+        return report
+    sources = code_cell_sources(after) if after is not None else None
+    if sources is None:
+        report["form"] = "unavailable"
+        report["note"] = (
+            "This notebook could not be parsed, and the repository configures "
+            "neither nbstripout nor jupytext. Say so rather than reviewing the "
+            "raw JSON."
+        )
+        return report
+    report["form"] = "extracted"
+    report["code_cells"] = len(sources)
+    report["source"] = "\n\n# %%\n".join(sources)[:_MAX_EXTRACTED_CHARS]
+    report["note"] = (
+        "This is the code-cell source Canon extracted from the notebook, not "
+        "the file on disk: outputs and execution_count are absent by "
+        "construction, so their churn is not a finding."
+    )
+    return report
+
+
+def _notebooks(root: Path, base: str | None, paths: list[str] | None) -> list[Any]:
+    if not base or not paths:
+        return []
+    notebooks = [path for path in paths if is_notebook(path)]
+    return [
+        _notebook_report(root, base, path)
+        for path in notebooks[:_MAX_NOTEBOOKS_REPORTED]
+    ]
+
+
 def _matches_risk_surface(path: str) -> bool:
     lowered = path.lower()
     if lowered.endswith(".sql"):
@@ -64,11 +138,9 @@ def _matches_risk_surface(path: str) -> bool:
     )
 
 
-def _reviewers_called_for(root: Path) -> list[str]:
+def _reviewers_called_for(paths: list[str] | None) -> list[str]:
     """`["reviewer"]`, plus `"risk-reviewer"` when a changed path
     matches a risk surface."""
-    base = merge_base(root, default_branch(root))
-    paths = changed_paths(root, base) if base else None
     reviewers = ["reviewer"]
     if paths and any(_matches_risk_surface(path) for path in paths):
         reviewers.append(_RISK_REVIEWER)
@@ -119,7 +191,10 @@ def build_review(root: Path) -> dict[str, Any]:
     verdict against the current HEAD, if every called-for reviewer has
     produced one."""
     current_head = head_sha(root)
-    reviewers = _reviewers_called_for(root)
+    base = merge_base(root, default_branch(root))
+    paths = changed_paths(root, base) if base else None
+    reviewers = _reviewers_called_for(paths)
+    notebooks = _notebooks(root, base, paths)
 
     per_reviewer: dict[str, dict[str, Any] | None] = {}
     for name in reviewers:
@@ -143,6 +218,7 @@ def build_review(root: Path) -> dict[str, Any]:
             "verdicts": per_reviewer,
             "verdict": None,
             "current_head": current_head,
+            "notebooks": notebooks,
             "message": "no reviewer verdict captured yet",
         }
     return {
@@ -150,5 +226,6 @@ def build_review(root: Path) -> dict[str, Any]:
         "verdicts": per_reviewer,
         "verdict": combined,
         "current_head": current_head,
+        "notebooks": notebooks,
         "stale": stale,
     }

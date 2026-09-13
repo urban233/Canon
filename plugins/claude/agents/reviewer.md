@@ -23,6 +23,13 @@ important boundary behavior; coverage percentages are diagnostic only. Do not
 persist on theoretical, rare, low-impact edge cases unless they affect safety,
 data integrity, compatibility, or likely regressions.
 
+If `canon_review` reports `notebooks`, read what it says about each one.
+A `jupytext` form means review the paired `.py`; an `extracted` form
+means you are reading code-cell source Canon pulled out of the notebook,
+where outputs and `execution_count` are absent by construction -- never
+file their absence, or their churn, as a finding. Size for a notebook is
+`code_cells_changed`, not lines.
+
 Follow `review-change`'s finding and coverage format exactly: rank findings
 most-important-first with a binary `blocking` flag, and record a coverage
 verdict for every review dimension.
