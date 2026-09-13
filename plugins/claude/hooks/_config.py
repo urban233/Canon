@@ -74,6 +74,19 @@ def has_verification_signal(config: dict[str, Any] | None) -> bool:
     return isinstance(verify, str) and verify.strip() != ""
 
 
+def guard_default_branch(config: dict[str, Any] | None) -> bool:
+    """Whether Canon should gate edits and commits made directly on the
+    default branch.
+
+    True unless a repo's config explicitly opts out -- the one thing
+    docs/plan.md §12 calls out as worth making configurable, for a
+    genuinely trunk-based repo.
+    """
+    if config is None:
+        return True
+    return config.get("guard_default_branch") is not False
+
+
 def suggest_verify_command(root: Path) -> str | None:
     """Infer a plausible "verify" command for the first-run proposal.
 
