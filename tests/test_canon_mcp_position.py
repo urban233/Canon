@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import tempfile
 import unittest
 from pathlib import Path
 from typing import Any
@@ -213,6 +214,80 @@ class BuildPositionTests(unittest.TestCase):
         ):
             result = position.build_position(Path("/repo"))
         self.assertEqual(result["mode"], "async")
+
+
+class FeatureStepTests(unittest.TestCase):
+    """§06's "which step am I on?", end to end from a branch plan's
+    `parent:` through the feature plan's `## Steps`."""
+
+    def _repo(self, tmp: str, *, parent: str = "permalinks.md") -> Path:
+        root = Path(tmp)
+        plans = root / ".canon" / "plans"
+        (plans / "features").mkdir(parents=True)
+        (plans / "features" / "permalinks.md").write_text(
+            "---\nstatus: approved\nsteps:\n---\n\n"
+            "# Permalinks\n\n## Steps\n"
+            "- slugs: make duplicate slugs raise\n"
+            "- permalinks-api: expose the endpoint\n"
+            "- docs: write the migration note\n",
+            encoding="utf-8",
+        )
+        (plans / "permalinks-api.md").write_text(
+            f'---\nstatus: approved\nparent: "features/{parent}"\n---\n\n'
+            "## Approach\nx\n",
+            encoding="utf-8",
+        )
+        return root
+
+    def _build(self, root: Path, pulls: dict[str, dict[str, object]]):
+        with (
+            mock.patch(
+                "canon_mcp.position.current_branch", return_value="permalinks-api"
+            ),
+            mock.patch("canon_mcp.position.default_branch", return_value="main"),
+            mock.patch("canon_mcp.position.merge_base", return_value="abc123456"),
+            mock.patch("canon_mcp.position.head_sha", return_value="def123456"),
+            mock.patch("canon_mcp.position.commits_ahead", return_value=2),
+            mock.patch("canon_mcp.position.pr_view", return_value=None),
+            mock.patch(
+                "canon_mcp.position.build_review", return_value={"verdict": None}
+            ),
+            mock.patch("canon_mcp.position.load_config", return_value={"verify": "x"}),
+            mock.patch(
+                "canon_mcp.position.branch_names", return_value={"permalinks-api"}
+            ),
+            mock.patch("canon_mcp.position.merged_branch_names", return_value=set()),
+            mock.patch("canon_mcp.position.pr_list_by_head", return_value=pulls),
+        ):
+            return position.build_position(root)
+
+    def test_reports_the_current_step(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = self._repo(tmp)
+            result = self._build(root, {"slugs": {"number": 1, "state": "MERGED"}})
+            feature = result["feature"]
+            self.assertIsNotNone(feature)
+            self.assertEqual(feature["total"], 3)
+            self.assertEqual(feature["completed"], 1)
+            self.assertEqual(feature["current"]["slug"], "permalinks-api")
+            self.assertIn("step 2 of 3", result["summary"])
+
+    def test_a_branch_with_no_parent_has_no_feature(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / ".canon" / "plans").mkdir(parents=True)
+            (root / ".canon" / "plans" / "permalinks-api.md").write_text(
+                "---\nstatus: approved\nparent:\n---\n\n## Approach\nx\n",
+                encoding="utf-8",
+            )
+            result = self._build(root, {})
+            self.assertIsNone(result["feature"])
+            self.assertNotIn("step", result["summary"])
+
+    def test_a_parent_that_resolves_to_nothing_has_no_feature(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = self._repo(tmp, parent="gone.md")
+            self.assertIsNone(self._build(root, {})["feature"])
 
 
 if __name__ == "__main__":
