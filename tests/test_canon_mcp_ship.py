@@ -1,0 +1,139 @@
+# SPDX-License-Identifier: BSD-3-Clause
+"""Tests for src/canon_mcp/canon_mcp/ship.py."""
+
+from __future__ import annotations
+
+import unittest
+from pathlib import Path
+from unittest import mock
+
+from canon_mcp import ship
+
+_APPROVED_PLAN = {"path": ".canon/plans/x.md", "header": {"status": "approved"}}
+
+
+class PlanReadinessTests(unittest.TestCase):
+    def test_no_plan(self) -> None:
+        ok, reason = ship._plan_readiness(None)
+        self.assertFalse(ok)
+        assert reason is not None
+        self.assertIn("no plan saved", reason)
+
+    def test_plan_with_missing_sections_note(self) -> None:
+        plan = {
+            "header": {
+                "status": "approved",
+                "notes": "Non-goals section is missing or empty",
+            }
+        }
+        ok, reason = ship._plan_readiness(plan)
+        self.assertFalse(ok)
+        assert reason is not None
+        self.assertIn("missing required sections", reason)
+
+    def test_plan_with_non_approved_status(self) -> None:
+        plan = {"header": {"status": "superseded"}}
+        ok, reason = ship._plan_readiness(plan)
+        self.assertFalse(ok)
+        assert reason is not None
+        self.assertIn("superseded", reason)
+
+    def test_approved_plan_with_no_notes_is_satisfied(self) -> None:
+        ok, reason = ship._plan_readiness(_APPROVED_PLAN)
+        self.assertTrue(ok)
+        self.assertIsNone(reason)
+
+
+class EvidenceReasonTests(unittest.TestCase):
+    def test_unknown_evidence(self) -> None:
+        reason = ship._evidence_reason({"green": None, "message": "not pushed"})
+        self.assertIn("not pushed", reason)
+
+    def test_red_evidence(self) -> None:
+        reason = ship._evidence_reason({"green": False, "detail": "mypy failed"})
+        self.assertIn("mypy failed", reason)
+
+
+class ReviewReadinessTests(unittest.TestCase):
+    def test_no_verdict(self) -> None:
+        ok, reason = ship._review_readiness({"verdict": None})
+        self.assertFalse(ok)
+        assert reason is not None
+        self.assertIn("no reviewer verdict", reason)
+
+    def test_stale_verdict(self) -> None:
+        ok, reason = ship._review_readiness(
+            {"verdict": {"decision": "READY FOR HUMAN APPROVAL"}, "stale": True}
+        )
+        self.assertFalse(ok)
+        assert reason is not None
+        self.assertIn("stale", reason)
+
+    def test_changes_required(self) -> None:
+        ok, reason = ship._review_readiness(
+            {
+                "verdict": {"decision": "CHANGES REQUIRED", "reason": "fix the loop"},
+                "stale": False,
+            }
+        )
+        self.assertFalse(ok)
+        assert reason is not None
+        self.assertIn("fix the loop", reason)
+
+    def test_blocked_by_missing_evidence(self) -> None:
+        ok, reason = ship._review_readiness(
+            {
+                "verdict": {
+                    "decision": "BLOCKED BY MISSING EVIDENCE",
+                    "reason": "no diff supplied",
+                },
+                "stale": False,
+            }
+        )
+        self.assertFalse(ok)
+        assert reason is not None
+        self.assertIn("no diff supplied", reason)
+
+    def test_ready(self) -> None:
+        ok, reason = ship._review_readiness(
+            {"verdict": {"decision": "READY FOR HUMAN APPROVAL"}, "stale": False}
+        )
+        self.assertTrue(ok)
+        self.assertIsNone(reason)
+
+
+class BuildShipTests(unittest.TestCase):
+    def test_ready_when_all_three_invariants_are_met(self) -> None:
+        with (
+            mock.patch("canon_mcp.ship.current_branch", return_value="feature/x"),
+            mock.patch("canon_mcp.ship.read_plan_file", return_value=_APPROVED_PLAN),
+            mock.patch("canon_mcp.ship.build_evidence", return_value={"green": True}),
+            mock.patch(
+                "canon_mcp.ship.build_review",
+                return_value={
+                    "verdict": {"decision": "READY FOR HUMAN APPROVAL"},
+                    "stale": False,
+                },
+            ),
+        ):
+            result = ship.build_ship(Path("/repo"))
+        self.assertTrue(result["ready"])
+        self.assertEqual(result["missing"], [])
+
+    def test_not_ready_lists_every_unmet_invariant(self) -> None:
+        with (
+            mock.patch("canon_mcp.ship.current_branch", return_value="feature/x"),
+            mock.patch("canon_mcp.ship.read_plan_file", return_value=None),
+            mock.patch(
+                "canon_mcp.ship.build_evidence",
+                return_value={"green": False, "detail": "tests failed"},
+            ),
+            mock.patch("canon_mcp.ship.build_review", return_value={"verdict": None}),
+        ):
+            result = ship.build_ship(Path("/repo"))
+        self.assertFalse(result["ready"])
+        self.assertEqual(len(result["missing"]), 3)
+
+
+if __name__ == "__main__":
+    unittest.main()

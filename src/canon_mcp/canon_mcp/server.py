@@ -1,12 +1,12 @@
 # SPDX-License-Identifier: BSD-3-Clause
 """canon-mcp: the MCP server Canon ships with the plugin.
 
-Four tools: `canon_position` (where the work stands), `canon_plan` (the
+Five tools: `canon_position` (where the work stands), `canon_plan` (the
 saved plan for this branch), `canon_review` (which reviewers a diff
-calls for, and the last captured verdict), and `canon_evidence`
-(whether this commit is green, and where that was established).
-`canon_ship`, also named in docs/plan.md §08, is Phase 2 -- not
-implemented here.
+calls for, and the last captured verdict), `canon_evidence` (whether
+this commit is green, and where that was established), and `canon_ship`
+(whether this is ready for a human, and precisely what's missing if
+not).
 
 The only file in this package that imports `mcp`: confirmed directly
 against a real install that the SDK is now v2 (`mcp.server.mcpserver
@@ -27,6 +27,7 @@ from .evidence import build_evidence
 from .plan import build_plan
 from .position import build_position
 from .review import build_review
+from .ship import build_ship
 
 server = MCPServer("canon")
 
@@ -54,6 +55,13 @@ def canon_review() -> dict[str, Any]:
 def canon_evidence() -> dict[str, Any]:
     """Whether this commit is green, and where that was established."""
     return build_evidence(repo_root())
+
+
+@server.tool(structured_output=True)
+def canon_ship() -> dict[str, Any]:
+    """Whether this is ready for a human, and precisely what's missing
+    if not."""
+    return build_ship(repo_root())
 
 
 def main() -> None:
