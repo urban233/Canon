@@ -12,12 +12,18 @@ description: Decide whether a change is ready to hand to a human, and open the p
 2. If `ready` is false, stop. Work through `missing` in order rather
    than opening a pull request that isn't actually ready. `missing` is
    already plain language -- report it as-is, don't paraphrase it.
-3. If `ready` is true, open the pull request (`gh pr create`). The body
+3. Before opening the pull request, consider whether this branch made a
+   decision worth recording: use the `decide` skill's test (a real
+   alternative seriously considered, and a consequence that outlives
+   this branch). If it passes, run `decide` first, so the record lands
+   in the same commit as the work. This is never a gate -- it's
+   imposed on you, not on the developer, and never blocks shipping.
+4. If `ready` is true, open the pull request (`gh pr create`). The body
    reproduces the plan's `## Approach` and `## Non-goals` sections
    verbatim and states the exact command `canon_evidence` reports as
    green -- not a summary of the diff, which the diff already is. Title:
    short, present tense, matching the plan's `done:` header field when
    one is set.
-4. Never merge or close the pull request, and never approve it -- a
+5. Never merge or close the pull request, and never approve it -- a
    human does that. This skill's job ends at "opened, ready, and here
    is the evidence."
