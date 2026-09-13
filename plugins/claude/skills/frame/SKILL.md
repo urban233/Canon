@@ -34,6 +34,23 @@ Before calling `ExitPlanMode`, make sure the plan states:
   makes the saving hook recognize and save this as a feature plan
   rather than an ordinary branch plan.
 
+  **Lead each step with its branch slug**, then a colon:
+
+  ```markdown
+  ## Steps
+
+  - slugs: make duplicate slugs raise, with a regression test
+  - permalinks-api: expose the permalink endpoint
+  ```
+
+  That slug is how `canon_position` answers "which step am I on" -- it
+  matches the slug against branches that exist and pull requests that
+  merged. A branch may carry a prefix (`feature/slugs` matches the step
+  `slugs`), but a step written without a slug can never be matched to
+  anything, and `canon_position` will report it as `unmatched` rather
+  than guess. Matching step prose against branch names is exactly the
+  wrong-but-plausible inference Canon refuses to make.
+
 ## No gate, no new artifact
 
 Nothing here is accepted or advanced through a status. The feature plan

@@ -17,9 +17,18 @@ from pathlib import Path
 from typing import Any
 
 from ._config import has_verification_signal, interaction_mode, load_config
-from ._gh import pr_view
-from ._git import commits_ahead, current_branch, default_branch, head_sha, merge_base
-from ._plan import read_plan_file
+from ._gh import pr_list_by_head, pr_view
+from ._git import (
+    branch_names,
+    commits_ahead,
+    current_branch,
+    default_branch,
+    head_sha,
+    merge_base,
+    merged_branch_names,
+)
+from ._plan import read_plan_file, resolve_parent
+from ._steps import annotate, parse_steps, summarize
 from .review import build_review
 
 _INCOMPLETE_CHECK_STATUS = "COMPLETED"
@@ -43,6 +52,48 @@ def _plan_summary(plan: dict[str, Any] | None) -> dict[str, str] | None:
     }
 
 
+def _build_feature(
+    root: Path, plan: dict[str, Any] | None, default: str
+) -> dict[str, Any] | None:
+    """Where this branch sits in its feature plan, or None if it has no
+    `parent:` -- docs/plan.md §06's "which step am I on?", derived.
+
+    Every fact is recomputed here: the parent's `## Steps` list, which
+    branches exist, which pull requests merged. Nothing is stored, so
+    nothing can be stale.
+    """
+    if plan is None:
+        return None
+    parent_path = plan["header"].get("parent")
+    if not parent_path:
+        return None
+    parent = resolve_parent(root, parent_path)
+    if parent is None:
+        return None
+    steps = parse_steps(parent["sections"].get("steps", ""))
+    if not steps:
+        return None
+    annotated = annotate(
+        steps,
+        branch_names(root),
+        pr_list_by_head(root),
+        merged_branch_names(root, default),
+    )
+    return summarize(parent["path"], annotated)
+
+
+def _feature_sentence(feature: dict[str, Any] | None) -> str:
+    """The feature's position as one appendable clause, or ""."""
+    if feature is None:
+        return ""
+    current = feature.get("current")
+    total = feature.get("total")
+    if current is None:
+        return f" All {total} steps of {feature['path']} have landed."
+    label = current.get("slug") or current.get("description")
+    return f" This is step {current['index']} of {total} in {feature['path']}: {label}."
+
+
 def _check_state(pr: dict[str, Any]) -> tuple[str | None, str | None]:
     """(name of a failing check, name of an incomplete check) found in
     `pr`'s `statusCheckRollup`, whichever is found first; either may be
@@ -56,11 +107,27 @@ def _check_state(pr: dict[str, Any]) -> tuple[str | None, str | None]:
     return None, None
 
 
+def _next_feature_step(feature: dict[str, Any] | None) -> str:
+    """What to start next once this branch has landed, if its feature
+    plan names a further step."""
+    if feature is None:
+        return ""
+    current = feature.get("current")
+    if current is None:
+        return f"; every step of {feature['path']} has landed"
+    label = current.get("slug") or current.get("description")
+    return (
+        f"; next in {feature['path']} is step {current['index']} "
+        f"of {feature['total']}: {label}"
+    )
+
+
 def _next_step(
     verify_ok: bool,
     plan: dict[str, Any] | None,
     pr: dict[str, Any] | None,
     review: dict[str, Any],
+    feature: dict[str, Any] | None = None,
 ) -> str:
     if not verify_ok:
         return (
@@ -74,7 +141,8 @@ def _next_step(
     number = pr.get("number")
     if pr.get("state") != "OPEN":
         state = str(pr.get("state", "unknown")).lower()
-        return f"PR #{number} is {state} -- nothing further to do on this branch"
+        done = f"PR #{number} is {state} -- nothing further to do on this branch"
+        return done + _next_feature_step(feature)
     failing, incomplete = _check_state(pr)
     if failing:
         return f"fix the failing check ({failing}) on PR #{number}"
@@ -117,7 +185,8 @@ def build_position(root: Path) -> dict[str, Any]:
     # No PR to ask about while standing on the default branch itself.
     pr = pr_view(root, branch) if branch != default else None
     review = build_review(root)
-    next_step = _next_step(verify_ok, plan, pr, review)
+    feature = _build_feature(root, plan, default)
+    next_step = _next_step(verify_ok, plan, pr, review, feature)
     ahead_text = str(ahead) if ahead is not None else "an unknown number of"
     return {
         "branch": branch,
@@ -128,10 +197,12 @@ def build_position(root: Path) -> dict[str, Any]:
         "verify_configured": verify_ok,
         "mode": mode,
         "plan": _plan_summary(plan),
+        "feature": feature,
         "pull_request": pr,
         "review": review,
         "next_step": next_step,
         "summary": (
-            f"On {branch}, {ahead_text} commit(s) ahead of {default}. {next_step}"
+            f"On {branch}, {ahead_text} commit(s) ahead of {default}."
+            f"{_feature_sentence(feature)} {next_step}"
         ),
     }

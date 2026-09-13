@@ -31,6 +31,8 @@ section it can't find leaves its field blank rather than being invented.
   absent one — every edit outside it is reported as a departure.
 - **`## Done`** — one line, the definition of done.
 - **`## Parent`** — only when this branch is one step of a feature plan:
+  name the branch after that step's slug in the feature plan's
+  `## Steps`, or `canon_position` cannot tell which step this is.
   the feature plan's filename (`public-permalinks.md`). It is written to
   the header only if that file exists under `.canon/plans/features/`;
   a name that resolves to nothing is silently left blank, so get it

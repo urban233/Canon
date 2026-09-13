@@ -134,6 +134,56 @@ def changed_paths(root: Path, base_sha: str) -> list[str] | None:
     return output.splitlines() if output else None
 
 
+def branch_names(root: Path) -> set[str]:
+    """Every local and remote branch name, remotes stripped of `origin/`.
+
+    Empty set rather than None on any failure -- a caller asking "does a
+    branch for this step exist?" treats not-found and cannot-tell the
+    same way, and there is nothing useful to distinguish.
+    """
+    names: set[str] = set()
+    for args, strip in (
+        (("branch", "--format=%(refname:short)"), False),
+        (("branch", "-r", "--format=%(refname:short)"), True),
+    ):
+        output = _run_git(root, *args)
+        if not output:
+            continue
+        for line in output.splitlines():
+            name = line.strip()
+            if not name or "->" in name:
+                continue
+            if strip:
+                name = name.split("/", 1)[1] if "/" in name else name
+            names.add(name)
+    return names
+
+
+def merged_branch_names(root: Path, default_branch_name: str) -> set[str]:
+    """Branches already merged into `default_branch_name`, remotes
+    stripped. Evidence of a landed step for a repository that does not
+    delete its branches on merge."""
+    output = _run_git(
+        root,
+        "branch",
+        "-a",
+        "--merged",
+        default_branch_name,
+        "--format=%(refname:short)",
+    )
+    if not output:
+        return set()
+    names: set[str] = set()
+    for line in output.splitlines():
+        name = line.strip()
+        if not name or "->" in name:
+            continue
+        if name.startswith("origin/"):
+            name = name[len("origin/") :]
+        names.add(name)
+    return names
+
+
 def commits_ahead(root: Path, base_sha: str | None) -> int | None:
     """How many commits HEAD is ahead of `base_sha`, or None if either
     that count or `base_sha` itself couldn't be determined."""

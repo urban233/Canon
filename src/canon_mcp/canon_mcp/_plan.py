@@ -89,6 +89,24 @@ def _split_document(text: str) -> tuple[str, str] | None:
     return header_text, body_text
 
 
+_PLANS_DIR_RELATIVE = ".canon/plans"
+
+
+def resolve_parent(root: Path, parent_path: str) -> dict[str, Any] | None:
+    """The feature plan a branch plan's `parent:` names, or None.
+
+    `parent:` is written in docs/plan.md §06's own form --
+    `features/<slug>.md`, relative to `.canon/plans/` rather than to the
+    repository root -- so that is tried first. The fallback treats the
+    value as root-relative, because a plan file is a file a human edits
+    by hand and both spellings are reasonable things to write.
+    """
+    if not parent_path:
+        return None
+    plans_relative = f"{_PLANS_DIR_RELATIVE}/{parent_path.lstrip('/')}"
+    return read_plan_file(root, plans_relative) or read_plan_file(root, parent_path)
+
+
 def read_plan_file(root: Path, relative_path: str) -> dict[str, Any] | None:
     """Read and parse a plan file at `relative_path` (e.g.
     `.canon/plans/<branch>.md`), relative to `root`.
