@@ -20,14 +20,28 @@ class PlanReadinessTests(unittest.TestCase):
         self.assertIn("no plan saved", reason)
 
     def test_plan_with_missing_sections_note(self) -> None:
+        """Still a block, not a warning -- see
+        docs/decisions/0002-ship-blocks-on-a-missing-required-section.md."""
         plan = {
+            "path": ".canon/plans/feature/widget.md",
             "header": {
                 "status": "approved",
                 "notes": "Non-goals section is missing or empty",
-            }
+            },
         }
         ok, reason = ship._plan_readiness(plan)
         self.assertFalse(ok)
+        assert reason is not None
+        self.assertIn(".canon/plans/feature/widget.md", reason)
+
+    def test_missing_sections_note_without_a_path_still_reports(self) -> None:
+        """`_plan_readiness` must not KeyError on a plan dict that
+        carries no `path` -- it would crash the whole tool."""
+        plan = {"header": {"status": "approved", "notes": "Non-goals missing"}}
+        ok, reason = ship._plan_readiness(plan)
+        self.assertFalse(ok)
+        assert reason is not None
+        self.assertIn("Non-goals missing", reason)
         assert reason is not None
         self.assertIn("missing required sections", reason)
 
