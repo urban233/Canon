@@ -1,0 +1,3 @@
+{
+  "verify": "bazel test //tests/..."
+}

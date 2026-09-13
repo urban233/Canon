@@ -181,6 +181,31 @@ dropped, and `ci` re-runs on every push regardless.
 
 ## Steps
 
+- 1-git-guard-false-positives: stop the git guard denying merge-base and
+  colon refspecs
+- 2-stop-hook-degraded-payload: stop the Stop gate blocking forever with
+  no scratchpad
+- 3-inert-without-verification-signal: go inert without a verification
+  signal, per §07
+- 4-derive-plan-header-fields: derive scope, done and parent from the
+  approved plan body
+- 5-plan-verify-override: honour a plan header's verify: override
+- 6-ask-once-for-missing-sections: ask once when a required section is
+  missing
+- 7-feature-step-position: derive which feature step a branch is on
+- 8-notebooks: readable form for review, cell counts, setup check
+- 10-docs-and-status: housekeeping, and Canon gating its own development
+
+Step 9 was withdrawn and has no branch or pull request, so it is not
+listed here -- a `## Steps` entry is one branch and one pull request.
+Its reasoning is kept under Step detail below.
+
+The slugs match the branch names (`gap/1-git-guard-false-positives` and
+so on), which is what lets `canon_position` report which step this is.
+Everything below is per-step detail, not part of the list.
+
+## Step detail
+
 ### 1 · `git-guard-false-positives` — closes finding 2
 
 Two patterns in `plugins/claude/hooks/git_guard.py` deny harmless

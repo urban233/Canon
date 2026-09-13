@@ -31,9 +31,16 @@ only ever evidence that a step has *started*.
 from __future__ import annotations
 
 import re
+from collections.abc import Iterable
 from typing import Any
 
-_STEP_LINE = re.compile(r"^\s*(?:[-*+]|\d+[.)])\s+(.*\S)\s*$")
+# No leading whitespace: an indented bullet is a sub-point of a step, not
+# a step. And a `###` heading ends the list -- a `## Steps` section that
+# carries per-step detail in subsections would otherwise contribute every
+# bullet in that prose. Both were found by pointing this at Canon's own
+# feature plan, which reported 30 steps.
+_STEP_LINE = re.compile(r"^(?:[-*+]|\d+[.)])\s+(.*\S)\s*$")
+_SUBSECTION = re.compile(r"^#{3,}\s")
 _SLUG_PREFIX = re.compile(r"^`?([A-Za-z0-9][A-Za-z0-9._/-]*)`?\s*:\s*(.*)$")
 _MAX_STEPS = 100
 
@@ -52,6 +59,8 @@ def parse_steps(section: str) -> list[dict[str, Any]]:
     """
     steps: list[dict[str, Any]] = []
     for line in section.splitlines():
+        if _SUBSECTION.match(line):
+            break
         match = _STEP_LINE.match(line)
         if not match:
             continue
@@ -70,13 +79,23 @@ def parse_steps(section: str) -> list[dict[str, Any]]:
     return steps
 
 
-def _branch_for(slug: str, branches: set[str]) -> str | None:
-    """A branch named exactly `slug`, or suffixed with `/slug` so a
-    `feature/slugs` branch matches the step `slugs`."""
-    if slug in branches:
+def _match_ref(slug: str, names: "Iterable[str]") -> str | None:
+    """The ref named exactly `slug`, else one suffixed with `/slug` so a
+    `feature/slugs` branch matches the step `slugs`.
+
+    Applied to pull request head refs as well as to branches, and that
+    is load-bearing rather than tidy: a repository with "automatically
+    delete head branches" enabled has no branch left once a step lands,
+    so the *only* surviving record is the pull request -- whose head ref
+    carries the same prefix the branch did. Matching pulls by exact slug
+    alone reported every completed step as `not started`, which is how
+    this was found.
+    """
+    names = list(names)
+    if slug in names:
         return slug
     suffix = f"/{slug}"
-    matches = sorted(name for name in branches if name.endswith(suffix))
+    matches = sorted(name for name in names if name.endswith(suffix))
     return matches[0] if matches else None
 
 
@@ -99,16 +118,18 @@ def annotate(
             entry["status"] = STATUS_UNMATCHED
             annotated.append(entry)
             continue
-        branch = _branch_for(slug, branches)
+        branch = _match_ref(slug, branches)
         pull = pulls.get(branch) if branch else None
-        if pull is None and slug in pulls:
-            pull = pulls[slug]
-            branch = branch or slug
+        if pull is None:
+            head = _match_ref(slug, pulls)
+            if head is not None:
+                pull = pulls[head]
+                branch = branch or head
         entry["branch"] = branch
         entry["pull_request"] = pull
         if pull is not None and pull.get("state") == "MERGED":
             entry["status"] = STATUS_MERGED
-        elif branch is not None and branch in merged_branches:
+        elif branch is not None and _match_ref(branch, merged_branches) is not None:
             entry["status"] = STATUS_MERGED
         elif pull is not None and pull.get("state") == "OPEN":
             entry["status"] = STATUS_OPEN
