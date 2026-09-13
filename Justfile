@@ -41,3 +41,14 @@ validate-plugin:
 
 # Everything CI runs.
 ci: build test lint fmt-check typecheck lock-check validate-plugin
+
+# Run Canon's own eval suite against its own plugin: a local, on-demand
+# check of what the model actually does with the instructions Canon
+# ships, never wired into `ci` -- see
+# docs/decisions/0003-eval-suite-is-not-a-ci-gate.md.
+eval *args:
+    cd plugins/claude && claude plugin eval . \
+        --trust-plugin --scaffold --no-publish \
+        --allow-tools Bash Write Edit "mcp__plugin_canon_canon__*" \
+        --mocks off \
+        {{args}}
