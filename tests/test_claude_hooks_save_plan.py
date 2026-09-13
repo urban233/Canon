@@ -19,6 +19,7 @@ import unittest
 from pathlib import Path
 from unittest import mock
 
+import _common
 import save_plan
 
 PLAN_WITH_SECTIONS = """# A title
@@ -115,6 +116,14 @@ def _approved_tool_response(plan_text: str, saved_path: Path | None) -> str:
         + "You can refer back to it if needed during implementation.\n\n"
         "## Approved Plan:\n" + plan_text
     )
+
+
+def _approved_payload(root: Path, plan_text: str) -> dict[str, object]:
+    return {
+        "cwd": str(root),
+        "tool_name": "ExitPlanMode",
+        "tool_response": _approved_tool_response(plan_text, saved_path=None),
+    }
 
 
 def _invoke_main(payload: dict[str, object]) -> None:
@@ -446,6 +455,129 @@ class FeaturePlanTests(unittest.TestCase):
 
             self.assertTrue((root / ".canon" / "plans" / "feature/widget.md").exists())
             self.assertFalse((root / ".canon" / "plans" / "features").exists())
+
+
+class DerivedHeaderFieldTests(unittest.TestCase):
+    """`scope:`, `done:` and `parent:` read back out of the plan body.
+
+    Before this existed the hook wrote all three blank unconditionally,
+    which left `check_scope.py`'s glob matcher unreachable and the
+    `frame` -> branch-plan link unmade. See §06.
+    """
+
+    def test_scope_from_a_bulleted_list(self) -> None:
+        patterns = save_plan._scope_patterns("- src/slugs/**\n- tests/slugs/**")
+        self.assertEqual(patterns, ["src/slugs/**", "tests/slugs/**"])
+
+    def test_scope_from_a_comma_separated_line(self) -> None:
+        patterns = save_plan._scope_patterns("src/slugs/**, tests/slugs/**")
+        self.assertEqual(patterns, ["src/slugs/**", "tests/slugs/**"])
+
+    def test_scope_keeps_the_backticked_token_and_drops_commentary(self) -> None:
+        patterns = save_plan._scope_patterns("- `src/slugs/**` -- the slug module")
+        self.assertEqual(patterns, ["src/slugs/**"])
+
+    def test_scope_ignores_prose(self) -> None:
+        """A wrong scope is worse than an absent one: every edit outside
+        it is reported as a departure."""
+        self.assertEqual(
+            save_plan._scope_patterns("This touches the slug module and its tests."),
+            [],
+        )
+
+    def test_scope_deduplicates(self) -> None:
+        self.assertEqual(
+            save_plan._scope_patterns("- src/a.py\n- src/a.py"), ["src/a.py"]
+        )
+
+    def test_done_takes_the_first_line_only(self) -> None:
+        done = save_plan._done_line("duplicate slugs raise\n\nmore detail here")
+        self.assertEqual(done, "duplicate slugs raise")
+
+    def test_done_strips_a_bullet(self) -> None:
+        self.assertEqual(save_plan._done_line("- slugs raise"), "slugs raise")
+
+    def test_done_is_none_for_an_empty_section(self) -> None:
+        self.assertIsNone(save_plan._done_line("   \n\n"))
+
+    def test_parent_resolves_an_existing_feature_plan(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            features = root / ".canon" / "plans" / "features"
+            features.mkdir(parents=True)
+            (features / "permalinks.md").write_text("x", encoding="utf-8")
+            self.assertEqual(
+                save_plan._parent_path(root, "permalinks.md"),
+                "features/permalinks.md",
+            )
+
+    def test_parent_accepts_a_bare_slug(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            features = root / ".canon" / "plans" / "features"
+            features.mkdir(parents=True)
+            (features / "permalinks.md").write_text("x", encoding="utf-8")
+            self.assertEqual(
+                save_plan._parent_path(root, "permalinks"),
+                "features/permalinks.md",
+            )
+
+    def test_parent_is_blank_when_it_resolves_to_nothing(self) -> None:
+        """A dangling link is worse than no link -- `canon_plan` and
+        `canon_position` both follow this field."""
+        with tempfile.TemporaryDirectory() as tmp:
+            self.assertIsNone(save_plan._parent_path(Path(tmp), "nope.md"))
+
+
+class DerivedHeaderEndToEndTests(unittest.TestCase):
+    def test_a_plan_with_all_three_sections_populates_the_header(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            _init_repo(root, "feature/slugs")
+            features = root / ".canon" / "plans" / "features"
+            features.mkdir(parents=True, exist_ok=True)
+            (features / "permalinks.md").write_text("x", encoding="utf-8")
+            body = (
+                "## Scope\n- src/slugs/**\n- tests/slugs/**\n\n"
+                "## Done\nduplicate slugs raise, with a regression test\n\n"
+                "## Parent\npermalinks.md\n\n"
+                "## Non-goals\nDo not rewrite the parser.\n\n"
+                "## Verification\njust test\n"
+            )
+            _invoke_main(_approved_payload(root, body))
+
+            header = _common.parse_header(
+                (root / ".canon" / "plans" / "feature" / "slugs.md").read_text(
+                    encoding="utf-8"
+                )
+            )
+            self.assertEqual(header["scope"], "[src/slugs/**, tests/slugs/**]")
+            self.assertEqual(
+                header["done"], "duplicate slugs raise, with a regression test"
+            )
+            self.assertEqual(header["parent"], "features/permalinks.md")
+            self.assertNotIn("notes", header)
+
+    def test_a_plan_with_none_of_them_leaves_all_three_blank(self) -> None:
+        """Derived, not demanded -- §06's rule is unchanged by this."""
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            _init_repo(root, "feature/slugs")
+            body = (
+                "## Approach\nDo the thing.\n\n"
+                "## Non-goals\nDo not rewrite the parser.\n\n"
+                "## Verification\njust test\n"
+            )
+            _invoke_main(_approved_payload(root, body))
+
+            header = _common.parse_header(
+                (root / ".canon" / "plans" / "feature" / "slugs.md").read_text(
+                    encoding="utf-8"
+                )
+            )
+            self.assertEqual(header["scope"], "")
+            self.assertEqual(header["done"], "")
+            self.assertEqual(header["parent"], "")
 
 
 if __name__ == "__main__":

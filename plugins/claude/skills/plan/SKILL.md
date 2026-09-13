@@ -6,25 +6,52 @@ description: Shape what plan mode drafts, so the plan Canon saves needs no follo
 # Plan
 
 Canon's `PostToolUse:ExitPlanMode` hook saves an approved plan verbatim
-to `.canon/plans/<branch>.md`, with a small header it derives itself
-(branch, base commit, the repo's configured verify command). It leaves
-`scope`, `done`, and `parent` blank rather than inventing them — filling
-those in well is this skill's job, done once, before the plan is
-presented for approval, not after.
+to `.canon/plans/<branch>.md` and derives a header from it. The header is
+read back later by other hooks and by `canon-mcp`, and **the hook can
+only derive a field from a section the plan actually contains.** Seeding
+those sections while plan mode is drafting is this skill's whole job —
+done once, before the plan is presented for approval, not after.
 
-Before calling `ExitPlanMode`:
+## Sections the header is derived from
 
-1. Make sure the plan states its **scope** (which files or directories
-   it will touch), its **definition of done**, and, if this is one step
-   of a larger multi-step feature, the **parent** feature plan it
-   belongs under. These become the saved plan's header fields.
-2. If any of those genuinely aren't obvious from the request or from
-   `.canon/config.json`, ask the developer once — a single question
-   covering whatever's unclear, not one question per field — before
-   finalizing the plan.
-3. Always include a `## Non-goals` section and a `## Verification`
-   section in the plan body. Both are read back later: `Non-goals` by
-   the scope check and a reviewer, `Verification` by the `Stop` hook.
-   A plan missing either gets a note about it in the saved header today
-   — the point of this skill is that a developer never has to see that
-   note in the first place.
+Write these with these headings. The hook looks them up by name; a
+section it can't find leaves its field blank rather than being invented.
+
+| Section | Becomes | Read by |
+|---|---|---|
+| `## Scope` | `scope:` | the `PostToolUse` scope check, on every edit |
+| `## Done` | `done:` | `canon_ship`, and the pull request title |
+| `## Parent` | `parent:` | `canon_plan`, to link a step to its feature plan |
+
+- **`## Scope`** — one path or glob per line, or a comma-separated list.
+  Backticks are fine and commentary after the pattern is dropped, so
+  ``- `src/slugs/**` — the slug module`` works. A line with no
+  path-shaped token in it is ignored entirely: a scope written as prose
+  produces no `scope:` at all, because a wrong scope is worse than an
+  absent one — every edit outside it is reported as a departure.
+- **`## Done`** — one line, the definition of done.
+- **`## Parent`** — only when this branch is one step of a feature plan:
+  the feature plan's filename (`public-permalinks.md`). It is written to
+  the header only if that file exists under `.canon/plans/features/`;
+  a name that resolves to nothing is silently left blank, so get it
+  right.
+
+`status`, `base` and `verify` need no section — the hook reads those
+from git and `.canon/config.json` itself.
+
+## Sections that are required
+
+Always include `## Non-goals` and `## Verification`. Both are read back:
+`Non-goals` by the scope check and by a reviewer, `Verification` by the
+`Stop` hook. A plan missing either gets a note in its saved header.
+
+One piece of craft: **a Non-goal is only useful if it was tempting.**
+"Don't rewrite the module" earns its line; "don't break anything" is
+noise. The test is whether a competent agent, given this plan and no
+Non-goals section, would plausibly have done it.
+
+## Ask once, before finalizing
+
+If scope, done, or the parent genuinely aren't obvious from the request
+or from `.canon/config.json`, ask the developer **once** — a single
+question covering whatever is unclear, not one per field.
