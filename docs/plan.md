@@ -551,7 +551,7 @@ it. Nothing here depends on the model remembering an instruction.
 |---|---|---|
 | **An approved plan evaporates** — it lands outside the repo and is swept in 30 days | `PostToolUse` `ExitPlanMode` | Saves the plan verbatim to `.canon/plans/<branch>.md` with a derived header. The one hook that makes plan mode's output durable, reviewable and readable by every other hook below. |
 | Session starts cold; agent has no idea where the work stands | `SessionStart` | Derives position and injects it as `additionalContext`: branch, plan status, diff size, PR and check state. Replaces CoDev's `restore_position` hook *and* its state file. |
-| **Compaction eats the plan** — the single biggest cause of long-session drift | `PreCompact` | Writes the thread note: the plan, decisions taken, what's been verified, what's open. `PostCompact` reads it straight back in. The plan survives the summariser because it was never only in the transcript. |
+| **Compaction eats the plan** — the single biggest cause of long-session drift | `SessionStart` (`source: compact`) | Claude Code has no separate `PreCompact`/`PostCompact` event — compaction surfaces only as `SessionStart` firing again once it finishes. So the same hook above adds a recap when that's why the session started: decisions taken (commits since the default branch), what's been verified (the last logged `Stop` result), and what's open (the plan's `## Open questions`). The plan survives the summariser because it was never only in the transcript — everything recapped already lived in a file. |
 | Editing with no stated intent | `PreToolUse` `Edit\|Write` | No plan for this branch → `ask` with a reason. One prompt, once. CoDev's plan gate, minus the state lookup. |
 | **Scope creep** — files touched outside the stated boundary | `PostToolUse` `Edit\|Write` | Compares the touched path against the plan's allowed paths *and its `## Non-goals`*. First departure: a note in `additionalContext`. Sustained departure: surfaced as a decision. Formats the file while it's there. |
 | **Unverified claims** — "tests pass" asserted, not run | `Stop` | Runs the repo's own checks and reads the exit code. Red → exit 2, the turn continues with the failure attached. This is the verification loop, mechanised: the agent gets a self-check it cannot skip or misreport. |
@@ -1209,10 +1209,12 @@ it is not a round of exploratory dogfooding, because the design questions
 those would answer have already been answered here.
 
 **Phase 0 — The thread.** Plugin skeleton and manifest. `canon_position`
-and `canon_plan`. The `plan` skill. Four hooks:
+and `canon_plan`. The `plan` skill. Three hooks:
 `PostToolUse:ExitPlanMode` to save the approved plan, `SessionStart`
-injection, `PreCompact`/`PostCompact` thread note, and the `Stop`
-verification gate. First-run setup comes with it, and is the first thing a
+injection (enriched with a post-compaction recap when `source: compact`
+— Claude Code has no separate `PreCompact`/`PostCompact` event to hook
+instead), and the `Stop` verification gate. First-run setup comes with
+it, and is the first thing a
 developer meets: **one question, asked once** — what command should pass
 before a turn ends? Until it's answered Canon stays inert, so this is not a
 step that can be deferred to a later phase. This is the smallest thing that

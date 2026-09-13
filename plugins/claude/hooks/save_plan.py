@@ -37,7 +37,6 @@ import _config
 _PLANS_DIR_RELATIVE = ".canon/plans"
 _APPROVED_MARKER = "## Approved Plan:"
 _SAVED_PATH_PATTERN = re.compile(r"Your plan has been saved to:\s*(\S+)")
-_SECTION_HEADING_PATTERN = re.compile(r"^## (.+?)\s*$", re.MULTILINE)
 _REQUIRED_SECTION_LABELS = {
     "non-goals": "Non-goals",
     "verification": "Verification",
@@ -76,13 +75,7 @@ def _plan_body(tool_response: str) -> str | None:
 
 
 def _missing_required_sections(body: str) -> list[str]:
-    matches = list(_SECTION_HEADING_PATTERN.finditer(body))
-    sections: dict[str, str] = {}
-    for index, match in enumerate(matches):
-        name = match.group(1).strip().lower()
-        start = match.end()
-        end = matches[index + 1].start() if index + 1 < len(matches) else len(body)
-        sections[name] = body[start:end].strip()
+    sections = _common.plan_sections(body)
     return [name for name in _REQUIRED_SECTION_LABELS if not sections.get(name)]
 
 

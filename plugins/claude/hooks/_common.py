@@ -22,6 +22,7 @@ that hook rather than here.
 from __future__ import annotations
 
 import json
+import re
 import subprocess
 import sys
 from datetime import datetime, timezone
@@ -237,3 +238,48 @@ def log_decision(
             handle.write(json.dumps(record, sort_keys=True) + "\n")
     except OSError:
         pass
+
+
+def last_decision(root: Path, hook_name: str) -> dict[str, Any] | None:
+    """The most recently logged decision for `hook_name`, or None.
+
+    Reads `_DECISIONS_LOG_RELATIVE` back for **display only** -- the one
+    sanctioned exception to this module's "never read back to decide
+    anything" rule (see the module docstring). A hook may surface this as
+    informational context (e.g. a post-compaction recap of the last
+    verification result); nothing may gate on it.
+    """
+    path = root / _DECISIONS_LOG_RELATIVE
+    try:
+        lines = path.read_text(encoding="utf-8").splitlines()
+    except OSError:
+        return None
+    for line in reversed(lines):
+        try:
+            record = json.loads(line)
+        except (json.JSONDecodeError, ValueError):
+            continue
+        if isinstance(record, dict) and record.get("hook") == hook_name:
+            return record
+    return None
+
+
+_SECTION_HEADING_PATTERN = re.compile(r"^## (.+?)\s*$", re.MULTILINE)
+
+
+def plan_sections(body: str) -> dict[str, str]:
+    """Split a plan's markdown body into `## `-heading sections.
+
+    Keys are the heading text, lowercased and stripped -- matching every
+    plan this repo's own hooks write. Used both to check a required
+    section is present and non-empty (`save_plan.py`) and to pull out a
+    specific one for display (`session_start.py`'s recap).
+    """
+    matches = list(_SECTION_HEADING_PATTERN.finditer(body))
+    sections: dict[str, str] = {}
+    for index, match in enumerate(matches):
+        name = match.group(1).strip().lower()
+        start = match.end()
+        end = matches[index + 1].start() if index + 1 < len(matches) else len(body)
+        sections[name] = body[start:end].strip()
+    return sections
