@@ -40,9 +40,12 @@ A markdown rendering lives at [`docs/plan.md`](docs/plan.md).
 
 ## Development
 
-`just` is the build entry point (`just --list`); Bazel owns build and test,
-`uvx` owns developer tooling (no dependency lock to maintain until Canon has
-a real runtime dependency). See the [`Justfile`](Justfile).
+`just` is the build entry point (`just --list`); Bazel owns build, test,
+lint and typecheck. Dev tooling (ruff, pyrefly) is pinned in
+[`requirements.in`](requirements.in) and resolved hermetically as real
+Bazel targets — no `uvx` in that path. `uvx` is reserved for the MCP
+server's own runtime dependency once it exists (see `docs/plan.md` §05).
+See the [`Justfile`](Justfile).
 
 ## License
 

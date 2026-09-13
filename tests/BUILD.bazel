@@ -9,3 +9,11 @@ load("@rules_python//python:defs.bzl", "py_test")
     )
     for src in glob(["test_*.py"])
 ]
+
+# Exposes this package's own .py files to the root package's lint/typecheck
+# targets -- see plugins/claude/hooks/BUILD.bazel's py_sources for why.
+filegroup(
+    name = "py_sources",
+    srcs = glob(["*.py"]),
+    visibility = ["//:__pkg__"],
+)

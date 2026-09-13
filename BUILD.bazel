@@ -1,2 +1,77 @@
-# Root package. Nothing to build here yet -- see plugins/claude/hooks and
-# tests.
+# Root package. Dev tooling (ruff, pyrefly) lives here as real Bazel
+# targets -- see requirements.in and MODULE.bazel's pip.parse hub. Nothing
+# else builds here yet; see plugins/claude/hooks and tests.
+
+load("@rules_python//python:pip.bzl", "compile_pip_requirements")
+load("@rules_python//python:py_binary.bzl", "py_binary")
+load("@rules_shell//shell:sh_binary.bzl", "sh_binary")
+load("@rules_shell//shell:sh_test.bzl", "sh_test")
+
+# Neither wheel declares a `console_scripts` entry point (confirmed by
+# inspecting both dist-infos), so `py_console_script_binary` can't wrap
+# them -- each ships a compiled binary directly, found at runtime by
+# tools/run_ruff.py and tools/run_pyrefly.py rather than by the package's
+# own (pip-layout-assuming) locator. See those files for why.
+py_binary(
+    name = "ruff",
+    srcs = ["tools/run_ruff.py"],
+    main = "tools/run_ruff.py",
+    visibility = ["//visibility:public"],
+    deps = ["@canon_pypi//ruff"],
+)
+
+py_binary(
+    name = "pyrefly",
+    srcs = ["tools/run_pyrefly.py"],
+    main = "tools/run_pyrefly.py",
+    visibility = ["//visibility:public"],
+    deps = ["@canon_pypi//pyrefly"],
+)
+
+# The whole tree, laid out with real repo-relative paths, for the read-only
+# checks below -- see plugins/claude/hooks/BUILD.bazel's py_sources.
+_PY_SOURCES = [
+    "//plugins/claude/hooks:py_sources",
+    "//tests:py_sources",
+]
+
+sh_test(
+    name = "lint",
+    size = "small",
+    srcs = ["tools/ruff_check.sh"],
+    args = ["$(location :ruff)"],
+    data = [":ruff", "pyproject.toml"] + _PY_SOURCES,
+)
+
+sh_test(
+    name = "fmt_check",
+    size = "small",
+    srcs = ["tools/ruff_format_check.sh"],
+    args = ["$(location :ruff)"],
+    data = [":ruff", "pyproject.toml"] + _PY_SOURCES,
+)
+
+sh_test(
+    name = "typecheck",
+    size = "small",
+    srcs = ["tools/pyrefly_check.sh"],
+    args = ["$(location :pyrefly)"],
+    data = [":pyrefly", "pyproject.toml"] + _PY_SOURCES,
+)
+
+# Mutates the real working tree -- `bazel run //:fmt`, never `bazel test`.
+sh_binary(
+    name = "fmt",
+    srcs = ["tools/ruff_format.sh"],
+    args = ["$(location :ruff)"],
+    data = [":ruff"],
+)
+
+# `bazel run //:requirements.update` regenerates requirements_lock.txt from
+# requirements.in; the paired `requirements_test` (auto-named by this rule)
+# fails if the checked-in lock file has drifted from it.
+compile_pip_requirements(
+    name = "requirements",
+    src = "requirements.in",
+    requirements_txt = "requirements_lock.txt",
+)

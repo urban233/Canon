@@ -4,6 +4,7 @@ dependencies yet. See docs/plan.md."""
 module(name = "canon", version = "0.0.1")
 
 bazel_dep(name = "rules_python", version = "2.3.2")
+bazel_dep(name = "rules_shell", version = "0.8.0")
 
 # Disables implicit __init__.py synthesis (deprecated upstream, see
 # https://github.com/bazel-contrib/rules_python/issues/2945). Every real
@@ -18,3 +19,17 @@ python.toolchain(
     is_default = True,
 )
 use_repo(python, "python_3_13")
+
+# Dev tooling only (ruff, pyrefly) -- see requirements.in. The MCP server's
+# own runtime dependency (docs/plan.md §05) is a separate story, resolved by
+# `uvx` at run time rather than this hub.
+pip = use_extension("@rules_python//python/extensions:pip.bzl", "pip")
+pip.parse(
+    # "pypi" is a reserved hub name rules_python plans to rename out from
+    # under unprefixed modules -- using our own name up front avoids that
+    # future, forced rename.
+    hub_name = "canon_pypi",
+    python_version = "3.13",
+    requirements_lock = "//:requirements_lock.txt",
+)
+use_repo(pip, "canon_pypi")
