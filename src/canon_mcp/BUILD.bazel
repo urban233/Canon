@@ -20,6 +20,7 @@ py_library(
         "canon_mcp/_gh.py",
         "canon_mcp/_git.py",
         "canon_mcp/_plan.py",
+        "canon_mcp/evidence.py",
         "canon_mcp/plan.py",
         "canon_mcp/position.py",
         "canon_mcp/review.py",

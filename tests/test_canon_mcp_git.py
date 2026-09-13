@@ -74,6 +74,33 @@ class GitDerivationTests(unittest.TestCase):
         with mock.patch("subprocess.run", return_value=completed):
             self.assertIsNone(_git.head_sha(Path("/repo")))
 
+    def test_full_head_sha_is_not_truncated(self) -> None:
+        completed = mock.Mock(returncode=0, stdout="0123456789abcdef\n")
+        with mock.patch("subprocess.run", return_value=completed):
+            self.assertEqual(_git.full_head_sha(Path("/repo")), "0123456789abcdef")
+
+    def test_full_head_sha_returns_none_on_failure(self) -> None:
+        completed = mock.Mock(returncode=128, stdout="")
+        with mock.patch("subprocess.run", return_value=completed):
+            self.assertIsNone(_git.full_head_sha(Path("/repo")))
+
+
+class IsPushedTests(unittest.TestCase):
+    def test_true_when_a_remote_branch_contains_it(self) -> None:
+        completed = mock.Mock(returncode=0, stdout="  origin/main\n")
+        with mock.patch("subprocess.run", return_value=completed):
+            self.assertTrue(_git.is_pushed(Path("/repo"), "abc1234"))
+
+    def test_false_when_no_remote_branch_contains_it(self) -> None:
+        completed = mock.Mock(returncode=0, stdout="")
+        with mock.patch("subprocess.run", return_value=completed):
+            self.assertFalse(_git.is_pushed(Path("/repo"), "abc1234"))
+
+    def test_false_when_git_fails(self) -> None:
+        completed = mock.Mock(returncode=128, stdout="")
+        with mock.patch("subprocess.run", return_value=completed):
+            self.assertFalse(_git.is_pushed(Path("/repo"), "abc1234"))
+
 
 class CommitsAheadTests(unittest.TestCase):
     def test_returns_the_parsed_count(self) -> None:

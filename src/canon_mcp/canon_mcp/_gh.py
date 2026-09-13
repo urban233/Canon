@@ -17,6 +17,7 @@ from typing import Any
 
 _GH_TIMEOUT_SECONDS = 15
 _PR_VIEW_FIELDS = "number,url,state,isDraft,reviewDecision,statusCheckRollup"
+_RUN_LIST_FIELDS = "databaseId,status,conclusion,workflowName,url,createdAt"
 
 
 def pr_view(root: Path, branch: str) -> dict[str, Any] | None:
@@ -45,3 +46,30 @@ def pr_view(root: Path, branch: str) -> dict[str, Any] | None:
     except (json.JSONDecodeError, ValueError):
         return None
     return parsed if isinstance(parsed, dict) else None
+
+
+def ci_runs_for_commit(root: Path, sha: str) -> list[dict[str, Any]] | None:
+    """Every CI run recorded for the exact commit `sha`, or None.
+
+    Same fail-soft contract as `pr_view`: None covers `gh` missing, not
+    authenticated, no network, or no runs at all -- a caller must treat
+    all of these as "no evidence to report," not an error.
+    """
+    try:
+        completed = subprocess.run(
+            ["gh", "run", "list", "--commit", sha, "--json", _RUN_LIST_FIELDS],
+            cwd=root,
+            capture_output=True,
+            text=True,
+            timeout=_GH_TIMEOUT_SECONDS,
+            check=False,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return None
+    if completed.returncode != 0:
+        return None
+    try:
+        parsed = json.loads(completed.stdout)
+    except (json.JSONDecodeError, ValueError):
+        return None
+    return parsed if isinstance(parsed, list) else None
