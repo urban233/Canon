@@ -24,6 +24,7 @@ py_library(
         "canon_mcp/plan.py",
         "canon_mcp/position.py",
         "canon_mcp/review.py",
+        "canon_mcp/ship.py",
     ],
     imports = ["."],
     visibility = ["//tests:__pkg__"],
