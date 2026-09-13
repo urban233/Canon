@@ -80,6 +80,54 @@ def repo_root(payload: dict[str, Any] | None) -> Path:
     return Path.cwd()
 
 
+def _run_git(root: Path, *args: str) -> str | None:
+    """Run a read-only git command in `root`.
+
+    Returns trimmed stdout, or None on any failure -- git missing, a
+    timeout, a non-zero exit, or empty output. Every caller must treat
+    None as "couldn't determine this," never as an error to surface.
+    """
+    try:
+        completed = subprocess.run(
+            ["git", *args],
+            cwd=root,
+            capture_output=True,
+            text=True,
+            timeout=_GIT_TIMEOUT_SECONDS,
+            check=False,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return None
+    if completed.returncode != 0:
+        return None
+    return completed.stdout.strip() or None
+
+
+def current_branch(root: Path) -> str | None:
+    """The current branch name, or None if it can't be determined."""
+    return _run_git(root, "rev-parse", "--abbrev-ref", "HEAD")
+
+
+def default_branch(root: Path) -> str:
+    """The repository's default branch, best-effort.
+
+    Reads `origin/HEAD`; falls back to "main" when there's no such remote
+    ref -- no remote configured, or it was never set -- rather than
+    failing outright.
+    """
+    ref = _run_git(root, "rev-parse", "--abbrev-ref", "origin/HEAD")
+    if ref and ref.startswith("origin/"):
+        return ref[len("origin/") :]
+    return "main"
+
+
+def merge_base(root: Path, default_branch_name: str) -> str | None:
+    """The short SHA where the current branch diverged from
+    `default_branch_name`, or None if that can't be determined."""
+    sha = _run_git(root, "merge-base", "HEAD", default_branch_name)
+    return sha[:9] if sha else None
+
+
 def _emit(payload: dict[str, Any]) -> None:
     json.dump(payload, sys.stdout)
 

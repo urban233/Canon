@@ -29,7 +29,6 @@ developer's own work produces.
 from __future__ import annotations
 
 import re
-import subprocess
 from pathlib import Path
 
 import _common
@@ -43,7 +42,6 @@ _REQUIRED_SECTION_LABELS = {
     "non-goals": "Non-goals",
     "verification": "Verification",
 }
-_GIT_TIMEOUT_SECONDS = 10
 
 
 def _saved_plan_path(tool_response: str) -> Path | None:
@@ -88,39 +86,6 @@ def _missing_required_sections(body: str) -> list[str]:
     return [name for name in _REQUIRED_SECTION_LABELS if not sections.get(name)]
 
 
-def _run_git(root: Path, *args: str) -> str | None:
-    try:
-        completed = subprocess.run(
-            ["git", *args],
-            cwd=root,
-            capture_output=True,
-            text=True,
-            timeout=_GIT_TIMEOUT_SECONDS,
-            check=False,
-        )
-    except (OSError, subprocess.TimeoutExpired):
-        return None
-    if completed.returncode != 0:
-        return None
-    return completed.stdout.strip() or None
-
-
-def _current_branch(root: Path) -> str | None:
-    return _run_git(root, "rev-parse", "--abbrev-ref", "HEAD")
-
-
-def _default_branch(root: Path) -> str:
-    ref = _run_git(root, "rev-parse", "--abbrev-ref", "origin/HEAD")
-    if ref and ref.startswith("origin/"):
-        return ref[len("origin/") :]
-    return "main"
-
-
-def _base_sha(root: Path, default_branch: str) -> str | None:
-    sha = _run_git(root, "merge-base", "HEAD", default_branch)
-    return sha[:9] if sha else None
-
-
 def _yaml_scalar(value: str | None) -> str:
     if not value:
         return ""
@@ -163,9 +128,9 @@ def main() -> None:
         return
 
     root = _common.repo_root(payload)
-    branch = _current_branch(root) or "HEAD"
-    default_branch = _default_branch(root)
-    base = _base_sha(root, default_branch)
+    branch = _common.current_branch(root) or "HEAD"
+    default_branch = _common.default_branch(root)
+    base = _common.merge_base(root, default_branch)
 
     config = _config.load_config(root)
     verify = None
