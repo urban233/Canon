@@ -26,7 +26,9 @@ In place of that, Canon rebuilds on four Claude Code primitives:
 
 ## Status
 
-Phase 0, Step 1: repository skeleton. No hook runs yet.
+Phase 0 is done: the three hooks, first-run setup, the `canon-mcp`
+server (`canon_position`, `canon_plan`), and the `plan` skill are all in
+place. Phase 1 (the reviewer subagent) is next.
 
 ## The plan
 

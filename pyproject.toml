@@ -20,16 +20,27 @@ select = ["E", "F", "I", "UP", "B"]
 
 [tool.pyrefly]
 project-includes = ["plugins", "tests", "src"]
-project-excludes = ["**/__pycache__", "**/*.pyc"]
-# 3.9, matching the hooks floor: at this step the only real source is
-# _common.py, which must type-check at that floor anyway. Revisit once
-# src/ or tests/ contain syntax genuinely newer than 3.9.
+# server.py is canon-mcp's one file that imports the third-party `mcp`
+# SDK -- resolved by `uvx` at runtime (see MODULE.bazel), not by any
+# Bazel-managed hub this typecheck run has visibility into. Same
+# reasoning and precedent as excluding tools/run_ruff.py/run_pyrefly.py.
+project-excludes = [
+    "**/__pycache__",
+    "**/*.pyc",
+    "src/canon_mcp/canon_mcp/server.py",
+]
+# 3.9, matching the hooks floor: canon_mcp's pure-logic modules are
+# written to the same floor on purpose (see src/canon_mcp/BUILD.bazel),
+# even though the package actually runs on 3.13 under uvx, so this one
+# repo-wide setting doesn't need a second carve-out.
 python-version = "3.9"
 preset = "strict"
 # Each hook directory is its own import root (matching imports=["."] in its
 # BUILD.bazel), so `import _common` resolves the same way under Bazel and
-# under a bare `python3 hooks/foo.py` invocation.
-search-path = ["plugins/claude/hooks"]
+# under a bare `python3 hooks/foo.py` invocation. src/canon_mcp is the
+# analogous root for `import canon_mcp...` (its BUILD.bazel's py_library
+# sets imports=["."] the same way, one level up from the package itself).
+search-path = ["plugins/claude/hooks", "src/canon_mcp"]
 # No runtime dependency exists yet (see docs/plan.md's Non-goals), so
 # skip interpreter discovery rather than depend on whatever venv happens
 # to be active in the invoking shell -- this repo has no venv of its own.

@@ -5,7 +5,10 @@ load("@rules_python//python:defs.bzl", "py_test")
     py_test(
         name = src[:-3],
         srcs = [src, "__init__.py"],
-        deps = ["//plugins/claude/hooks:hooks_lib"],
+        deps = [
+            "//plugins/claude/hooks:hooks_lib",
+            "//src/canon_mcp:canon_mcp_lib",
+        ],
     )
     for src in glob(["test_*.py"])
 ]
