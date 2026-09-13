@@ -26,11 +26,13 @@ In place of that, Canon rebuilds on four Claude Code primitives:
 
 ## Status
 
-Phase 0 and Phase 1 are done: the plan-persisting, position, scope and
-verification hooks, first-run setup, the reviewer subagent, and the
-`canon-mcp` server's `canon_position`, `canon_plan`, `canon_review` and
-`canon_evidence` tools are all in place. Phase 2 (shipping) is in
-progress: `canon_ship` and the `ship` skill are the first piece.
+Phase 0, Phase 1, and Phase 2 are done: plan persistence and feature
+plans, the position/scope/verification/git-guard hooks, first-run
+setup, the reviewer and risk-reviewer subagents, the `ship`/`decide`/
+`frame` skills, interaction modes, and all five `canon-mcp` tools
+(`canon_position`, `canon_plan`, `canon_review`, `canon_evidence`,
+`canon_ship`) are in place. Phase 3 (ablation -- the `claude plugin
+eval` suite) is next.
 
 ## The plan
 
