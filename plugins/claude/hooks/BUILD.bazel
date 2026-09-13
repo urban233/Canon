@@ -13,6 +13,7 @@ py_library(
         "save_plan.py",
         "session_start.py",
         "capture_review.py",
+        "check_scope.py",
         "__init__.py",
     ],
     imports = ["."],

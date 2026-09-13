@@ -298,5 +298,68 @@ class LastDecisionTests(unittest.TestCase):
             self.assertIsNone(_common.last_decision(root, "stop.py"))
 
 
+_SAVED_PLAN = """---
+status: approved
+base: "a41f0c9"
+scope: [src/slugs/**, tests/slugs/**]
+done: "duplicate slugs raise, with a regression test"
+verify: "just test"
+parent:
+---
+
+## Approach
+Do it.
+
+## Non-goals
+- Not that.
+
+## Verification
+1. Run tests.
+"""
+
+
+class PlanHeaderAndBodyTests(unittest.TestCase):
+    def test_parses_header_and_body(self) -> None:
+        header, body = _common.plan_header_and_body(_SAVED_PLAN)
+        self.assertEqual(header["status"], "approved")
+        self.assertEqual(header["base"], "a41f0c9")
+        self.assertEqual(header["scope"], "[src/slugs/**, tests/slugs/**]")
+        self.assertEqual(header["verify"], "just test")
+        self.assertIn("Do it.", body)
+
+    def test_bare_keys_are_empty_strings(self) -> None:
+        header, _ = _common.plan_header_and_body(_SAVED_PLAN)
+        self.assertEqual(header["parent"], "")
+
+    def test_escaped_quotes_and_backslashes_round_trip(self) -> None:
+        text = '---\nnotes: "a \\"quoted\\" word and a \\\\ backslash"\n---\n\nbody'
+        header, _ = _common.plan_header_and_body(text)
+        self.assertEqual(header["notes"], 'a "quoted" word and a \\ backslash')
+
+    def test_no_header_block_returns_empty_header_and_whole_text_as_body(self) -> None:
+        header, body = _common.plan_header_and_body("## Approach\nHand-written.\n")
+        self.assertEqual(header, {})
+        self.assertIn("Hand-written.", body)
+
+    def test_parse_header_is_the_header_half_alone(self) -> None:
+        self.assertEqual(_common.parse_header(_SAVED_PLAN)["status"], "approved")
+
+
+class StateDirTests(unittest.TestCase):
+    def test_none_when_payload_is_none(self) -> None:
+        self.assertIsNone(_common.state_dir(None))
+
+    def test_none_when_scratchpad_dir_missing(self) -> None:
+        self.assertIsNone(_common.state_dir({}))
+
+    def test_joins_scratchpad_dir_with_the_default_subdir(self) -> None:
+        result = _common.state_dir({"scratchpad_dir": "/scratch"})
+        self.assertEqual(result, Path("/scratch") / "canon")
+
+    def test_accepts_a_custom_subdir(self) -> None:
+        result = _common.state_dir({"scratchpad_dir": "/scratch"}, "other")
+        self.assertEqual(result, Path("/scratch") / "other")
+
+
 if __name__ == "__main__":
     unittest.main()
