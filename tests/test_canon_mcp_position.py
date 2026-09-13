@@ -161,6 +161,7 @@ class BuildPositionTests(unittest.TestCase):
         self.assertEqual(result["branch"], "main")
         self.assertIsNone(result["pull_request"])
         self.assertFalse(result["verify_configured"])
+        self.assertEqual(result["mode"], "solo")
         self.assertIn("first-run setup", result["next_step"])
 
     def test_looks_up_the_pr_on_a_feature_branch(self) -> None:
@@ -195,6 +196,23 @@ class BuildPositionTests(unittest.TestCase):
         self.assertTrue(result["verify_configured"])
         self.assertEqual(result["plan"]["verify"], "just test")
         self.assertIn("ready for a human to merge", result["next_step"])
+
+    def test_surfaces_a_configured_mode(self) -> None:
+        with (
+            mock.patch("canon_mcp.position.current_branch", return_value="main"),
+            mock.patch("canon_mcp.position.default_branch", return_value="main"),
+            mock.patch("canon_mcp.position.merge_base", return_value="abc1234"),
+            mock.patch("canon_mcp.position.head_sha", return_value="def5678"),
+            mock.patch("canon_mcp.position.commits_ahead", return_value=0),
+            mock.patch("canon_mcp.position.read_plan_file", return_value=None),
+            mock.patch(
+                "canon_mcp.position.load_config", return_value={"mode": "async"}
+            ),
+            mock.patch("canon_mcp.position.pr_view"),
+            mock.patch("canon_mcp.position.build_review", return_value=_no_review()),
+        ):
+            result = position.build_position(Path("/repo"))
+        self.assertEqual(result["mode"], "async")
 
 
 if __name__ == "__main__":

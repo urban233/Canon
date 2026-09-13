@@ -86,6 +86,21 @@ class DestructiveCommandTests(unittest.TestCase):
             output = _invoke_main(_payload(root, "git status"))
             self.assertEqual(output, "")
 
+    def test_still_denied_outright_in_pair_mode(self) -> None:
+        """Destructive commands are never a question with an answer a
+        mode could change -- see git_guard.py's own module docstring."""
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            _init_repo(root)
+            config_path = root / ".canon" / "config.json"
+            config_path.parent.mkdir(parents=True)
+            config_path.write_text(json.dumps({"mode": "pair"}), encoding="utf-8")
+            output = _invoke_main(_payload(root, "git push --force origin main"))
+            payload = json.loads(output)
+            self.assertEqual(
+                payload["hookSpecificOutput"]["permissionDecision"], "deny"
+            )
+
 
 class AttributionStrippingTests(unittest.TestCase):
     def test_strips_a_co_authored_by_trailer(self) -> None:

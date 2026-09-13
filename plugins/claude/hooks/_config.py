@@ -87,6 +87,28 @@ def guard_default_branch(config: dict[str, Any] | None) -> bool:
     return config.get("guard_default_branch") is not False
 
 
+_VALID_MODES = {"pair", "solo", "async"}
+_DEFAULT_MODE = "solo"
+
+
+def interaction_mode(config: dict[str, Any] | None) -> str:
+    """Canon's one interaction-mode setting (docs/plan.md §09): "pair",
+    "solo", or "async".
+
+    Defaults to "solo" -- the documented default -- for a missing
+    config, a missing key, or any value that isn't one of the three
+    literals. Never guessed at runtime: a hook has no controlling
+    terminal to sniff (confirmed directly against Claude Code's own
+    hooks reference) whether the session itself is interactive or not,
+    so this is config, the same shape as `verify` and
+    `guard_default_branch` before it.
+    """
+    if config is None:
+        return _DEFAULT_MODE
+    mode = config.get("mode")
+    return mode if mode in _VALID_MODES else _DEFAULT_MODE
+
+
 def suggest_verify_command(root: Path) -> str | None:
     """Infer a plausible "verify" command for the first-run proposal.
 
