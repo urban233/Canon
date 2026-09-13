@@ -82,7 +82,10 @@ def _next_step(
         return f"wait for CI to finish ({incomplete}) on PR #{number}"
     verdict = review.get("verdict")
     if verdict is None:
-        return f"dispatch the reviewer subagent for PR #{number}"
+        names = review.get("reviewers_called_for") or ["reviewer"]
+        label = " and ".join(names)
+        plural = "s" if len(names) > 1 else ""
+        return f"dispatch the {label} subagent{plural} for PR #{number}"
     if review.get("stale"):
         return (
             f"dispatch the reviewer again for PR #{number} -- HEAD has moved "

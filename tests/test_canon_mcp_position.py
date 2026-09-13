@@ -102,6 +102,16 @@ class NextStepTests(unittest.TestCase):
         step = position._next_step(True, plan, pr, _no_review())
         self.assertIn("dispatch the reviewer", step)
 
+    def test_no_verdict_yet_with_two_reviewers_names_both(self) -> None:
+        plan = _empty_plan()
+        pr: dict[str, Any] = {"number": 7, "state": "OPEN", "statusCheckRollup": []}
+        review: dict[str, Any] = {
+            "reviewers_called_for": ["reviewer", "risk-reviewer"],
+            "verdict": None,
+        }
+        step = position._next_step(True, plan, pr, review)
+        self.assertIn("dispatch the reviewer and risk-reviewer subagents", step)
+
     def test_stale_verdict_asks_to_dispatch_again(self) -> None:
         plan = _empty_plan()
         pr: dict[str, Any] = {"number": 7, "state": "OPEN", "statusCheckRollup": []}

@@ -1,11 +1,16 @@
 # SPDX-License-Identifier: BSD-3-Clause
-"""Canon's `SubagentStop` hook -- captures the reviewer's own verdict.
+"""Canon's `SubagentStop` hook -- captures a reviewer's own verdict.
 
-Matched in hooks.json to `"canon:reviewer"` (Claude Code's hooks
-reference documents plugin-scoped `SubagentStop` matchers, e.g.
-`^my-plugin:reviewer$`). Mirrors `save_plan.py`'s tolerant style: trust
-the matcher, but bail if a payload field that IS present clearly
-disagrees with it, rather than acting on some other subagent's output.
+Matched in hooks.json to both `"canon:reviewer"` and
+`"canon:risk-reviewer"` (Claude Code's hooks reference documents
+plugin-scoped `SubagentStop` matchers, e.g. `^my-plugin:reviewer$`).
+Mirrors `save_plan.py`'s tolerant style: trust the matcher, but bail if
+a payload field that IS present clearly disagrees with it, rather than
+acting on some other subagent's output. Logs under the actual
+`agent_type` (falling back to `"reviewer"` only when that field is
+absent) rather than a hardcoded name, so a `risk-reviewer` verdict lands
+under its own key in `.canon/hooks/decisions.jsonl` -- exactly what
+`review.py`'s `last_decision(root, "risk-reviewer")` looks up.
 
 Reads `last_assistant_message` directly -- Claude Code's own hooks
 reference says to use this field, not `transcript_path`, for exactly
@@ -28,6 +33,7 @@ _DECISIONS = (
     "CHANGES REQUIRED",
     "BLOCKED BY MISSING EVIDENCE",
 )
+_ALLOWED_AGENT_TYPES = ("reviewer", "risk-reviewer")
 _REASON_PREVIEW_CHARS = 200
 
 
@@ -54,7 +60,7 @@ def main() -> None:
     if payload is None:
         return
     agent_type = payload.get("agent_type")
-    if agent_type not in (None, "reviewer"):
+    if agent_type not in (None, *_ALLOWED_AGENT_TYPES):
         return
     message = payload.get("last_assistant_message")
     if not isinstance(message, str) or not message.strip():
@@ -67,7 +73,7 @@ def main() -> None:
     reason = message.strip()[:_REASON_PREVIEW_CHARS]
     _common.log_decision(
         root,
-        "reviewer",
+        agent_type or "reviewer",
         decision,
         reason=reason,
         extra={"head": _common.head_sha(root)},
