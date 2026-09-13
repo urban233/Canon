@@ -69,6 +69,15 @@
             "command": "python3 ${CLAUDE_PLUGIN_ROOT}/hooks/capture_review.py"
           }
         ]
+      },
+      {
+        "matcher": "canon:risk-reviewer",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 ${CLAUDE_PLUGIN_ROOT}/hooks/capture_review.py"
+          }
+        ]
       }
     ]
   }

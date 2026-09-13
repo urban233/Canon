@@ -122,6 +122,18 @@ def is_pushed(root: Path, sha: str) -> bool:
     return bool(_run_git(root, "branch", "-r", "--contains", sha))
 
 
+def changed_paths(root: Path, base_sha: str) -> list[str] | None:
+    """The files that differ between `base_sha` and HEAD, or None if
+    that couldn't be determined.
+
+    This also covers a genuinely empty diff, indistinguishable from
+    `_run_git`'s own None-on-empty-output return -- every caller treats
+    both the same way: nothing to flag.
+    """
+    output = _run_git(root, "diff", "--name-only", f"{base_sha}..HEAD")
+    return output.splitlines() if output else None
+
+
 def commits_ahead(root: Path, base_sha: str | None) -> int | None:
     """How many commits HEAD is ahead of `base_sha`, or None if either
     that count or `base_sha` itself couldn't be determined."""

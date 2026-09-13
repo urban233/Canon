@@ -69,6 +69,25 @@ class MainTests(unittest.TestCase):
             self.assertEqual(record["head"], "abc1234de")
             self.assertIn("All clear.", record["reason"])
 
+    def test_captures_a_verdict_from_the_risk_reviewer(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            completed = mock.Mock(returncode=0, stdout="abc1234def\n")
+            with mock.patch("subprocess.run", return_value=completed):
+                _invoke_main(
+                    {
+                        "cwd": str(root),
+                        "agent_type": "risk-reviewer",
+                        "last_assistant_message": f"Backfill looks safe.\n\n{_READY}",
+                    }
+                )
+
+            log_path = root / ".canon" / "hooks" / "decisions.jsonl"
+            self.assertTrue(log_path.exists())
+            record = json.loads(log_path.read_text(encoding="utf-8").strip())
+            self.assertEqual(record["hook"], "risk-reviewer")
+            self.assertEqual(record["decision"], _READY)
+
     def test_noop_when_agent_type_does_not_match(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)

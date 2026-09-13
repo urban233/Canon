@@ -122,5 +122,25 @@ class CommitsAheadTests(unittest.TestCase):
             self.assertIsNone(_git.commits_ahead(Path("/repo"), "abc1234"))
 
 
+class ChangedPathsTests(unittest.TestCase):
+    def test_returns_the_split_lines(self) -> None:
+        completed = mock.Mock(returncode=0, stdout="src/a.py\nsrc/b.py\n")
+        with mock.patch("subprocess.run", return_value=completed):
+            self.assertEqual(
+                _git.changed_paths(Path("/repo"), "abc1234"),
+                ["src/a.py", "src/b.py"],
+            )
+
+    def test_returns_none_on_an_empty_diff(self) -> None:
+        completed = mock.Mock(returncode=0, stdout="")
+        with mock.patch("subprocess.run", return_value=completed):
+            self.assertIsNone(_git.changed_paths(Path("/repo"), "abc1234"))
+
+    def test_returns_none_on_failure(self) -> None:
+        completed = mock.Mock(returncode=128, stdout="")
+        with mock.patch("subprocess.run", return_value=completed):
+            self.assertIsNone(_git.changed_paths(Path("/repo"), "abc1234"))
+
+
 if __name__ == "__main__":
     unittest.main()
