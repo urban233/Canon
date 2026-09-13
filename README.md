@@ -45,7 +45,8 @@ lint and typecheck. Dev tooling (ruff, pyrefly) is pinned in
 [`requirements.in`](requirements.in) and resolved hermetically as real
 Bazel targets — no `uvx` in that path. `uvx` is reserved for the MCP
 server's own runtime dependency once it exists (see `docs/plan.md` §05).
-See the [`Justfile`](Justfile).
+See the [`Justfile`](Justfile). [GitHub Actions](.github/workflows/ci.yml)
+runs the same checks on every pull request and on `main`.
 
 ## License
 
