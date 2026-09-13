@@ -36,8 +36,33 @@ section it can't find leaves its field blank rather than being invented.
   a name that resolves to nothing is silently left blank, so get it
   right.
 
-`status`, `base` and `verify` need no section — the hook reads those
-from git and `.canon/config.json` itself.
+`status` and `base` need no section — the hook reads those from git
+itself.
+
+## Overriding the verify command, for this branch only
+
+`verify:` is normally left blank, and `.canon/config.json` answers for
+the whole repository. Override it only when this branch genuinely needs
+a different command — then write that command as the **first line of
+`## Verification`, in backticks, on its own**:
+
+```markdown
+## Verification
+
+`pytest tests/slugs/ -x`
+
+Confirm the new test fails without the fix.
+```
+
+Only that exact shape is recognised. A command described in prose is not
+picked up, deliberately: this field decides what gates every turn end on
+the branch, and guessing a command out of a sentence is the
+wrong-but-plausible failure Canon exists to avoid. Prose after the first
+line is fine and is for the human.
+
+Leave it out unless you mean it. A blank `verify:` follows the
+repository's config, including later changes to it; a filled one does
+not.
 
 ## Sections that are required
 

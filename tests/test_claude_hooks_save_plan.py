@@ -176,7 +176,32 @@ class RequiredSectionTests(unittest.TestCase):
 
 
 class MainTests(unittest.TestCase):
-    def test_writes_plan_with_header_and_verify_from_config(self) -> None:
+    def test_verify_is_not_copied_from_config(self) -> None:
+        """The config value must NOT be pinned into the header.
+
+        Once §07's "overrides it for that branch" is honoured, a copy
+        taken at approval time stops being a record and becomes a pin:
+        every later edit to `.canon/config.json` would be silently
+        ignored on every branch whose plan predates it. A blank
+        `verify:` is what lets the config keep answering.
+        """
+        with tempfile.TemporaryDirectory() as root_str:
+            root = Path(root_str)
+            _init_repo(root, "feature/widget")
+            (root / ".canon").mkdir(exist_ok=True)
+            (root / ".canon" / "config.json").write_text(
+                json.dumps({"verify": "just test"}), encoding="utf-8"
+            )
+            _invoke_main(_approved_payload(root, PLAN_WITH_SECTIONS))
+
+            content = (root / ".canon" / "plans" / "feature/widget.md").read_text(
+                encoding="utf-8"
+            )
+            self.assertIn("status: approved", content)
+            self.assertIn("\nverify:\n", content)
+            self.assertNotIn("just test", content)
+
+    def test_writes_plan_with_header(self) -> None:
         with tempfile.TemporaryDirectory() as root_str:
             root = Path(root_str)
             _init_repo(root, "feature/widget")
@@ -198,7 +223,6 @@ class MainTests(unittest.TestCase):
             self.assertTrue(plan_path.exists())
             content = plan_path.read_text(encoding="utf-8")
             self.assertIn("status: approved", content)
-            self.assertIn('verify: "just test"', content)
             self.assertIn("scope:", content)
             self.assertIn("done:", content)
             self.assertIn("parent:", content)
@@ -527,6 +551,42 @@ class DerivedHeaderFieldTests(unittest.TestCase):
         `canon_position` both follow this field."""
         with tempfile.TemporaryDirectory() as tmp:
             self.assertIsNone(save_plan._parent_path(Path(tmp), "nope.md"))
+
+
+class VerifyOverrideTests(unittest.TestCase):
+    def test_a_lone_backticked_first_line_is_an_override(self) -> None:
+        section = "`pytest tests/slugs/ -x`\n\nConfirm it fails without the fix."
+        self.assertEqual(save_plan._verify_override(section), "pytest tests/slugs/ -x")
+
+    def test_prose_is_not_an_override(self) -> None:
+        """Guessing a command out of a sentence is exactly the
+        wrong-but-plausible failure §07's rule exists to prevent."""
+        self.assertIsNone(save_plan._verify_override("1. Run the tests."))
+
+    def test_a_bare_command_line_is_not_an_override(self) -> None:
+        self.assertIsNone(save_plan._verify_override("just test"))
+
+    def test_backticks_later_in_the_section_do_not_count(self) -> None:
+        self.assertIsNone(save_plan._verify_override("Run the suite:\n\n`just test`"))
+
+    def test_empty_section_is_no_override(self) -> None:
+        self.assertIsNone(save_plan._verify_override(""))
+
+    def test_override_reaches_the_saved_header(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            _init_repo(root, "feature/widget")
+            body = (
+                "## Non-goals\nDo not rewrite the parser.\n\n"
+                "## Verification\n`pytest tests/slugs/ -x`\n"
+            )
+            _invoke_main(_approved_payload(root, body))
+            header = _common.parse_header(
+                (root / ".canon" / "plans" / "feature" / "widget.md").read_text(
+                    encoding="utf-8"
+                )
+            )
+            self.assertEqual(header["verify"], "pytest tests/slugs/ -x")
 
 
 class DerivedHeaderEndToEndTests(unittest.TestCase):

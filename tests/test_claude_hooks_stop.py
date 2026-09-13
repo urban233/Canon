@@ -257,6 +257,60 @@ class VerificationRunTests(unittest.TestCase):
             self.assertIn("timed out", result["reason"])
 
 
+class PlanVerifyOverrideTests(unittest.TestCase):
+    def test_the_plan_header_command_is_what_runs(self) -> None:
+        """The config names a command that passes; the plan header names
+        one that fails. The gate must run the header's."""
+        with (
+            tempfile.TemporaryDirectory() as root_str,
+            tempfile.TemporaryDirectory() as scratch,
+        ):
+            root = Path(root_str)
+            subprocess.run(
+                ["git", "init", "-q"], cwd=root, check=True, capture_output=True
+            )
+            subprocess.run(
+                ["git", "symbolic-ref", "HEAD", "refs/heads/wip"],
+                cwd=root,
+                check=True,
+                capture_output=True,
+            )
+            # An unborn branch makes `rev-parse --abbrev-ref HEAD` fail,
+            # which reads as "no branch" and skips the override entirely.
+            subprocess.run(
+                [
+                    "git",
+                    "-c",
+                    "user.email=canon@example.com",
+                    "-c",
+                    "user.name=Canon Tests",
+                    "commit",
+                    "--allow-empty",
+                    "-m",
+                    "init",
+                ],
+                cwd=root,
+                check=True,
+                capture_output=True,
+            )
+            config_path = root / ".canon" / "config.json"
+            config_path.parent.mkdir(parents=True)
+            config_path.write_text(json.dumps({"verify": "true"}), encoding="utf-8")
+            plan = root / ".canon" / "plans"
+            plan.mkdir(parents=True)
+            (plan / "wip.md").write_text(
+                '---\nstatus: approved\nverify: "false"\n---\n\n## Approach\nx\n',
+                encoding="utf-8",
+            )
+
+            result = _invoke_main({"cwd": str(root), "scratchpad_dir": scratch})
+
+            self.assertIsNotNone(result)
+            assert result is not None
+            self.assertEqual(result["decision"], "block")
+            self.assertIn("`false` exited 1", result["reason"])
+
+
 class RunVerificationUnitTests(unittest.TestCase):
     def test_passes_on_zero_exit(self) -> None:
         passed, detail = stop._run_verification(Path.cwd(), "true")
