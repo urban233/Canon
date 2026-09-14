@@ -7,11 +7,9 @@ description: Decide whether a change is ready to hand to a human, and open the p
 
 1. Call `canon_ship`. Its three checks -- plan satisfied, evidence green
    at this HEAD, independent reviewer verdict present -- are the only
-   things that make a change ready; nothing else is required and
-   nothing here is a matter of judgement.
+   things that make a change ready.
 2. If `ready` is false, stop. Work through `missing` in order rather
-   than opening a pull request that isn't actually ready. `missing` is
-   already plain language -- report it as-is, don't paraphrase it.
+   than opening a pull request that isn't actually ready.
 3. Before opening the pull request, consider whether this branch made a
    decision worth recording: use the `decide` skill's test (a real
    alternative seriously considered, and a consequence that outlives

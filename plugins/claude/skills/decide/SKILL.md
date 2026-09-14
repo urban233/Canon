@@ -13,9 +13,8 @@ Both of these must be true:
   correct way of doing something.
 - The consequence outlives this branch.
 
-Local implementation choices don't qualify, and neither do decisions
-about the workflow's own process. If either half is false, there's
-nothing to record -- the choice just happened, it wasn't decided.
+If either half is false, there's nothing to record -- the choice just
+happened, it wasn't decided.
 
 ## When
 

@@ -1,4 +1,5 @@
 ---
 type: regex
+target: trace
 pattern: 'READY FOR HUMAN APPROVAL|CHANGES REQUIRED|BLOCKED BY MISSING EVIDENCE'
 ---
