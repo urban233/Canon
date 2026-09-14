@@ -1,0 +1,20 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="512" height="512" viewBox="0 0 512 512" role="img" aria-labelledby="title desc">
+  <title id="title">Canon icon tile</title>
+  <desc id="desc">The exact white Lyre C symbol on an electric cobalt tile.</desc>
+  <defs>
+    <!-- Same source geometry as canon-lyre-c.svg and canon-logo.svg. -->
+    <g id="lyre-c" fill="currentColor">
+      <path d="M239 141C206 173 158 199 112 243C66 288 33 343 27 392C20 458 59 516 121 547C191 582 287 586 377 562C434 547 479 516 498 478C511 452 505 426 486 414C468 402 443 406 430 424C417 443 423 465 442 474C450 478 460 479 467 475C462 500 437 523 402 536C346 558 278 561 221 544C170 529 142 490 142 438C142 370 175 305 217 251C235 228 249 209 257 191C266 172 260 153 247 142Z"/>
+      <path d="M246 151C258 129 256 104 242 89C227 73 202 74 189 90C175 107 181 130 198 140C214 149 232 143 239 130C245 118 239 106 228 101" fill="none" stroke="currentColor" stroke-width="26" stroke-linecap="round" stroke-linejoin="round"/>
+      <path d="M241 127H455V152H241Z"/>
+      <path d="M414 128C408 110 412 88 426 73C442 57 467 58 483 74C499 91 497 117 480 134C466 148 446 152 425 151H407C414 145 418 137 414 128Z"/>
+      <path d="M270 151H281V544H270ZM307 151H318V544H307ZM344 151H355V544H344ZM381 151H392V537H381Z"/>
+      <path d="M187 594H374V619H187ZM161 630H399V664H161Z"/>
+    </g>
+  </defs>
+  <rect width="512" height="512" rx="80" fill="#101BEC"/>
+  <rect x="24" y="24" width="464" height="464" rx="58" fill="none" stroke="#AEB7FF" stroke-opacity=".42" stroke-width="2"/>
+  <g color="#F8F7F2" transform="translate(62 10) scale(.72)">
+    <use href="#lyre-c"/>
+  </g>
+</svg>
