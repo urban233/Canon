@@ -228,5 +228,148 @@ class SummarizeTests(unittest.TestCase):
         self.assertEqual(summary["current"]["index"], 1)
 
 
+def _summarize(
+    section: str,
+    branches: set[str] | None = None,
+    pulls: dict[str, dict[str, Any]] | None = None,
+    merged: set[str] | None = None,
+) -> dict[str, Any]:
+    return _steps.summarize(
+        "features/x.md",
+        _steps.annotate(
+            _steps.parse_steps(section),
+            branches=branches or set(),
+            pulls=pulls or {},
+            merged_branches=merged or set(),
+        ),
+    )
+
+
+def _startable(summary: dict[str, Any]) -> list[str]:
+    return [step["slug"] for step in summary["startable"]]
+
+
+class DependencyParsingTests(unittest.TestCase):
+    def test_a_step_without_an_annotation_waits_for_the_one_before_it(self) -> None:
+        steps = _steps.parse_steps("- a: one\n- b: two\n- c: three")
+        self.assertEqual([step["depends_on"] for step in steps], [[], ["a"], ["b"]])
+
+    def test_after_none_declares_a_step_that_waits_for_nothing(self) -> None:
+        steps = _steps.parse_steps("- a: one\n- b (after: none): two")
+        self.assertEqual(steps[1]["depends_on"], [])
+
+    def test_several_dependencies_are_comma_separated(self) -> None:
+        steps = _steps.parse_steps("- a: one\n- b: two\n- c (after: a, b): three")
+        self.assertEqual(steps[2]["depends_on"], ["a", "b"])
+
+    def test_backticks_and_spacing_around_a_dependency_are_tolerated(self) -> None:
+        steps = _steps.parse_steps("- a: one\n- b (after:  `a` ): two")
+        self.assertEqual(steps[1]["depends_on"], ["a"])
+
+    def test_after_is_recognised_whatever_its_case(self) -> None:
+        steps = _steps.parse_steps("- a: one\n- b (After: a): two")
+        self.assertEqual(steps[1]["depends_on"], ["a"])
+        self.assertEqual(steps[1]["description"], "two")
+
+    def test_the_annotation_is_kept_out_of_the_description(self) -> None:
+        steps = _steps.parse_steps("- a (after: none): expose cmd.* to an agent")
+        self.assertEqual(steps[0]["description"], "expose cmd.* to an agent")
+
+    def test_a_parenthesis_that_is_not_an_after_clause_stays_unmatched(self) -> None:
+        """Unchanged from before the notation existed: this line never
+        parsed as a slug, and must not start now."""
+        steps = _steps.parse_steps("- a (the hard one): one")
+        self.assertIsNone(steps[0]["slug"])
+
+    def test_a_slugless_step_contributes_no_implicit_dependency(self) -> None:
+        steps = _steps.parse_steps("- a: one\n- no slug here\n- c: three")
+        self.assertEqual(steps[2]["depends_on"], [])
+
+
+class StartableTests(unittest.TestCase):
+    def test_a_plain_chain_offers_only_its_first_step(self) -> None:
+        """The pre-notation meaning, preserved exactly: every plan
+        already in a repository stays strictly sequential."""
+        summary = _summarize("- a: one\n- b: two\n- c: three")
+        self.assertEqual(_startable(summary), ["a"])
+
+    def test_independent_steps_are_all_startable_at_once(self) -> None:
+        summary = _summarize("- a: one\n- b (after: none): two")
+        self.assertEqual(_startable(summary), ["a", "b"])
+
+    def test_a_join_waits_for_every_dependency(self) -> None:
+        section = "- a: one\n- b (after: none): two\n- c (after: a, b): three"
+        summary = _summarize(section, branches={"a"}, merged={"a"})
+        self.assertEqual(_startable(summary), ["b"])
+        self.assertEqual(summary["steps"][2]["blocked_by"], ["b"])
+
+    def test_a_join_becomes_startable_once_all_of_them_merge(self) -> None:
+        section = "- a: one\n- b (after: none): two\n- c (after: a, b): three"
+        summary = _summarize(section, branches={"a", "b"}, merged={"a", "b"})
+        self.assertEqual(_startable(summary), ["c"])
+
+    def test_a_step_already_begun_is_not_offered_again(self) -> None:
+        summary = _summarize("- a: one\n- b (after: none): two", branches={"b"})
+        self.assertEqual(_startable(summary), ["a"])
+
+    def test_current_keeps_its_meaning_alongside_startable(self) -> None:
+        section = "- a: one\n- b (after: none): two\n- c (after: a, b): three"
+        summary = _summarize(section, branches={"a"}, merged={"a"})
+        self.assertEqual(summary["current"]["slug"], "b")
+        self.assertEqual(summary["completed"], 1)
+
+    def test_an_unknown_dependency_blocks_rather_than_being_ignored(self) -> None:
+        summary = _summarize("- a: one\n- b (after: ghost): two")
+        self.assertEqual(summary["steps"][1]["unknown_dependencies"], ["ghost"])
+        self.assertEqual(_startable(summary), ["a"])
+
+    def test_an_unmatched_step_is_never_startable(self) -> None:
+        summary = _summarize("- no slug here\n- b (after: none): two")
+        self.assertEqual(_startable(summary), ["b"])
+
+
+class CycleTests(unittest.TestCase):
+    def test_no_cycle_in_an_ordinary_plan(self) -> None:
+        self.assertEqual(_summarize("- a: one\n- b: two")["cycle"], [])
+
+    def test_two_steps_waiting_on_each_other_are_reported(self) -> None:
+        summary = _summarize("- a (after: b): one\n- b (after: a): two")
+        self.assertEqual(summary["cycle"], ["a", "b"])
+        self.assertEqual(_startable(summary), [])
+
+    def test_a_step_waiting_on_itself_is_reported(self) -> None:
+        self.assertEqual(_summarize("- a (after: a): one")["cycle"], ["a"])
+
+    def test_an_unknown_dependency_is_not_a_cycle(self) -> None:
+        self.assertEqual(_summarize("- a (after: ghost): one")["cycle"], [])
+
+
+class RealFeaturePlanTests(unittest.TestCase):
+    """The ten-branch stack from `phase-0-2-gap-closure.md`, which had to
+    be drawn as an ASCII diagram in prose because `## Steps` could not
+    express it. Transcribed here, it must give that diagram's answer."""
+
+    _STACK = "\n".join(
+        f"- {index}-step (after: {index - 1}-step): step {index}"
+        if index > 1
+        else f"- {index}-step (after: none): step {index}"
+        for index in range(1, 11)
+    )
+
+    def test_a_stack_offers_exactly_one_step_at_a_time(self) -> None:
+        summary = _summarize(self._STACK)
+        self.assertEqual(_startable(summary), ["1-step"])
+
+    def test_a_stack_advances_one_step_per_merge(self) -> None:
+        summary = _summarize(self._STACK, branches={"1-step"}, merged={"1-step"})
+        self.assertEqual(_startable(summary), ["2-step"])
+
+    def test_a_fully_landed_stack_offers_nothing(self) -> None:
+        landed = {f"{index}-step" for index in range(1, 11)}
+        summary = _summarize(self._STACK, branches=landed, merged=landed)
+        self.assertEqual(_startable(summary), [])
+        self.assertIsNone(summary["current"])
+
+
 if __name__ == "__main__":
     unittest.main()
