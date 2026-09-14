@@ -1,0 +1,5 @@
+schema_version: "1.1"
+name: decide-writes-a-record-without-committing-it
+tags: [decide]
+context:
+  scaffold_script: fixture.sh
