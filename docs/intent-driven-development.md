@@ -412,6 +412,143 @@ reason about selection algebra get deleted. What survives is a line in the
 corpus recording what you learned, and possibly one skill file containing
 the approach that worked.
 
+### "But what if my probe is big?"
+
+This is the question everyone arrives at, and it usually sounds like
+this: *I am building a probe. It takes four slices, so four pull
+requests, all merged to main. Now I want to throw it away — isn't that
+a problem?*
+
+Yes, that would be a problem. But the problem is not in the throwing
+away, it is one step earlier: **a probe that needs four pull requests is
+not a probe.**
+
+If you are slicing exploratory work into four merged pull requests, one
+of two things has happened. Either you stopped probing and started
+building — you are committed, so stop calling it a probe and plan it
+properly. Or you are trying to answer four questions at once, in which
+case it is four probes, done one after another, each of which you delete
+before starting the next.
+
+Neither of those is fixed by better revert technique. They are fixed by
+noticing which situation you are in before you open the first pull
+request.
+
+### The test to apply before merging anything exploratory
+
+Ask one question about each piece of work in front of you:
+
+> **If the answer to my question turns out to be no, would I still want
+> this?**
+
+- **Yes** — merge it. It is not probe. It is infrastructure that the
+  probe happens to need, and you would have built it anyway.
+- **No** — do not merge it. That is the probe, and it lives on a single
+  branch that gets deleted.
+
+The reason this test works is that it separates two things that feel
+identical while you are writing them and are completely different a
+month later. Code you would want regardless is an asset the moment it
+lands. Code that only exists to answer a question is a liability the
+moment the question is answered.
+
+Nearly every "my probe needs four pull requests" turns out to be three
+of the first kind and one of the second.
+
+### Worked example: "does fine-tuning help PyMOL Copilot?"
+
+That question genuinely looks like four slices of work. Apply the test
+to each one:
+
+| Slice | Would I still want this if the answer is no? | So it is |
+|---|---|---|
+| A data pipeline that produces training examples | No | Probe |
+| The fine-tuning / training loop | No | Probe |
+| An eval harness that scores the result | **Yes** — every other decision needs it too | Infrastructure |
+| Serving the custom model in production | No | Probe |
+
+Three of those four should never have been pull requests. And once you
+see that, the probe collapses to something much smaller:
+
+- **Eval harness** — merge it. You wanted it regardless; it is stage 3
+  of the loop in §05 and every later decision is measured with it.
+- **Data pipeline** — do not build one. Hand-label two hundred rows in a
+  spreadsheet. A probe answers its question at the lowest fidelity that
+  is *decisive*, not at production quality.
+- **Training loop** — one script, one branch, never merged.
+- **Serving** — do not. Evaluate offline. Serving only matters if the
+  answer turns out to be yes, and you do not know that yet.
+
+What you end up with is **one merged change you wanted anyway, and one
+branch you delete.** Throwing the probe away costs a single command.
+
+### The skill this is really teaching
+
+Designing the cheapest experiment that still settles the question.
+
+A junior engineer's instinct, and it is an understandable one, is to
+build the probe properly — real pipeline, real tests, real deployment —
+because building things badly feels unprofessional. But a probe is not a
+product, and the professionalism is in the *experiment design*, not in
+the finish of the code. A hand-labelled spreadsheet that answers the
+question in two days is better engineering than a polished pipeline that
+answers the same question in three weeks.
+
+So when a probe looks like it needs four pull requests, the correct
+response is not to slice it more carefully. It is to ask what the
+cheapest thing is that would still change your mind, and build only
+that.
+
+### Three shapes, and knowing which one you are in
+
+Most of the confusion comes from calling all exploratory work "a probe".
+There are three distinct shapes, and they get different treatment:
+
+1. **A probe.** One question, one branch, hours to a day or two. Never
+   merged. Deleted when the question is answered. What survives is a
+   line in the corpus and what you now know.
+2. **A bet.** Genuinely large, and genuinely cannot be shrunk into a
+   probe. This is not exploration any more — you have decided to build
+   something. Give it a feature plan with `## Why`, `## Success` and
+   `## Non-goals`, merge it in small slices, and accept that removing it
+   later means a deletion pull request. That cost is real, but it is
+   bounded precisely *because* the slices were small and cohesive.
+3. **A spike.** Multi-week exploration on a branch that is never merged.
+   Legitimate, as long as it is time-boxed and you accepted on day one
+   that it gets deleted.
+
+The failure mode is a fourth shape that pretends to be the third: **a
+long-lived branch you intend to merge.** That is how you end up merging
+a probe you should have thrown away, and it is the thing to watch for in
+yourself. The tell is that you have stopped asking a question and
+started polishing.
+
+### When several probes are needed, run them in sequence
+
+If four questions genuinely need answering, do not build four things in
+parallel and merge them. Run probe one, delete it, and build probe two
+fresh using what you learned. You are not accumulating code, you are
+accumulating knowledge — and the knowledge lives in the corpus and in
+the decisions you record, not in the branch.
+
+This feels wasteful the first time. It is not: the second probe is
+faster than the first *because* it was written knowing the answer to the
+first question, and it carries none of the scaffolding the first one
+needed.
+
+### Nothing enforces any of this
+
+Worth stating plainly: Canon has no concept of a probe. It will happily
+save a plan for one, gate its verification and dispatch a reviewer. It
+cannot tell exploratory work from committed work, because the difference
+is intent that only you hold, and storing it would break Invariant II.
+
+So this is a judgement you make, not a rule a tool applies. What the rest
+of the method gives you is the thing that makes the judgement
+recoverable when you get it wrong: every merged slice has a stated scope
+and a stated set of non-goals, so when you do have to delete one, you can
+see exactly what crossed its boundary.
+
 ---
 
 ## 11 · What not to adopt, and the evidence for refusing
@@ -464,5 +601,7 @@ guarantee it will not be read.
 - **Treat one-way doors differently.** Data loss, published interfaces and
   external side effects get the full classical treatment regardless of
   diff size.
-- **Delete your probes.** What survives a spike is a line in the corpus,
-  not the code that produced it.
+- **Delete your probes.** Before merging anything exploratory, ask: *if
+  the answer turns out to be no, would I still want this?* Yes means it
+  is infrastructure — merge it. No means it is probe — keep it off
+  trunk. A probe that needs four pull requests is not a probe.
