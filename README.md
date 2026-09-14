@@ -1,7 +1,32 @@
+<p align="center">
+  <img src="assets/canon-banner.png" alt="Canon" width="100%">
+</p>
+
 # Canon
 
 A Claude Code plugin that keeps agentic development on track without a
 stored state machine.
+
+## Why "Canon"
+
+**Canon** comes from the Ancient Greek **κανών** (*kanōn*): a builder's
+straightedge, the rod against which a mason checked a wall for drift. Epicurus
+later took the same word for his epistemology, *Kanonikē* -- the *kanōn* as
+the objective criterion of truth, the standard that separates verified
+reality from conjecture and hallucination.
+
+That is the exact job this project does for agentic software engineering:
+
+- **The straightedge.** An unyielding baseline that enforces architectural
+  invariants and catches codebase drift as it happens, not at review time.
+- **The criterion of truth.** Verification grounded in the repository's own
+  runtime, filtering speculative claims and false positives out before a
+  diff ever reaches a human.
+- **The standard.** Review feedback that compounds into recorded project
+  norms instead of being re-litigated every time it comes up again.
+
+The mark is the same idea drawn once: a lyre strung in the shape of a **C**,
+a straightedge a god hands down rather than an instrument anyone plays.
 
 Canon is the successor to [CoDev](https://github.com/urban233/CoDev), built
 on the finding that CoDev's own recorded history shows: **the state machine
@@ -24,59 +49,83 @@ In place of that, Canon rebuilds on four Claude Code primitives:
   by reading git, GitHub, and the plan file directly -- nothing is stored,
   so nothing can drift.
 
-## Status
+## What Canon brings
 
-Phases 0, 1 and 2 are complete, and a follow-up audit against
-[`docs/plan.md`](docs/plan.md) closed eight deviations between the
-document and the code — among them the "no signal, no Canon"
-precondition, the plan header fields `check_scope` depends on, the
-per-branch `verify:` override, and notebook handling. The work is
-recorded as a feature plan in
-[`.canon/plans/features/`](.canon/plans/features/), with the choices that
-had a real alternative written up in [`docs/decisions/`](docs/decisions/).
+- **No compaction amnesia.** A plan approved in plan mode is written into the
+  repository the moment it's approved, so it survives context compaction and
+  session restarts instead of evaporating with the conversation that produced
+  it.
+- **No unverified "done."** A turn cannot end on the claim that tests pass
+  unless the repository's own verification command actually ran and came
+  back green at that exact commit.
+- **No self-graded review.** Every change gets a verdict from a reviewer
+  subagent that only ever sees the diff, the plan, and the evidence -- never
+  the conversation that produced them, so review can't inherit the writer's
+  own blind spots.
+- **No accidental branch damage.** Editing on the default branch, or
+  branching again from a branch you already made on purpose, is caught
+  before the first edit, not discovered at commit time.
+- **No new surface to babysit.** All of the above rides on primitives Claude
+  Code already has -- plan mode, hooks, subagents, MCP tools. There's no
+  dashboard, no separate CLI, and no task database that can fall out of sync
+  with the repository it's supposed to describe.
 
-In place now: plan persistence and feature plans, the
-position/scope/verification/git-guard hooks, first-run setup, the
-reviewer and risk-reviewer subagents, the `ship`/`decide`/`frame`/`plan`
-skills, interaction modes, and all five `canon-mcp` tools
-(`canon_position`, `canon_plan`, `canon_review`, `canon_evidence`,
-`canon_ship`).
+## Install
 
-One known gap: `async` mode has unit coverage but has never been
-exercised against a real headless run, which Phase 2 asked for. The test
-needs an API key in CI and is deliberately not built at this stage.
+Requirements:
 
-Canon now runs on its own development — [`.canon/config.json`](.canon/config.json)
-names the command that must pass before a turn ends, so the `Stop` gate,
-the plan gate, the scope check and the git guard are all live in this
-repository rather than only shipped from it. It names
-`bazel test //tests/...` rather than `just test`, which is what that
-recipe expands to: `just` is not always on `PATH` (see the
-[`Justfile`](Justfile)), and a verify command that cannot be run blocks
-every turn end instead of gating one. Change it to `just test` if `just`
-is reliably on yours.
+- Claude Code, with plugins enabled.
+- [`uv`](https://github.com/astral-sh/uv) on `PATH` -- `canon-mcp` runs
+  through `uvx`, resolved on first use, nothing to build or install
+  separately.
+- [`gh`](https://cli.github.com), authenticated -- the `ship` skill opens
+  pull requests with it.
+- A git repository with a configured remote; Canon derives the protected
+  branch from the remote's default rather than assuming `main`.
 
-Phase 3 (ablation — the `claude plugin eval` suite) is next.
+Add the marketplace and install the plugin from inside a Claude Code
+session:
 
-## The plan
+```
+/plugin marketplace add urban233/Canon
+/plugin install claude@canon
+```
 
-Canon is built to a single design document, not discovered by using it. The
-full design -- evidence, invariants, architecture, every settled question --
-is at:
+(or the non-interactive equivalent, `claude plugin marketplace add
+urban233/Canon` and `claude plugin install claude@canon`.) The marketplace
+is named `canon`; `claude` is this Claude Code implementation of it.
 
-https://claude.ai/code/artifact/1453894c-9e0b-40fe-b661-d5f0e53eca5f
+## Use
 
-A markdown rendering lives at [`docs/plan.md`](docs/plan.md).
+There's nothing to configure up front. The first time a turn in a repository
+would otherwise end unverified, Canon asks one question -- what command
+should pass before a turn ends here -- proposing a default when it can infer
+one. Answer it once and Canon writes `.canon/config.json` itself; every
+later turn in that repository is checked against it silently. (You can also
+create that file yourself beforehand, with a `verify` command, to skip the
+question entirely.)
+
+From there, work the way Claude Code already works: enter plan mode as
+usual, and once a plan is approved, ask to ship when the work is done.
+Canon's hooks, the reviewer subagent, and `canon-mcp` do the rest --
+persisting the plan, gating the `Stop` on real evidence, dispatching an
+independent review, and opening the pull request once `canon_ship` reports
+the change is actually ready. Canon never merges, approves, or opens a
+pull request on `main` itself -- that's always a human's call.
+
+The full design -- evidence, invariants, architecture, every settled
+question -- is written up at [`docs/plan.md`](docs/plan.md).
 
 ## Development
 
 `just` is the build entry point (`just --list`); Bazel owns build, test,
 lint and typecheck. Dev tooling (ruff, pyrefly) is pinned in
 [`requirements.in`](requirements.in) and resolved hermetically as real
-Bazel targets — no `uvx` in that path. `uvx` is reserved for the MCP
-server's own runtime dependency once it exists (see `docs/plan.md` §05).
-See the [`Justfile`](Justfile). [GitHub Actions](.github/workflows/ci.yml)
-runs the same checks on every pull request and on `main`.
+Bazel targets — no `uvx` in that path. `uvx` is reserved for `canon-mcp`'s
+own runtime, resolved from source on first use rather than built by Bazel
+(see `docs/plan.md` §05). See the [`Justfile`](Justfile). [GitHub
+Actions](.github/workflows/ci.yml) runs the same checks on every pull
+request and on `main`.
 
 ## License
 
