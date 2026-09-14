@@ -14,6 +14,14 @@ branch, plan status, diff size, and PR/check state (plus the configured
 verify command, a cheap addition). Review state and the rest of
 `canon_position`'s eventual scope (§08) are a later, Phase 1 concern.
 
+Plan *status* alone turned out to be the wrong half of that row. §06
+saves the plan into the repository so intent outlives the conversation
+that produced it, and a session starting cold was being told that intent
+existed without being told what it was -- so the position line also
+carries the plan's definition of done and its non-goals, capped. That is
+what makes clearing a session, or surviving a compaction, non-destructive
+rather than merely survivable.
+
 When `source == "compact"`, this hook also appends a recap: commits since
 the default branch, the last logged `Stop` result, and the plan's
 `## Open questions`. §07 originally described this as a separate
@@ -39,7 +47,6 @@ does not try to.
 from __future__ import annotations
 
 import json
-import re
 import subprocess
 from pathlib import Path
 from typing import Any
@@ -47,21 +54,170 @@ from typing import Any
 import _common
 import _config
 
-_PLAN_STATUS_PATTERN = re.compile(r"^status:\s*(.+?)\s*$", re.MULTILINE)
+_PLANS_DIR_RELATIVE = Path(".canon") / "plans"
+_BULLET_MARKERS = ("- ", "* ", "+ ")
+# Enough for the three or four non-goals a well-written plan carries,
+# and short enough that a plan with fifteen cannot dominate the message
+# every session starts with. The plan's path is in the same sentence,
+# so the cap costs a reader one file open, never the information.
+_MAX_NON_GOAL_CHARS = 280
 _GH_TIMEOUT_SECONDS = 15
 _PASSING_CONCLUSIONS = {"SUCCESS", "NEUTRAL", "SKIPPED"}
 _FAILING_CONCLUSIONS = {"FAILURE", "ERROR", "CANCELLED", "TIMED_OUT", "ACTION_REQUIRED"}
 
 
-def _plan_status(root: Path, branch: str) -> str:
-    relative_path = Path(".canon") / "plans" / f"{branch}.md"
+def _plan_relative_path(branch: str) -> Path:
+    return _PLANS_DIR_RELATIVE / f"{branch}.md"
+
+
+def _read_plan(root: Path, branch: str) -> tuple[dict[str, str], dict[str, str]] | None:
+    """The saved plan's `(header, sections)`, or None if there is none to
+    read.
+
+    Every caller handles None on its own, so an absent or unreadable plan
+    drops exactly the fragments derived from it and nothing else -- the
+    independent-degradation property this hook's module docstring makes a
+    promise of.
+    """
     try:
-        header = (root / relative_path).read_text(encoding="utf-8")
+        text = (root / _plan_relative_path(branch)).read_text(encoding="utf-8")
     except OSError:
+        return None
+    header, body = _common.plan_header_and_body(text)
+    return header, _common.plan_sections(body)
+
+
+def _plan_status(root: Path, branch: str) -> str:
+    relative_path = _plan_relative_path(branch)
+    plan = _read_plan(root, branch)
+    if plan is None:
         return f"none saved for this branch yet (would be {relative_path})"
-    match = _PLAN_STATUS_PATTERN.search(header)
-    status = match.group(1) if match else "unknown"
-    return f"{status} ({relative_path})"
+    return f"{plan[0].get('status') or 'unknown'} ({relative_path})"
+
+
+def _collapse(text: str) -> str:
+    """One line, single-spaced -- the position line is a sentence, and a
+    wrapped markdown bullet would otherwise break it across lines."""
+    return " ".join(text.split())
+
+
+def _bullet_text(line: str) -> str | None:
+    """The text of a markdown bullet, or None if this line isn't one."""
+    stripped = line.strip()
+    for marker in _BULLET_MARKERS:
+        if stripped.startswith(marker):
+            return stripped[len(marker) :].strip()
+    return None
+
+
+def _terminate(text: str) -> str:
+    """`text` ending in exactly one sentence terminator.
+
+    The material here is human-written plan prose: a non-goal usually
+    ends in a period already, and a bullet that wrapped mid-clause ends
+    in a comma. Terminating unconditionally produces "the public API.."
+    and "the module,.", which read as typos in the one message every
+    session starts with.
+    """
+    body = text.rstrip(" ,;:")
+    return body if body.endswith((".", "!", "?", "…")) else f"{body}."
+
+
+def _non_goal_items(section: str) -> list[str]:
+    """`## Non-goals` as a flat list of terminated items.
+
+    Each bullet is one item; a continuation line under a bullet is
+    dropped rather than joined, because this is a summary and the plan's
+    own path travels beside it. A section with no bullets at all becomes
+    a single item, so non-goals written as a paragraph are carried
+    rather than silently lost.
+
+    Items are terminated here rather than joined with a separator
+    because a non-goal is a sentence and routinely contains a semicolon
+    or comma of its own -- "don't rewrite the module; the bug is in the
+    index" joined with "; " is unreadable and, worse, ambiguous about
+    where one non-goal ends and the next begins.
+    """
+    items = [
+        _terminate(_collapse(bullet))
+        for line in section.splitlines()
+        if (bullet := _bullet_text(line))
+    ]
+    if items:
+        return items
+    prose = _collapse(section)
+    return [_terminate(prose)] if prose else []
+
+
+def _fit(text: str) -> str:
+    """`text` capped at the budget, cut at a word boundary."""
+    if len(text) <= _MAX_NON_GOAL_CHARS:
+        return text
+    head = text[:_MAX_NON_GOAL_CHARS]
+    return f"{head.rsplit(' ', 1)[0] or head}…"
+
+
+def _non_goals_summary(section: str, relative_path: Path) -> str | None:
+    """The non-goals flattened to one sentence and capped.
+
+    Whole items are kept until the budget is spent and the rest are
+    counted, so a non-goal is never shown half-written -- a truncated
+    "don't rewrite the module" reads as a different instruction from the
+    one the plan gave. The single-item case is the one exception and is
+    cut at a word boundary, since a non-goals section written as one
+    long paragraph would otherwise ignore the budget entirely.
+    """
+    items = _non_goal_items(section)
+    if not items:
+        return None
+    kept: list[str] = []
+    used = 0
+    for item in items:
+        cost = len(item) + (1 if kept else 0)
+        if kept and used + cost > _MAX_NON_GOAL_CHARS:
+            break
+        kept.append(item)
+        used += cost
+    summary = _fit(kept[0]) if len(kept) == 1 else " ".join(kept)
+    remaining = len(items) - len(kept)
+    return f"{summary} (+{remaining} more in {relative_path})" if remaining else summary
+
+
+def _sentence(label: str, text: str) -> str:
+    """`label: text`, terminated exactly once. See `_terminate`."""
+    return f"{label}: {_terminate(text)}"
+
+
+def _plan_intent(root: Path, branch: str) -> list[str]:
+    """The saved plan's definition of done and its non-goals, as position
+    line sentences.
+
+    docs/plan.md §06 writes the plan into the repository precisely so
+    intent outlives the conversation that produced it -- but until this,
+    the hook injected only its *status*, so a session that compacted,
+    restarted, or was deliberately cleared was told intent existed
+    without being told what it was, and had to re-read the file or
+    proceed without it.
+
+    `scope:` is deliberately not included. `check_scope` reports a
+    departure at the moment it happens, which is more use than a list of
+    globs read once at session start, and this message is the one every
+    session pays for.
+    """
+    plan = _read_plan(root, branch)
+    if plan is None:
+        return []
+    header, sections = plan
+    parts: list[str] = []
+    done = _collapse(header.get("done", ""))
+    if done:
+        parts.append(_sentence("Done", done))
+    non_goals = _non_goals_summary(
+        sections.get("non-goals", ""), _plan_relative_path(branch)
+    )
+    if non_goals:
+        parts.append(_sentence("Non-goals", non_goals))
+    return parts
 
 
 def _verify_status(root: Path) -> str:
@@ -216,6 +372,7 @@ def _position_line(
 ) -> str:
     parts = [f"Canon position: branch `{branch}`."]
     parts.append(f"Plan: {_plan_status(root, branch)}.")
+    parts.extend(_plan_intent(root, branch))
     parts.append(f"Verify: {_verify_status(root)}.")
 
     diff = _diff_summary(root, base)
@@ -261,14 +418,8 @@ def _last_verification(root: Path) -> str | None:
 
 
 def _open_questions(root: Path, branch: str) -> str | None:
-    plan_path = root / ".canon" / "plans" / f"{branch}.md"
-    try:
-        text = plan_path.read_text(encoding="utf-8")
-    except OSError:
-        return None
-    parts = re.split(r"^---$", text, flags=re.MULTILINE)
-    body = parts[2] if len(parts) >= 3 else text
-    return _common.plan_sections(body).get("open questions") or None
+    plan = _read_plan(root, branch)
+    return plan[1].get("open questions") or None if plan else None
 
 
 def _compaction_recap(

@@ -209,7 +209,156 @@ class LastVerificationTests(unittest.TestCase):
             self.assertIn("`just test` passed", verification)
 
 
+def _write_plan(root: Path, branch: str, text: str) -> Path:
+    plan_path = root / ".canon" / "plans" / f"{branch}.md"
+    plan_path.parent.mkdir(parents=True, exist_ok=True)
+    plan_path.write_text(text, encoding="utf-8")
+    return plan_path
+
+
+class PlanIntentTests(unittest.TestCase):
+    """Gap 1: the saved plan's intent, not just the fact that it exists.
+
+    The property under test throughout is that each fragment degrades on
+    its own -- a plan with a `done:` and no non-goals must still carry
+    the `done:`, and a plan with neither must leave the position line
+    byte-identical to what it was before this existed.
+    """
+
+    def test_no_plan_file_contributes_nothing(self) -> None:
+        with tempfile.TemporaryDirectory() as root:
+            self.assertEqual(session_start._plan_intent(Path(root), "solo"), [])
+
+    def test_carries_done_and_non_goals(self) -> None:
+        with tempfile.TemporaryDirectory() as root_str:
+            root = Path(root_str)
+            _write_plan(
+                root,
+                "solo",
+                '---\nstatus: approved\ndone: "duplicate slugs raise"\n---\n\n'
+                "## Non-goals\n"
+                "- Don't rewrite the slug module.\n"
+                "- Don't touch the public API.\n",
+            )
+            self.assertEqual(
+                session_start._plan_intent(root, "solo"),
+                [
+                    "Done: duplicate slugs raise.",
+                    "Non-goals: Don't rewrite the slug module. "
+                    "Don't touch the public API.",
+                ],
+            )
+
+    def test_done_without_non_goals(self) -> None:
+        with tempfile.TemporaryDirectory() as root_str:
+            root = Path(root_str)
+            _write_plan(
+                root, "solo", '---\nstatus: approved\ndone: "ship it"\n---\n\nbody\n'
+            )
+            self.assertEqual(
+                session_start._plan_intent(root, "solo"), ["Done: ship it."]
+            )
+
+    def test_non_goals_without_done(self) -> None:
+        with tempfile.TemporaryDirectory() as root_str:
+            root = Path(root_str)
+            _write_plan(
+                root,
+                "solo",
+                "---\nstatus: approved\ndone:\n---\n\n## Non-goals\n- Only this.\n",
+            )
+            self.assertEqual(
+                session_start._plan_intent(root, "solo"), ["Non-goals: Only this."]
+            )
+
+    def test_plan_with_neither_contributes_nothing(self) -> None:
+        with tempfile.TemporaryDirectory() as root_str:
+            root = Path(root_str)
+            _write_plan(root, "solo", "---\nstatus: approved\ndone:\n---\n\nbody\n")
+            self.assertEqual(session_start._plan_intent(root, "solo"), [])
+
+    def test_hand_written_plan_without_a_header_still_gives_non_goals(self) -> None:
+        with tempfile.TemporaryDirectory() as root_str:
+            root = Path(root_str)
+            _write_plan(root, "solo", "# Plan\n\n## Non-goals\n- Only this.\n")
+            self.assertEqual(
+                session_start._plan_intent(root, "solo"), ["Non-goals: Only this."]
+            )
+
+    def test_long_non_goals_keep_whole_items_and_count_the_rest(self) -> None:
+        with tempfile.TemporaryDirectory() as root_str:
+            root = Path(root_str)
+            items = [
+                f"- Do not touch subsystem number {index} at all.\n"
+                for index in range(12)
+            ]
+            _write_plan(
+                root,
+                "solo",
+                "---\nstatus: approved\n---\n\n## Non-goals\n" + "".join(items),
+            )
+            summary = session_start._plan_intent(root, "solo")[0]
+            self.assertTrue(
+                summary.startswith("Non-goals: Do not touch subsystem number 0")
+            )
+            self.assertIn("more in", summary)
+            self.assertNotIn("Do not touch subsystem number 11", summary)
+            # Never half an item: whichever subsystems made the cut are
+            # present in full, terminator included.
+            kept = summary.removeprefix("Non-goals: ").split(" (+")[0]
+            shown = [n for n in range(12) if f"subsystem number {n} " in kept]
+            self.assertTrue(shown)
+            for number in shown:
+                self.assertIn(f"Do not touch subsystem number {number} at all.", kept)
+
+    def test_single_overlong_non_goal_is_cut_at_a_word_boundary(self) -> None:
+        with tempfile.TemporaryDirectory() as root_str:
+            root = Path(root_str)
+            prose = "word " * 200
+            _write_plan(
+                root, "solo", f"---\nstatus: approved\n---\n\n## Non-goals\n{prose}\n"
+            )
+            summary = session_start._plan_intent(root, "solo")[0]
+            self.assertTrue(summary.endswith("…"))
+            self.assertLess(len(summary), session_start._MAX_NON_GOAL_CHARS + 40)
+
+    def test_wrapped_bullet_does_not_become_its_own_item(self) -> None:
+        with tempfile.TemporaryDirectory() as root_str:
+            root = Path(root_str)
+            _write_plan(
+                root,
+                "solo",
+                "---\nstatus: approved\n---\n\n"
+                "## Non-goals\n- Don't rewrite the module,\n  which is out of scope.\n",
+            )
+            self.assertEqual(
+                session_start._plan_intent(root, "solo"),
+                ["Non-goals: Don't rewrite the module."],
+            )
+
+    def test_unreadable_plan_contributes_nothing(self) -> None:
+        with tempfile.TemporaryDirectory() as root_str:
+            root = Path(root_str)
+            # A directory where the plan file should be: `read_text` raises
+            # OSError, and the hook must drop this fragment rather than fail.
+            (root / ".canon" / "plans" / "solo.md").mkdir(parents=True)
+            self.assertEqual(session_start._plan_intent(root, "solo"), [])
+
+
 class OpenQuestionsTests(unittest.TestCase):
+    def test_open_questions_survive_a_horizontal_rule_in_the_body(self) -> None:
+        with tempfile.TemporaryDirectory() as root_str:
+            root = Path(root_str)
+            _write_plan(
+                root,
+                "solo",
+                "---\nstatus: approved\n---\n\n## Approach\n\nText.\n\n---\n\n"
+                "## Open questions\n- Still unsure about X.\n",
+            )
+            self.assertEqual(
+                session_start._open_questions(root, "solo"), "- Still unsure about X."
+            )
+
     def test_none_without_a_plan_file(self) -> None:
         with tempfile.TemporaryDirectory() as root:
             self.assertIsNone(session_start._open_questions(Path(root), "solo"))
