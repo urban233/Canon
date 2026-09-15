@@ -4,6 +4,11 @@
 
 # Canon
 
+[![CI](https://github.com/urban233/Canon/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/urban233/Canon/actions/workflows/ci.yml)
+[![License: BSD-3-Clause](https://img.shields.io/badge/License-BSD--3--Clause-blue.svg)](LICENSE)
+[![Claude Code Plugin](https://img.shields.io/badge/Claude%20Code-plugin-D97757)](plugins/claude)
+[![Codex Plugin](https://img.shields.io/badge/Codex-plugin-412991)](plugins/codex/README.md)
+
 An agentic-development plugin, for Claude Code and Codex, that keeps work on
 track without a stored state machine.
 
