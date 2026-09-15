@@ -1,0 +1,5 @@
+schema_version: "1.1"
+name: frame-states-step-dependencies
+tags: [frame, steps]
+context:
+  scaffold_script: fixture.sh
