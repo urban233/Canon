@@ -1,0 +1,15 @@
+{
+  "name": "canon",
+  "interface": {
+    "displayName": "Canon"
+  },
+  "plugins": [
+    {
+      "name": "codex",
+      "source": {
+        "source": "local",
+        "path": "./plugins/codex"
+      }
+    }
+  ]
+}

@@ -32,6 +32,8 @@ py_binary(
 # checks below -- see plugins/claude/hooks/BUILD.bazel's py_sources.
 _PY_SOURCES = [
     "//plugins/claude/hooks:py_sources",
+    "//plugins/codex/hooks:py_sources",
+    "//src/canon_hooks:py_sources",
     "//src/canon_mcp:py_sources",
     "//tests:py_sources",
 ]

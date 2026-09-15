@@ -40,7 +40,15 @@ preset = "strict"
 # under a bare `python3 hooks/foo.py` invocation. src/canon_mcp is the
 # analogous root for `import canon_mcp...` (its BUILD.bazel's py_library
 # sets imports=["."] the same way, one level up from the package itself).
-search-path = ["plugins/claude/hooks", "src/canon_mcp"]
+# plugins/codex/hooks and src/canon_hooks are the same pattern again --
+# see src/canon_hooks/BUILD.bazel for why a hook module exists in three
+# places (one canonical, two vendored) rather than one.
+search-path = [
+    "plugins/claude/hooks",
+    "plugins/codex/hooks",
+    "src/canon_hooks",
+    "src/canon_mcp",
+]
 # No runtime dependency exists yet (see docs/plan.md's Non-goals), so
 # skip interpreter discovery rather than depend on whatever venv happens
 # to be active in the invoking shell -- this repo has no venv of its own.

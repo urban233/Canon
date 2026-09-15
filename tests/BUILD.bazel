@@ -1,6 +1,13 @@
 load("@rules_python//python:defs.bzl", "py_test")
 
-# Glob-driven: a new test_*.py file needs no edit here.
+# Split by filename prefix, one group per package under test -- not a
+# single blanket rule, because plugins/claude/hooks, plugins/codex/hooks
+# and src/canon_hooks each define same-named top-level modules (_common,
+# capture_review, ...) via their own `imports = ["."]`; depending on more
+# than one of those py_library targets from the same py_test would merge
+# colliding module paths into one runfiles tree. Each group still needs
+# no BUILD edit for a new test file -- glob-driven, same as before.
+
 [
     py_test(
         name = src[:-3],
@@ -10,7 +17,34 @@ load("@rules_python//python:defs.bzl", "py_test")
             "//src/canon_mcp:canon_mcp_lib",
         ],
     )
-    for src in glob(["test_*.py"])
+    for src in glob(["test_claude_hooks_*.py"])
+]
+
+[
+    py_test(
+        name = src[:-3],
+        srcs = [src, "__init__.py"],
+        deps = ["//plugins/codex/hooks:hooks_lib"],
+    )
+    for src in glob(["test_codex_hooks_*.py"])
+]
+
+[
+    py_test(
+        name = src[:-3],
+        srcs = [src, "__init__.py"],
+        deps = ["//src/canon_hooks:canon_hooks_lib"],
+    )
+    for src in glob(["test_canon_hooks_*.py"])
+]
+
+[
+    py_test(
+        name = src[:-3],
+        srcs = [src, "__init__.py"],
+        deps = ["//src/canon_mcp:canon_mcp_lib"],
+    )
+    for src in glob(["test_canon_mcp_*.py"])
 ]
 
 # Exposes this package's own .py files to the root package's lint/typecheck
