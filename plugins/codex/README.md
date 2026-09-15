@@ -111,37 +111,55 @@ cp plugins/codex/agents/reviewer.toml plugins/codex/agents/risk-reviewer.toml .c
 
 ### MCP connectivity is intermittent
 
-**Confirmed, not just suspected:** `${CLAUDE_PLUGIN_ROOT}` does not expand
-inside a plugin's bundled `mcp.json` -- `codex mcp get canon` shows the
-literal, unresolved token in `args` after installing this plugin. Replacing
-it with a project-level `.codex/config.toml` entry using a real, absolute
-path fixes that, but exposed a second, deeper issue: the connection itself
-succeeds only *some* of the time. When it does, everything about it is
-correct -- right tool names (`mcp__canon__canon_position`, etc.), right
-responses, no protocol issues, confirmed by sending Codex's exact handshake
-directly to `canon_mcp` and by watching a trivial hand-written test server
-connect instantly and reliably every time it was tried. When it doesn't,
-the session hangs with no error, no subprocess even spawned, until you kill
-it and try again. Setting `UV_OFFLINE=1` (below) roughly doubles the odds
-of a fast, clean connection but does not make it fully reliable. The
-leading hypothesis is a race condition inside Codex's own MCP client setup,
-not anything specific to `canon_mcp` -- see `docs/codex-hook-surface.md`'s
-"Part 2" section for the full investigation, including everything this
-ruled out (protocol version, server naming, trust). **If a session hangs
-on first use, that's this issue, not a broken plugin -- kill it and start
-a fresh one.** Every hook, skill, and reviewer subagent in this plugin is
+**Confirmed, not just suspected:** `${CLAUDE_PLUGIN_ROOT}` used to be the
+one broken piece here -- it never expands inside a plugin's bundled
+`mcp.json`, confirmed via `codex mcp get canon` showing the literal,
+unresolved token. `mcp.json` has since been fixed to read `$PLUGIN_ROOT` as
+a genuine shell environment variable instead (which Codex does set
+correctly for the server process), wrapped with `UV_OFFLINE=1` to skip
+`uv`'s network-touching resolution step. That surfaced a second, deeper
+issue underneath: **the connection itself succeeds only *some* of the
+time**, independent of the templating fix. When it does connect,
+everything about it is correct -- right tool names
+(`mcp__canon__canon_position`, etc.), right responses, no protocol issues,
+confirmed by sending Codex's exact handshake directly to `canon_mcp` and by
+watching a trivial hand-written test server connect instantly and reliably
+every time it was tried. When it doesn't, the session either hangs with no
+error and no subprocess spawned, or completes normally but simply without
+the `canon` tools present. The leading hypothesis is a race condition
+inside Codex's own MCP client setup, not anything specific to `canon_mcp`
+-- see `docs/codex-hook-surface.md`'s "Part 2" section for the full
+investigation, including everything this ruled out (protocol version,
+server naming, trust). **If a session doesn't see the `canon` tools, or
+hangs on first use, that's this issue, not a broken plugin -- retry a
+fresh session.** Every hook, skill, and reviewer subagent in this plugin is
 completely unaffected by any of this.
 
-Register the server directly in this repository's own `.codex/config.toml`
-(remember: the project must be marked **trusted** first, or Codex silently
-ignores this file too -- see above) rather than relying on the plugin's own
-`mcp.json`, and force `uv` to skip network resolution to improve your odds
-of a clean connection:
+**The bundled `mcp.json`'s exact form was not confirmed to connect in this
+session's own testing** (three fresh-install attempts, zero connections,
+though no hangs either) -- a smaller and less successful sample than a
+project-level `.codex/config.toml` pointing at a **physical wrapper script
+file** rather than an inline `sh -c "..."` string, which connected roughly
+half the time with otherwise-identical ingredients. Whether that
+distinction is the real cause or just how the same intermittency happened
+to land is unconfirmed, but if the bundled server doesn't connect for you,
+try this instead (remember: the project must be marked **trusted** first,
+or Codex silently ignores this file too -- see above):
+
+```sh
+cat > .codex/canon_launch.sh <<'EOF'
+#!/bin/sh
+export UV_OFFLINE=1
+exec uvx --from /absolute/path/to/this/checkout/src/canon_mcp canon-mcp
+EOF
+chmod +x .codex/canon_launch.sh
+```
 
 ```toml
+# .codex/config.toml
 [mcp_servers.canon]
 command = "sh"
-args = ["-c", "UV_OFFLINE=1 exec uvx --from /absolute/path/to/this/checkout/src/canon_mcp canon-mcp"]
+args = ["/absolute/path/to/this/checkout/.codex/canon_launch.sh"]
 default_tools_approval_mode = "auto"
 ```
 

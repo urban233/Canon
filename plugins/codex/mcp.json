@@ -4,7 +4,10 @@
     "canon": {
       "type": "stdio",
       "command": "sh",
-      "args": ["-c", "exec uvx --from \"$PLUGIN_ROOT/../../src/canon_mcp\" canon-mcp"]
+      "args": [
+        "-c",
+        "UV_OFFLINE=1 exec uvx --from \"$PLUGIN_ROOT/../../src/canon_mcp\" canon-mcp"
+      ]
     }
   }
 }

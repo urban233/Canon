@@ -229,19 +229,28 @@ column did show `PLUGIN_ROOT` and `PLUGIN_DATA` as real environment
 variables set for the server process (confirming the hooks docs' claim
 about those two names extends to MCP servers too), but no amount of
 `${...}`-style templating in `command`/`args` was expanded before the
-process launched. A follow-up attempt using a shell wrapper that reads
-`$PLUGIN_ROOT` as a genuine environment variable at runtime --
-`"command": "sh", "args": ["-c", "exec uvx --from \"$PLUGIN_ROOT/../../src/canon_mcp\" canon-mcp"]`
--- registered correctly (`codex mcp get canon` showed the wrapper verbatim,
-as expected for a literal string) but could not be confirmed to actually
-resolve at spawn time either, for the reason below.
+process launched.
 
-**`plugins/codex/mcp.json` has been left using `${CLAUDE_PLUGIN_ROOT}`
-regardless**, matching the documented, if apparently non-functional,
-convention -- not the untested shell-wrapper workaround -- since the
-underlying MCP connectivity problem (next section) meant the workaround
-could not actually be validated as a fix, and shipping an unverified change
-in place of a documented-but-broken one is not an improvement.
+**`plugins/codex/mcp.json` now uses a shell wrapper that reads
+`$PLUGIN_ROOT` as a genuine environment variable at runtime** --
+`"command": "sh", "args": ["-c", "UV_OFFLINE=1 exec uvx --from \"$PLUGIN_ROOT/../../src/canon_mcp\" canon-mcp"]`
+-- instead of the non-functional `${CLAUDE_PLUGIN_ROOT}` template. This is
+strictly better than what it replaced (which could never have worked), but
+is **not confirmed reliably working as shipped**: reinstalling the plugin
+fresh and testing this exact form three times in a row, none connected in
+time for that turn (no hang either -- the turn completed normally, just
+without the tools present). This is a smaller sample than the manual
+`.codex/config.toml` testing below, which pointed at a physical wrapper
+*script file* rather than an inline `sh -c` string and succeeded roughly
+half the time with otherwise-identical ingredients (same `UV_OFFLINE=1`,
+same absolute path, same `uvx` invocation). Whether "inline `-c` string" vs
+"physical script file" is the actual variable, or this is just the same
+underlying intermittency landing badly three times by chance, was not
+isolated further. **If the bundled `mcp.json` doesn't connect for you,
+prefer the physical-script-file form in your own project
+`.codex/config.toml`** (see "MCP connectivity is intermittent" in
+`plugins/codex/README.md`) over assuming the mechanism is broken -- the
+mechanism is sound; only the exact packaging of it here is under-tested.
 
 ### The `canon` MCP server connects intermittently -- root cause narrowed, not fully resolved
 
@@ -299,17 +308,24 @@ is itself a plausible confound worth controlling for in any follow-up.
 `UV_OFFLINE=1` for the `canon` server's command (a wrapper script, as
 above, or `env = { UV_OFFLINE = "1" }` if `mcp_servers.<name>.env` supports
 it) -- it measurably improves the odds, even though it doesn't make the
-connection fully reliable; (2) if a session's first attempt hangs, treat it
-as transient and retry a fresh `codex exec` invocation rather than
-assuming the plugin is broken; (3) package `canon_mcp` with its `mcp`
-dependency vendored or pinned to a local wheel, removing `uv`'s need to
-touch the network (or even resolve anything) at all, which should raise
-the reliable-connection rate further, though this port's own evidence
-suggests it would not fully eliminate the pre-spawn hangs on its own; (4)
-if the intermittent failures persist even then, this is worth reporting
-upstream as a Codex CLI reliability issue in its MCP client setup, with
-this write-up's control case (the trivial fake server) as the reproducer
-that isolates it away from anything Canon-specific.
+connection fully reliable; (2) prefer a physical wrapper *script file* over
+an inline `sh -c "..."` string -- the former is what actually succeeded
+repeatedly in this session's testing, the latter (what `plugins/codex/mcp.json`
+ships, since a plugin's `mcp.json` can't reference a bundled script by an
+install-time-varying absolute path any more cleanly) did not connect in
+three tries against a freshly-installed plugin, though the sample is small
+and this may just be the same intermittency landing badly three times
+running; (3) if a session's first attempt hangs, treat it as transient and
+retry a fresh `codex exec` invocation rather than assuming the plugin is
+broken; (4) package `canon_mcp` with its `mcp` dependency vendored or
+pinned to a local wheel, removing `uv`'s need to touch the network (or even
+resolve anything) at all, which should raise the reliable-connection rate
+further, though this port's own evidence suggests it would not fully
+eliminate the pre-spawn hangs on its own; (5) if the intermittent failures
+persist even then, this is worth reporting upstream as a Codex CLI
+reliability issue in its MCP client setup, with this write-up's control
+case (the trivial fake server) as the reproducer that isolates it away from
+anything Canon-specific.
 
 None of this blocks shipping the rest of the port: every hook, skill, and
 reviewer agent functions independently of whether `canon-mcp` answers, and
@@ -320,8 +336,6 @@ its correctness once established. `canon_position`, `canon_plan`,
 `canon_review`, `canon_evidence`, and `canon_ship` should be expected to
 work most of the time and occasionally require a retry, not to be
 categorically broken.
-
-## Recommendation for the port
 
 ## Recommendation for the port
 
