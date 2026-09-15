@@ -1,0 +1,14 @@
+[project]
+name = "canon-mcp"
+version = "0.0.1"
+description = "Canon's MCP server: canon_position and canon_plan, zero stored state."
+requires-python = ">=3.13"
+license = { text = "BSD-3-Clause" }
+dependencies = ["mcp>=2.0"]
+
+[project.scripts]
+canon-mcp = "canon_mcp.server:main"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"

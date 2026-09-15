@@ -63,12 +63,20 @@ function independently of it.
   through `uvx`, same as on Claude Code.
 - [`gh`](https://cli.github.com), authenticated -- the `ship` skill opens
   pull requests with it.
-- A checkout of this repository. `mcp.json`'s `command` resolves
-  `canon-mcp` via a path relative to the plugin root
-  (`${CLAUDE_PLUGIN_ROOT}/../../src/canon_mcp`), which only exists inside
-  this repo's own checkout, not a marketplace-only install of just
-  `plugins/codex`. See [`src/canon_mcp/`](../../src/canon_mcp)'s own
-  `pyproject.toml` if you want to package it separately.
+
+No checkout of this repository is required just to run `canon-mcp`:
+`mcp.json`'s `command` used to resolve it via a path relative to the plugin
+root (`${CLAUDE_PLUGIN_ROOT}/../../src/canon_mcp`), which broke the moment
+a plugin was actually installed -- both Claude Code's and Codex's plugin
+managers copy only the plugin's own directory into a separate cache
+location, with no sibling `src/` tree there, so that path resolved to
+nothing, deterministically, no matter how the plugin was installed. Fixed
+by vendoring `canon_mcp` into [`vendor/canon_mcp/`](vendor/canon_mcp) --
+kept in sync with the one canonical copy at
+[`src/canon_mcp/`](../../src/canon_mcp) via `just sync-mcp` (see the
+[`Justfile`](../../Justfile)) -- and pointing `mcp.json` at that vendored
+copy instead. A plugin installed from a remote marketplace now carries a
+working `canon-mcp` with it, the same as a local-checkout install does.
 
 ## Install
 
@@ -113,6 +121,15 @@ cp plugins/codex/agents/reviewer.toml plugins/codex/agents/risk-reviewer.toml .c
 ```
 
 ### MCP connectivity is intermittent -- this is a Codex bug, not a `canon_mcp` problem
+
+This is a genuine Codex-side connection flakiness, separate from -- and
+found after fixing -- two packaging bugs that would otherwise have masked
+it entirely by making every connection attempt fail the same deterministic
+way: `${CLAUDE_PLUGIN_ROOT}` never expanding inside `mcp.json` (below), and
+`canon-mcp`'s path resolving to nothing once actually installed through a
+marketplace (see "No checkout of this repository is required" above).
+With both of those fixed, what's left is real intermittency, not a
+packaging mistake dressed up as one.
 
 **Confirmed, not just suspected:** `${CLAUDE_PLUGIN_ROOT}` used to be one
 broken piece here -- it never expands inside a plugin's bundled

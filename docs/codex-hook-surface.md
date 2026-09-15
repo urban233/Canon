@@ -339,6 +339,49 @@ is packaged or deployed. `canon_position`, `canon_plan`, `canon_review`,
 `canon_evidence`, and `canon_ship` should be expected to work most of the
 time and occasionally require a retry, not to be categorically broken.
 
+## Part 3: a real, deterministic packaging bug this investigation had missed
+
+Everything in the section above was about connection *reliability* once
+`canon_mcp`'s path resolves to something real. A later session, writing the
+root README's install instructions, found that it hadn't -- for anyone
+actually installing this plugin the documented way.
+
+**`codex plugin add` and `claude plugin install` both copy only the
+plugin's own directory into a separate cache location** --
+`~/.codex/plugins/cache/<marketplace>/<plugin>/<version>/` and
+`~/.claude/plugins/cache/<marketplace>/<plugin>/<version>/` respectively --
+confirmed by installing both plugins for real from this exact checkout and
+listing the resulting cache directories. Neither copy includes a sibling
+`src/` tree. `mcp.json`'s `$PLUGIN_ROOT/../../src/canon_mcp` (and the
+Claude plugin's identical `${CLAUDE_PLUGIN_ROOT}/../../src/canon_mcp`)
+therefore resolved to a path that never existed in either cache, for
+*any* install method -- local marketplace or remote, checkout-based or
+not. Running the exact resolved command by hand, with `$PLUGIN_ROOT` set
+to the real cache path, reproduced this deterministically: an immediate
+`Distribution not found` error, every time, not intermittently.
+
+This is a different failure mode from the connection flakiness documented
+above, and it explains why that earlier investigation didn't catch it:
+testing a `uvx`-based invocation, a direct-interpreter invocation, and a
+dependency-free fake server all still used paths that pointed at a real
+`src/canon_mcp` (this monorepo checkout, not an installed plugin's cache
+copy), so all three sidestepped this bug entirely. The intermittency
+finding stands on its own terms -- it is real, and it is Codex-side -- but
+it was never actually tested against a plugin installed the way this
+README tells a user to install it.
+
+**Fixed by vendoring**, the same way `src/canon_hooks` is vendored into
+each plugin's `hooks/` directory: `just sync-mcp` copies
+`src/canon_mcp/{pyproject.toml,canon_mcp/}` into
+`plugins/claude/vendor/canon_mcp/` and `plugins/codex/vendor/canon_mcp/`,
+and both `.mcp.json`/`mcp.json` now read `.../vendor/canon_mcp` instead of
+reaching outside the plugin. Reinstalling both plugins for real from this
+checkout afterward, and running each platform's exact `mcp.json` command
+against the real installed cache path, confirmed `canon-mcp` now builds
+and answers a real MCP `initialize` correctly from *both* cache
+directories. `just sync-check` fails if either vendored copy drifts from
+`src/canon_mcp`.
+
 ## Recommendation for the port
 
 - **`_payload.py` (Step 1/3) codes defensively** for `edited_paths()` and

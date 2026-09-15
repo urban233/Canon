@@ -52,8 +52,35 @@ sync-hooks:
         cp "src/canon_hooks/$f" "plugins/codex/hooks/$f"
     done
 
-# Fails if a vendored copy has drifted from src/canon_hooks -- the
-# regression guard for sync-hooks, part of `just ci`.
+# canon-mcp is resolved via `uvx --from <path>`, and that path used to
+# reach outside the plugin entirely (`.../plugin-root/../../src/canon_mcp`)
+# -- which only exists in this monorepo checkout, never in the copy a real
+# marketplace install actually produces (both Claude Code's and Codex's
+# plugin managers copy just the plugin's own directory into a separate
+# cache location; there is no sibling `src/` tree there). Vendoring
+# canon_mcp into each plugin, the same way sync-hooks vendors the shared
+# hook core, keeps the server inside the directory that actually survives
+# installation.
+_CANON_MCP_SRC := "src/canon_mcp"
+
+# Vendor src/canon_mcp into both plugins/*/vendor/canon_mcp. Neither
+# plugin's copy is ever hand-edited; fix the one canonical copy under
+# src/canon_mcp and run this to propagate it.
+sync-mcp:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    for plugin in claude codex; do
+        dest="plugins/$plugin/vendor/canon_mcp"
+        rm -rf "$dest"
+        mkdir -p "$dest"
+        cp "{{_CANON_MCP_SRC}}/pyproject.toml" "$dest/pyproject.toml"
+        cp -R "{{_CANON_MCP_SRC}}/canon_mcp" "$dest/canon_mcp"
+        find "$dest" -name '__pycache__' -type d -exec rm -rf {} +
+    done
+
+# Fails if a vendored copy has drifted from src/canon_hooks or
+# src/canon_mcp -- the regression guard for sync-hooks/sync-mcp, part of
+# `just ci`.
 sync-check:
     #!/usr/bin/env bash
     set -euo pipefail
@@ -65,6 +92,14 @@ sync-check:
                 drifted=1
             fi
         done
+    done
+    for plugin in claude codex; do
+        dest="plugins/$plugin/vendor/canon_mcp"
+        if ! diff -q "{{_CANON_MCP_SRC}}/pyproject.toml" "$dest/pyproject.toml" > /dev/null 2>&1 \
+            || ! diff -rq -x __pycache__ "{{_CANON_MCP_SRC}}/canon_mcp" "$dest/canon_mcp" > /dev/null 2>&1; then
+            echo "drifted: $dest (run 'just sync-mcp')" >&2
+            drifted=1
+        fi
     done
     exit $drifted
 

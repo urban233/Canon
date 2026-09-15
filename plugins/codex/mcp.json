@@ -6,7 +6,7 @@
       "command": "sh",
       "args": [
         "-c",
-        "UV_OFFLINE=1 exec uvx --from \"$PLUGIN_ROOT/../../src/canon_mcp\" canon-mcp"
+        "UV_OFFLINE=1 exec uvx --from \"$PLUGIN_ROOT/vendor/canon_mcp\" canon-mcp"
       ]
     }
   }
