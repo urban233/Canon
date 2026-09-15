@@ -121,10 +121,14 @@ rather than by preference:
    `reviewer.md` and its eval.
 
 Steps 1 and 4 are independent of everything and of each other. Steps 2
-and 3 are a chain. **This plan is written in the current notation, with
-its dependencies stated here in prose, because the notation that would
-express them does not parse until step 2 lands** -- which is the gap
-demonstrating itself, exactly as `phase-0-2-gap-closure.md` did.
+and 3 are a chain.
+
+This plan was first written with those dependencies stated here in prose
+and nowhere a tool could read them, because the notation that expresses
+them did not parse until step 2 landed -- the gap demonstrating itself,
+exactly as `phase-0-2-gap-closure.md` did. `## Steps` now carries them
+directly, so `canon_position` gives the same answer this paragraph does
+rather than reporting a single sequential `current`.
 
 Two steps change instruction text rather than code (`frame/SKILL.md`,
 `reviewer.md`). Both are therefore subject to `docs/plan.md` §13's
@@ -174,14 +178,15 @@ a list read at session start.
 
 ## Steps
 
-- handoff-plan-context: inject the saved plan's definition of done and
-  its non-goals at session start, not just its status
-- steps-dependencies: parse `(after: ...)` in `## Steps` and report
-  every startable step from `canon_position`
-- frame-dependency-notation: document the notation in the `frame`
-  skill, with an eval that fails without it
-- reviewer-reversibility: ask the ordinary reviewer whether the change
-  can be taken back out, with an eval that fails without it
+- handoff-plan-context (after: none): inject the saved plan's definition
+  of done and its non-goals at session start, not just its status
+- steps-dependencies (after: none): parse `(after: ...)` in `## Steps`
+  and report every startable step from `canon_position`
+- frame-dependency-notation (after: steps-dependencies): document the
+  notation in the `frame` skill, with an eval that fails without it
+- reviewer-reversibility (after: none): ask the ordinary reviewer
+  whether the change can be taken back out, with an eval that fails
+  without it
 
 ### 1 · handoff-plan-context
 

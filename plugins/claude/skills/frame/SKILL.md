@@ -51,6 +51,27 @@ Before calling `ExitPlanMode`, make sure the plan states:
   than guess. Matching step prose against branch names is exactly the
   wrong-but-plausible inference Canon refuses to make.
 
+  **Say what a step waits for** where it isn't the step above it. No
+  annotation means it waits for the one above -- what an ordered list
+  already implies -- so write `(after: ...)` only where that's wrong:
+
+  ```markdown
+  ## Steps
+
+  - eval-corpus: 30 graded requests with their expected outcomes
+  - pymol-tools (after: none): expose the library to an agent
+  - baseline (after: eval-corpus, pymol-tools): record the score
+  ```
+
+  `(after: none)` waits for nothing; a comma-separated list waits for
+  all of them. `canon_position` reports every step whose dependencies
+  have merged as startable, so this is what lets two sessions pick up
+  different steps without colliding.
+
+  **Claim independence only where it's true.** A step wrongly marked
+  independent gets started against a base without its prerequisite in
+  it -- a wasted branch at best, a silent conflict at worst.
+
 ## No gate, no new artifact
 
 Nothing here is accepted or advanced through a status. The feature plan
