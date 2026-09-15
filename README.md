@@ -86,22 +86,81 @@ Common requirements, either platform:
 
 ### Claude Code
 
-Requires Claude Code, with plugins enabled. Add the marketplace and install
-the plugin from inside a session:
+Requires Claude Code, with plugins enabled. The marketplace is named
+`canon`; `claude` is this Claude Code implementation of it.
+
+**Globally, for every project** (the usual choice for your own use) --
+add the marketplace and install the plugin from inside a session:
 
 ```
 /plugin marketplace add urban233/Canon
 /plugin install claude@canon
 ```
 
-(or the non-interactive equivalent, `claude plugin marketplace add
-urban233/Canon` and `claude plugin install claude@canon`.) The marketplace
-is named `canon`; `claude` is this Claude Code implementation of it.
+(or the non-interactive equivalent: `claude plugin marketplace add
+urban233/Canon` and `claude plugin install claude@canon`.) This is a
+per-user install -- it becomes available in every project you trust,
+recorded in your own `~/.claude` config, not this repository.
+
+**Scoped to one project** (so a team gets it automatically without each
+person installing it individually) -- run both commands with
+`--scope project` from inside that project's checkout:
+
+```sh
+claude plugin marketplace add urban233/Canon --scope project
+claude plugin install claude@canon --scope project
+```
+
+This writes the marketplace and the enabled-plugin entry into
+`.claude/settings.json` at that project's root instead of your personal
+config. Commit that file, and anyone who clones the project and trusts
+the folder gets Canon enabled automatically -- nothing to run themselves.
+
+**To remove it:** `claude plugin uninstall claude@canon` (add `--scope
+project` to remove the project-scoped install instead of the global one),
+then `claude plugin marketplace remove canon` with the same `--scope` if
+you added the marketplace at project scope. For a project-scoped
+install, this leaves an empty `.claude/settings.json` behind; delete it
+(or just the `canon`/`claude@canon` entries, if the file has other
+content) and commit that.
 
 ### Codex
 
 Requires the [Codex CLI](https://developers.openai.com/codex), logged in.
-Install steps, and what's genuinely different about this port, are in
+
+**Globally, for every trusted project:**
+
+```sh
+codex plugin marketplace add urban233/Canon
+codex plugin add codex@canon
+```
+
+This is the only install scope Codex's plugin manager has -- unlike
+Claude Code, there is no `--scope project` flag, and `codex plugin add`
+always writes into your own global `~/.codex/config.toml`, regardless of
+whether the marketplace source was this GitHub repo or a local checkout.
+Installing it globally doesn't mean its hooks start running everywhere
+immediately: Codex reviews and trusts each hook definition individually
+(by hash) before it will execute at all, separately from installing the
+plugin -- see `plugins/codex/README.md`'s notes on hook trust vs. project
+trust below.
+
+**Scoped to exactly one project:** since there's no install-scope flag to
+use instead, this means bypassing `codex plugin add` and copying the
+pieces into that project's own `.codex/` directory by hand -- Canon's
+`hooks/`, `skills/`, the two files under `agents/`, and
+[`vendor/canon_mcp/`](plugins/codex/vendor/canon_mcp) all from
+[`plugins/codex/`](plugins/codex), plus a `[mcp_servers.canon]` entry in
+that project's own `.codex/config.toml` pointing `command`/`args` at the
+copied-in `vendor/canon_mcp`. More manual than the global install, but it
+never touches your global Codex config at all.
+
+**To remove the global install:** `codex plugin remove codex@canon`, then
+`codex plugin marketplace remove canon`. For a manual per-project install,
+just delete the copied files from that project's `.codex/` directory.
+
+Full install steps, hook/project trust, and what's genuinely different
+about this port from the Claude plugin are in
 [`plugins/codex/README.md`](plugins/codex/README.md).
 
 ## Use
