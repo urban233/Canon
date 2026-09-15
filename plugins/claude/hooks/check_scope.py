@@ -26,22 +26,16 @@ Canon"): with no `verify` command in `.canon/config.json` this hook is a
 silent no-op. See docs/decisions/0001-what-inert-means.md for why
 `stop.py` and `session_start.py` are the two exceptions.
 
-**Touched-path extraction is deliberately defensive.** Claude Code's edit
-tools report a single `tool_input.file_path`. Codex also offers `Edit` and
-`Write`, plus `apply_patch`, whose own `tool_input` shape was not possible
-to confirm empirically (see docs/codex-hook-surface.md) -- so this hook
-tries, in order, `file_path`, `path`, and a `changes` list of
-`{"path": ...}` entries (the shape Codex's own `codex exec --json` event
-stream uses for a file change), and treats every path found as touched by
-the same call. A call this can't extract any path from is a no-op, the
-same fail-open posture as everywhere else in this module.
+**Touched-path extraction is deliberately defensive** -- see
+`_common.edited_paths` -- and treats every path it finds as touched by the
+same call. A call this can't extract any path from is a no-op, the same
+fail-open posture as everywhere else in this module.
 """
 
 from __future__ import annotations
 
 import fnmatch
 from pathlib import Path
-from typing import Any
 
 import _common
 import _config
@@ -108,24 +102,6 @@ def _mentioned_in_non_goals(non_goals: str, relative_path: str) -> bool:
     return bool(filename) and filename in haystack
 
 
-def _extract_touched_paths(tool_input: Any) -> list[str]:
-    if not isinstance(tool_input, dict):
-        return []
-    single = tool_input.get("file_path") or tool_input.get("path")
-    if isinstance(single, str) and single:
-        return [single]
-    changes = tool_input.get("changes")
-    if isinstance(changes, list):
-        paths = [
-            entry["path"]
-            for entry in changes
-            if isinstance(entry, dict) and isinstance(entry.get("path"), str)
-        ]
-        if paths:
-            return paths
-    return []
-
-
 def _read_counter(counter_dir: Path | None) -> int:
     if counter_dir is None:
         return 0
@@ -152,7 +128,7 @@ def main() -> None:
         return
     if payload.get("tool_name") not in _EDIT_TOOL_NAMES:
         return
-    touched = _extract_touched_paths(payload.get("tool_input"))
+    touched = _common.edited_paths(payload)
     if not touched:
         return
 

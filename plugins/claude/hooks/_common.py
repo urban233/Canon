@@ -388,6 +388,40 @@ def parse_header(text: str) -> dict[str, str]:
     return plan_header_and_body(text)[0]
 
 
+def edited_paths(payload: dict[str, Any] | None) -> list[str]:
+    """Every file path an edit call's `tool_input` names, extracted
+    defensively.
+
+    Claude Code's edit tools report a single `tool_input.file_path`.
+    Codex also offers `Edit`/`Write`, plus `apply_patch`, whose own
+    `tool_input` shape was not possible to confirm empirically (see
+    docs/codex-hook-surface.md) -- so this tries, in order, `file_path`,
+    `path`, and a `changes` list of `{"path": ...}` entries (the shape
+    Codex's own `codex exec --json` event stream uses for a file change).
+    An empty list means "couldn't tell", which every caller must treat as
+    a no-op rather than an error -- the same fail-open posture as
+    everywhere else in this module.
+    """
+    if payload is None:
+        return []
+    tool_input = payload.get("tool_input")
+    if not isinstance(tool_input, dict):
+        return []
+    single = tool_input.get("file_path") or tool_input.get("path")
+    if isinstance(single, str) and single:
+        return [single]
+    changes = tool_input.get("changes")
+    if isinstance(changes, list):
+        paths = [
+            entry["path"]
+            for entry in changes
+            if isinstance(entry, dict) and isinstance(entry.get("path"), str)
+        ]
+        if paths:
+            return paths
+    return []
+
+
 _STATE_SUBDIR_DEFAULT = "canon"
 _STATE_TEMP_ROOT_NAME = "canon-hooks"
 

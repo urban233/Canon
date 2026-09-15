@@ -1,6 +1,6 @@
 {
   "$schema": "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json",
-  "name": "canon",
+  "name": "codex",
   "description": "Canon for Codex: plan persistence, a verification gate, and evidence-based review -- without a stored state machine.",
   "version": "0.0.1",
   "author": {
@@ -9,5 +9,9 @@
   "homepage": "https://github.com/urban233/Canon",
   "repository": "https://github.com/urban233/Canon",
   "license": "BSD-3-Clause",
-  "keywords": ["agentic-development", "plan-persistence", "code-review"]
+  "keywords": [
+    "agentic-development",
+    "plan-persistence",
+    "code-review"
+  ]
 }

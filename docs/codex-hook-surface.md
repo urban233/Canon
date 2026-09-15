@@ -169,11 +169,129 @@ removed for that reason.
    name(s) used (`apply_patch` vs `Edit`/`Write`; `Bash` vs something else).
 2. **The `agent_type` value `SubagentStop` reports for a custom subagent**
    (bare `"prober"`, or a namespaced form).
-3. Whether `${CLAUDE_PLUGIN_ROOT}` / `$PLUGIN_ROOT` expand inside a plugin's
-   `mcp.json` `command`/`args` (not tested — doing so needs an installed
-   plugin, one more layer beyond what this probe reached).
-4. The exact local-marketplace path form `codex plugin marketplace add`
-   accepts for a repo living on disk (not tested, same reason as #3).
+
+## Part 2: installing and running the built plugin for real (Steps 2, 6, 7)
+
+Everything above came from the original `codex-port/probe` branch, before
+`plugins/codex/` existed. Once the plugin, its manifests, and its MCP
+wiring were actually built, they were installed and driven for real against
+the live `codex` CLI on this same machine — not simulated. These findings
+supersede the two "not tested" items the first pass left open for the
+marketplace and `mcp.json`, and surface one significant new problem.
+
+### The marketplace manifest belongs at `.agents/plugins/marketplace.json`, not `.codex-plugin/marketplace.json`
+
+`codex plugin marketplace add ./.codex-plugin` (this repo's first guess,
+mirroring Claude Code's `.claude-plugin/` convention) failed outright:
+`Error: invalid marketplace file ...: marketplace root does not contain a
+supported manifest`. Comparing against this machine's own real, installed
+marketplaces (`codex plugin marketplace list`, then reading
+`~/.codex/.tmp/bundled-marketplaces/openai-bundled/.agents/plugins/marketplace.json`
+directly) showed the actual convention: the manifest lives at
+`<marketplace-root>/.agents/plugins/marketplace.json`, and `codex plugin
+marketplace add <root>` is pointed at the root directory, not at the
+manifest's own containing directory. This repo's marketplace file moved to
+[`.agents/plugins/marketplace.json`](../.agents/plugins/marketplace.json)
+at the repo root accordingly, and `codex plugin marketplace add .` (from the
+repo root) now succeeds and lists `codex@canon` correctly.
+
+The per-plugin entry schema this port had guessed from the official docs
+(`{"name", "source": {"source": "local", "path": "./plugins/<name>"}}`) was
+confirmed correct by the same comparison -- only the manifest's *location*
+was wrong.
+
+### `plugin.json`'s own `name` must match the marketplace entry's name, exactly
+
+`codex plugin add codex@canon` initially failed: `plugin.json name "canon"
+does not match marketplace plugin name "codex"`. Claude Code tolerates this
+mismatch (`plugins/claude/.claude-plugin/plugin.json`'s own `name` is
+`"canon"`, while the marketplace lists it as `"claude"`), but Codex enforces
+it strictly. `plugins/codex/plugin.json`'s `name` field was changed to
+`"codex"` to match; after that, `codex plugin add codex@canon` installed
+cleanly, copying `hooks/`, `skills/`, `agents/`, `mcp.json`, and `plugin.json`
+into `~/.codex/plugins/cache/canon/codex/0.0.1/` and enabling the plugin.
+
+One incidental observation: the installed plugin's cache **did** include the
+`agents/` directory verbatim, even though nothing in the documentation
+describes plugins bundling subagents. Whether Codex does anything with that
+copy (versus treating it as an opaque, unused directory) was not tested --
+this port still ships the reviewer briefs as documented, manually-installed
+`.codex/agents/*.toml` files (see [`plugins/codex/README.md`](../plugins/codex/README.md)),
+since a directory merely being copied into the cache is not evidence it is
+read as a subagent definition.
+
+### `${CLAUDE_PLUGIN_ROOT}` does **not** expand in a plugin's bundled `mcp.json` -- confirmed, not just suspected
+
+`codex mcp get canon` (after installing the plugin) showed the server's
+`args` verbatim as `--from ${CLAUDE_PLUGIN_ROOT}/../../src/canon_mcp
+canon-mcp` -- the literal, unexpanded token, not a resolved path. Its `env`
+column did show `PLUGIN_ROOT` and `PLUGIN_DATA` as real environment
+variables set for the server process (confirming the hooks docs' claim
+about those two names extends to MCP servers too), but no amount of
+`${...}`-style templating in `command`/`args` was expanded before the
+process launched. A follow-up attempt using a shell wrapper that reads
+`$PLUGIN_ROOT` as a genuine environment variable at runtime --
+`"command": "sh", "args": ["-c", "exec uvx --from \"$PLUGIN_ROOT/../../src/canon_mcp\" canon-mcp"]`
+-- registered correctly (`codex mcp get canon` showed the wrapper verbatim,
+as expected for a literal string) but could not be confirmed to actually
+resolve at spawn time either, for the reason below.
+
+**`plugins/codex/mcp.json` has been left using `${CLAUDE_PLUGIN_ROOT}`
+regardless**, matching the documented, if apparently non-functional,
+convention -- not the untested shell-wrapper workaround -- since the
+underlying MCP connectivity problem (next section) meant the workaround
+could not actually be validated as a fix, and shipping an unverified change
+in place of a documented-but-broken one is not an improvement.
+
+### The `canon` MCP server could not be gotten to actually respond inside a real Codex session -- unresolved
+
+This is the most significant open problem this port has. Once the project
+checkout was marked trusted (a **separate** requirement from hook trust:
+Codex silently skips a project's entire `.codex/` layer, config included,
+for an untrusted project -- confirmed the same way hook trust was, by
+first seeing nothing load, then finding the missing trust entry), a
+project-level `.codex/config.toml` correctly listed the `canon` server with
+a fully-resolved, non-templated absolute path (`codex mcp list` showed the
+real path, not a template token). But a live `codex exec` session, given
+tens of seconds to over two minutes, never reported any `canon`-named MCP
+tool as available -- not a slow success, an apparent hang with no output
+and no error surfaced in the session's own rollout log.
+
+Isolating the two halves separately:
+
+- **`canon_mcp`'s own stdio server is protocol-correct and fast.** Spawning
+  `uvx --from <path> canon-mcp` directly (bypassing Codex entirely) and
+  sending a raw MCP `initialize` JSON-RPC request by hand got a correct,
+  well-formed response in under a second.
+- **Codex's own connection to it did not complete** within the session
+  windows tried, for a reason this port could not isolate further without
+  spending materially more of this session's own budget chasing it. The
+  most plausible unconfirmed hypothesis: `uvx --from <local-path>
+  canon-mcp` still needs to resolve `canon_mcp`'s own PyPI dependency
+  (`mcp>=2.0`) the first time, and if Codex spawns MCP server subprocesses
+  under a network-restricted sandbox policy (plausible given `--sandbox
+  read-only` was in effect for these tests), that resolution step could
+  hang or fail silently in a way a standalone, unsandboxed `uvx` invocation
+  on the same machine never would.
+
+**This means MCP connectivity end-to-end is not confirmed working for this
+port, full stop**, independent of the marketplace/name-matching/variable-
+expansion issues already fixed above. Whoever picks this up next should
+try, roughly in order of how cheap each is to test: (1) pre-warming `uv`'s
+cache for `canon_mcp` and its dependencies as a separate step before first
+use, to rule out first-run network resolution as the cause; (2) checking
+whether `mcp_servers.<name>` supports an explicit network-access or sandbox
+override distinct from the session's own `--sandbox` flag; (3) packaging
+`canon_mcp` with its dependency vendored or pinned to a local wheel, so
+`uvx` needs no network at all, ever, regardless of sandbox policy -- which
+would also remove the dependency on this being a full checkout in the first
+place. None of this blocks shipping the rest of the port, since every other
+piece (hooks, skills, agents) functions independently of whether `canon-mcp`
+answers -- but `canon_position`, `canon_plan`, `canon_review`,
+`canon_evidence`, and `canon_ship` are unusable on Codex until it's
+resolved.
+
+## Recommendation for the port
 
 ## Recommendation for the port
 

@@ -24,6 +24,7 @@ py_library(
         "__init__.py",
     ],
     imports = ["."],
+    visibility = ["//tests:__pkg__"],
 )
 
 # Exposes this package's own .py files to the root package's lint/typecheck

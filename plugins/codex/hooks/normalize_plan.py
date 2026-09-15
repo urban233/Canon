@@ -124,7 +124,11 @@ def main() -> None:
         # A branch plan's own name is the branch it belongs to -- derive
         # it from the path rather than assuming it matches the current
         # branch, since the write may have targeted any branch's file.
-        branch = relative[len(plans_prefix) : -len(".md")] if relative.endswith(".md") else None
+        branch = (
+            relative[len(plans_prefix) : -len(".md")]
+            if relative.endswith(".md")
+            else None
+        )
         if branch:
             _normalize_branch_plan(root, branch, absolute)
 

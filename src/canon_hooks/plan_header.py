@@ -251,7 +251,9 @@ class BranchHeaderFields(NamedTuple):
     missing: list[str]
 
 
-def derive_branch_header(root: Path, branch: str | None, body: str) -> BranchHeaderFields:
+def derive_branch_header(
+    root: Path, branch: str | None, body: str
+) -> BranchHeaderFields:
     """The `---`-delimited header for a branch plan, derived from `body`
     and the repository's current git state.
 
@@ -281,7 +283,11 @@ def derive_branch_header(root: Path, branch: str | None, body: str) -> BranchHea
             "scope",
             (
                 "[" + ", ".join(scope) + "]"
-                if (scope := _scope_patterns(_section_text(sections, _SCOPE_SECTION_KEYS)))
+                if (
+                    scope := _scope_patterns(
+                        _section_text(sections, _SCOPE_SECTION_KEYS)
+                    )
+                )
                 else None
             ),
         ),
@@ -290,7 +296,9 @@ def derive_branch_header(root: Path, branch: str | None, body: str) -> BranchHea
             "verify",
             _verify_override(_section_text(sections, _VERIFICATION_SECTION_KEYS)),
         ),
-        _header_line("parent", _parent_path(root, _section_text(sections, _PARENT_SECTION_KEYS))),
+        _header_line(
+            "parent", _parent_path(root, _section_text(sections, _PARENT_SECTION_KEYS))
+        ),
     ]
     if notes:
         lines.append(_header_line("notes", "; ".join(notes)))

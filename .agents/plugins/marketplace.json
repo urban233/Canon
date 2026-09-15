@@ -6,8 +6,6 @@
   "plugins": [
     {
       "name": "codex",
-      "description": "Canon for Codex: plan persistence, a verification gate, and evidence-based review -- without a stored state machine.",
-      "version": "0.0.1",
       "source": {
         "source": "local",
         "path": "./plugins/codex"

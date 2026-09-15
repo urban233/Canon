@@ -1,7 +1,8 @@
 # Canon
 
-Canon is a Claude Code plugin, not a general application -- its own
-implementation follows the same design it ships to others.
+Canon is an agentic-development plugin (Claude Code and Codex), not a
+general application -- its own implementation follows the same design it
+ships to others.
 
 **The plan artifact is the specification.** Read it before proposing any
 change to Canon's design:
@@ -14,8 +15,8 @@ Preserve these invariants, all argued for in the plan artifact:
 
 - Position is derived from git, GitHub, and the plan file -- never stored.
 - Canon writes no repository state of its own, with one narrow exception:
-  a `Stop` hook's consecutive-refusal counter, which lives in the session's
-  scratchpad directory, never in the repository.
+  a `Stop` hook's consecutive-refusal counter, which lives in session-scoped
+  state outside the repository, never inside it.
 - Every gate fails open. A guardrail that errors must never block work.
 - Canon never authors a commit of its own, and never merges or closes a
   pull request.

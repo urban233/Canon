@@ -4,8 +4,8 @@
 
 # Canon
 
-A Claude Code plugin that keeps agentic development on track without a
-stored state machine.
+An agentic-development plugin, for Claude Code and Codex, that keeps work on
+track without a stored state machine.
 
 ## Why "Canon"
 
@@ -35,7 +35,9 @@ was built to catch.** Across CoDev's own task history, 47 of 73 rounds needed
 a hand-written reopen, and 37 of 50 escalations were the machine failing on
 its own bookkeeping commits. Canon has no equivalent to reopen.
 
-In place of that, Canon rebuilds on four Claude Code primitives:
+In place of that, Canon rebuilds on four primitives every supported agent
+platform provides -- described below as Claude Code provides them; see
+[`plugins/codex/`](plugins/codex) for how the same four map onto Codex:
 
 - **A `Stop` hook** that runs the repository's own verification command and
   refuses to let a turn end red -- so a claim like "tests pass" is a fact
@@ -72,9 +74,8 @@ In place of that, Canon rebuilds on four Claude Code primitives:
 
 ## Install
 
-Requirements:
+Common requirements, either platform:
 
-- Claude Code, with plugins enabled.
 - [`uv`](https://github.com/astral-sh/uv) on `PATH` -- `canon-mcp` runs
   through `uvx`, resolved on first use, nothing to build or install
   separately.
@@ -83,8 +84,10 @@ Requirements:
 - A git repository with a configured remote; Canon derives the protected
   branch from the remote's default rather than assuming `main`.
 
-Add the marketplace and install the plugin from inside a Claude Code
-session:
+### Claude Code
+
+Requires Claude Code, with plugins enabled. Add the marketplace and install
+the plugin from inside a session:
 
 ```
 /plugin marketplace add urban233/Canon
@@ -94,6 +97,12 @@ session:
 (or the non-interactive equivalent, `claude plugin marketplace add
 urban233/Canon` and `claude plugin install claude@canon`.) The marketplace
 is named `canon`; `claude` is this Claude Code implementation of it.
+
+### Codex
+
+Requires the [Codex CLI](https://developers.openai.com/codex), logged in.
+Install steps, and what's genuinely different about this port, are in
+[`plugins/codex/README.md`](plugins/codex/README.md).
 
 ## Use
 
