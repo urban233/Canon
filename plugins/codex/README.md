@@ -40,15 +40,16 @@ version:
   was not confirmed; `capture_review.py` matches it by substring rather than
   exact equality, and this plugin's own `hooks.json` leaves `SubagentStop`'s
   matcher open (`"*"`) rather than guessing a namespaced form.
-- **The `canon` MCP server could not be gotten to actually respond inside a
-  real Codex session, and this is unresolved.** See "MCP connectivity is not
-  currently confirmed working" below -- this is the one part of the port
-  that is not known to work end-to-end today.
+- **The `canon` MCP server connects intermittently, not reliably.** Once
+  connected it works completely correctly -- right tool names, right
+  responses, no protocol issues -- but the connection itself sometimes
+  hangs rather than completing. See "MCP connectivity is intermittent"
+  below for the full investigation and what narrows it down.
 
 The first two are fail-open by construction -- a wrong guess means a gate
 goes quiet, never that it blocks something it shouldn't (see `_common.py`'s
 module docstring) -- and do not block using this plugin. The third does
-block `canon_position`/`canon_plan`/`canon_review`/`canon_evidence`/
+occasionally block `canon_position`/`canon_plan`/`canon_review`/`canon_evidence`/
 `canon_ship` specifically; the hooks, skills, and reviewer subagents all
 function independently of it.
 
@@ -108,35 +109,40 @@ mkdir -p .codex/agents
 cp plugins/codex/agents/reviewer.toml plugins/codex/agents/risk-reviewer.toml .codex/agents/
 ```
 
-### MCP connectivity is not currently confirmed working
+### MCP connectivity is intermittent
 
 **Confirmed, not just suspected:** `${CLAUDE_PLUGIN_ROOT}` does not expand
 inside a plugin's bundled `mcp.json` -- `codex mcp get canon` shows the
-literal, unresolved token in `args` after installing this plugin. Worse,
-even after replacing it with a project-level `.codex/config.toml` entry
-using a real, absolute, non-templated path (below), a live `codex exec`
-session never got the server to respond -- not a slow success, an apparent
-hang, while the exact same command run directly (bypassing Codex
-entirely) answers a raw MCP handshake correctly in under a second. See
-`docs/codex-hook-surface.md`'s "Part 2" section for the full investigation
-and the leading hypothesis (network access needed for `uv` to resolve
-`canon_mcp`'s own dependency, possibly blocked under Codex's sandbox for
-an MCP server subprocess). This is unresolved; treat `canon_position`,
-`canon_plan`, `canon_review`, `canon_evidence`, and `canon_ship` as
-**not currently usable on Codex** until someone chases this further. Every
-hook, skill, and reviewer subagent in this plugin works independently of
-it.
+literal, unresolved token in `args` after installing this plugin. Replacing
+it with a project-level `.codex/config.toml` entry using a real, absolute
+path fixes that, but exposed a second, deeper issue: the connection itself
+succeeds only *some* of the time. When it does, everything about it is
+correct -- right tool names (`mcp__canon__canon_position`, etc.), right
+responses, no protocol issues, confirmed by sending Codex's exact handshake
+directly to `canon_mcp` and by watching a trivial hand-written test server
+connect instantly and reliably every time it was tried. When it doesn't,
+the session hangs with no error, no subprocess even spawned, until you kill
+it and try again. Setting `UV_OFFLINE=1` (below) roughly doubles the odds
+of a fast, clean connection but does not make it fully reliable. The
+leading hypothesis is a race condition inside Codex's own MCP client setup,
+not anything specific to `canon_mcp` -- see `docs/codex-hook-surface.md`'s
+"Part 2" section for the full investigation, including everything this
+ruled out (protocol version, server naming, trust). **If a session hangs
+on first use, that's this issue, not a broken plugin -- kill it and start
+a fresh one.** Every hook, skill, and reviewer subagent in this plugin is
+completely unaffected by any of this.
 
-If you want to try anyway, or want to help debug it further, register the
-server directly in this repository's own `.codex/config.toml` (remember:
-the project must be marked **trusted** first, or Codex silently ignores
-this file too -- see above) rather than relying on the plugin's own
-`mcp.json`:
+Register the server directly in this repository's own `.codex/config.toml`
+(remember: the project must be marked **trusted** first, or Codex silently
+ignores this file too -- see above) rather than relying on the plugin's own
+`mcp.json`, and force `uv` to skip network resolution to improve your odds
+of a clean connection:
 
 ```toml
 [mcp_servers.canon]
-command = "uvx"
-args = ["--from", "/absolute/path/to/this/checkout/src/canon_mcp", "canon-mcp"]
+command = "sh"
+args = ["-c", "UV_OFFLINE=1 exec uvx --from /absolute/path/to/this/checkout/src/canon_mcp canon-mcp"]
+default_tools_approval_mode = "auto"
 ```
 
 ## Use

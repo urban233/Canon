@@ -243,53 +243,83 @@ underlying MCP connectivity problem (next section) meant the workaround
 could not actually be validated as a fix, and shipping an unverified change
 in place of a documented-but-broken one is not an improvement.
 
-### The `canon` MCP server could not be gotten to actually respond inside a real Codex session -- unresolved
+### The `canon` MCP server connects intermittently -- root cause narrowed, not fully resolved
 
-This is the most significant open problem this port has. Once the project
-checkout was marked trusted (a **separate** requirement from hook trust:
-Codex silently skips a project's entire `.codex/` layer, config included,
-for an untrusted project -- confirmed the same way hook trust was, by
-first seeing nothing load, then finding the missing trust entry), a
-project-level `.codex/config.toml` correctly listed the `canon` server with
-a fully-resolved, non-templated absolute path (`codex mcp list` showed the
-real path, not a template token). But a live `codex exec` session, given
-tens of seconds to over two minutes, never reported any `canon`-named MCP
-tool as available -- not a slow success, an apparent hang with no output
-and no error surfaced in the session's own rollout log.
+A first pass (written up in an earlier revision of this section) found the
+server simply never responding, for tens of seconds to over two minutes,
+with zero evidence -- no subprocess, no log line, nothing -- that Codex had
+even tried to spawn it. A second, more instrumented pass (still using the
+same project-level `.codex/config.toml` registration, the project marked
+trusted the same way hook trust requires: Codex silently skips a project's
+entire `.codex/` layer, config included, for an untrusted project) narrowed
+this considerably:
 
-Isolating the two halves separately:
+- **`canon_mcp`'s own stdio server is protocol-correct and fast, confirmed
+  against Codex's exact handshake.** A raw MCP `initialize` request sent by
+  hand, using the identical `protocolVersion` (`"2025-06-18"`),
+  `capabilities`, and `clientInfo` a real Codex session sends (captured from
+  a working control case below), got a correct response from `canon_mcp` in
+  under a second, followed by a correct `tools/list` response naming all
+  five tools. This rules out a protocol-version mismatch or any other
+  incompatibility in `canon_mcp` itself.
+- **A trivial, hand-written, dependency-free stdio server (no `uv`/`uvx`
+  involved at all) registered the same way connected instantly, every
+  time it was tried**, and was invoked by Codex under the exact tool-naming
+  convention this port had assumed but not yet confirmed:
+  `mcp__<server>__<tool>` (observed as `mcp__canon__fake_diag_tool`). This
+  is the control case referenced above, and it rules out project trust,
+  the marketplace/plugin machinery, and Codex's MCP client in general as
+  categorically broken -- the mechanism works.
+- **Wrapping the real command so `uv` runs with `UV_OFFLINE=1`** (forcing
+  it to skip any network-touching resolution step and rely purely on its
+  local cache) changed the failure mode from "always hangs" to
+  "intermittent": roughly half of subsequent attempts connected within a
+  second or two -- one of them far enough to reach an actual `canon_position`
+  tool-call attempt, which failed only on `default_tools_approval_mode`
+  (an ordinary, documented setting, not a connectivity problem) -- and the
+  other half still hung exactly as before, with zero subprocess spawned.
+- **Renaming the server (`canon` → `canonx`) changed nothing** about the
+  intermittent pattern, ruling out any state cached against that specific
+  name.
 
-- **`canon_mcp`'s own stdio server is protocol-correct and fast.** Spawning
-  `uvx --from <path> canon-mcp` directly (bypassing Codex entirely) and
-  sending a raw MCP `initialize` JSON-RPC request by hand got a correct,
-  well-formed response in under a second.
-- **Codex's own connection to it did not complete** within the session
-  windows tried, for a reason this port could not isolate further without
-  spending materially more of this session's own budget chasing it. The
-  most plausible unconfirmed hypothesis: `uvx --from <local-path>
-  canon-mcp` still needs to resolve `canon_mcp`'s own PyPI dependency
-  (`mcp>=2.0`) the first time, and if Codex spawns MCP server subprocesses
-  under a network-restricted sandbox policy (plausible given `--sandbox
-  read-only` was in effect for these tests), that resolution step could
-  hang or fail silently in a way a standalone, unsandboxed `uvx` invocation
-  on the same machine never would.
+Put together: this looks like a **race condition or resource contention
+inside Codex's own MCP client setup**, upstream of `canon_mcp` entirely --
+plausibly triggered or worsened by `uv`/`uvx` touching the network during
+its resolution step (per the `UV_OFFLINE=1` improvement), but not fully
+explained by that alone, since roughly half of even the offline-wrapped
+attempts still hung with no subprocess spawned at all -- meaning some
+fraction of the block happens before Codex even execs the configured
+command. Whether repeatedly killing a hung `codex exec` process
+mid-connection (this session's own diagnostic method, necessarily) leaves
+Codex's own MCP subsystem in a state that makes the *next* attempt more
+likely to hang was not something this session could rule out either, and
+is itself a plausible confound worth controlling for in any follow-up.
 
-**This means MCP connectivity end-to-end is not confirmed working for this
-port, full stop**, independent of the marketplace/name-matching/variable-
-expansion issues already fixed above. Whoever picks this up next should
-try, roughly in order of how cheap each is to test: (1) pre-warming `uv`'s
-cache for `canon_mcp` and its dependencies as a separate step before first
-use, to rule out first-run network resolution as the cause; (2) checking
-whether `mcp_servers.<name>` supports an explicit network-access or sandbox
-override distinct from the session's own `--sandbox` flag; (3) packaging
-`canon_mcp` with its dependency vendored or pinned to a local wheel, so
-`uvx` needs no network at all, ever, regardless of sandbox policy -- which
-would also remove the dependency on this being a full checkout in the first
-place. None of this blocks shipping the rest of the port, since every other
-piece (hooks, skills, agents) functions independently of whether `canon-mcp`
-answers -- but `canon_position`, `canon_plan`, `canon_review`,
-`canon_evidence`, and `canon_ship` are unusable on Codex until it's
-resolved.
+**Recommendation, in order of how cheap each is to try:** (1) set
+`UV_OFFLINE=1` for the `canon` server's command (a wrapper script, as
+above, or `env = { UV_OFFLINE = "1" }` if `mcp_servers.<name>.env` supports
+it) -- it measurably improves the odds, even though it doesn't make the
+connection fully reliable; (2) if a session's first attempt hangs, treat it
+as transient and retry a fresh `codex exec` invocation rather than
+assuming the plugin is broken; (3) package `canon_mcp` with its `mcp`
+dependency vendored or pinned to a local wheel, removing `uv`'s need to
+touch the network (or even resolve anything) at all, which should raise
+the reliable-connection rate further, though this port's own evidence
+suggests it would not fully eliminate the pre-spawn hangs on its own; (4)
+if the intermittent failures persist even then, this is worth reporting
+upstream as a Codex CLI reliability issue in its MCP client setup, with
+this write-up's control case (the trivial fake server) as the reproducer
+that isolates it away from anything Canon-specific.
+
+None of this blocks shipping the rest of the port: every hook, skill, and
+reviewer agent functions independently of whether `canon-mcp` answers, and
+the MCP tools now work completely correctly *when* the connection
+succeeds -- correct tool names, correct responses, no protocol issues.
+What's unresolved is purely the connection's reliability under Codex, not
+its correctness once established. `canon_position`, `canon_plan`,
+`canon_review`, `canon_evidence`, and `canon_ship` should be expected to
+work most of the time and occasionally require a retry, not to be
+categorically broken.
 
 ## Recommendation for the port
 
