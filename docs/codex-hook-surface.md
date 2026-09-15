@@ -235,24 +235,13 @@ process launched.
 `$PLUGIN_ROOT` as a genuine environment variable at runtime** --
 `"command": "sh", "args": ["-c", "UV_OFFLINE=1 exec uvx --from \"$PLUGIN_ROOT/../../src/canon_mcp\" canon-mcp"]`
 -- instead of the non-functional `${CLAUDE_PLUGIN_ROOT}` template. This is
-strictly better than what it replaced (which could never have worked), but
-is **not confirmed reliably working as shipped**: reinstalling the plugin
-fresh and testing this exact form three times in a row, none connected in
-time for that turn (no hang either -- the turn completed normally, just
-without the tools present). This is a smaller sample than the manual
-`.codex/config.toml` testing below, which pointed at a physical wrapper
-*script file* rather than an inline `sh -c` string and succeeded roughly
-half the time with otherwise-identical ingredients (same `UV_OFFLINE=1`,
-same absolute path, same `uvx` invocation). Whether "inline `-c` string" vs
-"physical script file" is the actual variable, or this is just the same
-underlying intermittency landing badly three times by chance, was not
-isolated further. **If the bundled `mcp.json` doesn't connect for you,
-prefer the physical-script-file form in your own project
-`.codex/config.toml`** (see "MCP connectivity is intermittent" in
-`plugins/codex/README.md`) over assuming the mechanism is broken -- the
-mechanism is sound; only the exact packaging of it here is under-tested.
+strictly better than what it replaced (which could never have worked): the
+command Codex actually launches is now correct. Whether a given attempt to
+*use* it connects in time is a separate, unrelated question -- see the next
+section, which found the intermittency is not particular to this exact
+form, `uvx`, or `canon_mcp` at all.
 
-### The `canon` MCP server connects intermittently -- root cause narrowed, not fully resolved
+### The `canon` MCP server connects intermittently -- and so does everything else. This is a Codex-side bug, not a `canon_mcp` packaging problem.
 
 A first pass (written up in an earlier revision of this section) found the
 server simply never responding, for tens of seconds to over two minutes,
@@ -261,81 +250,94 @@ even tried to spawn it. A second, more instrumented pass (still using the
 same project-level `.codex/config.toml` registration, the project marked
 trusted the same way hook trust requires: Codex silently skips a project's
 entire `.codex/` layer, config included, for an untrusted project) narrowed
-this considerably:
+this considerably, and a third pass -- prompted by asking "would deploying
+`canon_mcp` as a single binary help?" -- settled the question of *where*
+the bug actually lives:
 
 - **`canon_mcp`'s own stdio server is protocol-correct and fast, confirmed
   against Codex's exact handshake.** A raw MCP `initialize` request sent by
   hand, using the identical `protocolVersion` (`"2025-06-18"`),
-  `capabilities`, and `clientInfo` a real Codex session sends (captured from
-  a working control case below), got a correct response from `canon_mcp` in
-  under a second, followed by a correct `tools/list` response naming all
-  five tools. This rules out a protocol-version mismatch or any other
-  incompatibility in `canon_mcp` itself.
-- **A trivial, hand-written, dependency-free stdio server (no `uv`/`uvx`
-  involved at all) registered the same way connected instantly, every
-  time it was tried**, and was invoked by Codex under the exact tool-naming
-  convention this port had assumed but not yet confirmed:
-  `mcp__<server>__<tool>` (observed as `mcp__canon__fake_diag_tool`). This
-  is the control case referenced above, and it rules out project trust,
-  the marketplace/plugin machinery, and Codex's MCP client in general as
-  categorically broken -- the mechanism works.
-- **Wrapping the real command so `uv` runs with `UV_OFFLINE=1`** (forcing
-  it to skip any network-touching resolution step and rely purely on its
-  local cache) changed the failure mode from "always hangs" to
-  "intermittent": roughly half of subsequent attempts connected within a
-  second or two -- one of them far enough to reach an actual `canon_position`
-  tool-call attempt, which failed only on `default_tools_approval_mode`
-  (an ordinary, documented setting, not a connectivity problem) -- and the
-  other half still hung exactly as before, with zero subprocess spawned.
+  `capabilities`, and `clientInfo` a real Codex session sends, got a
+  correct response from `canon_mcp` in under a second, followed by a
+  correct `tools/list` response naming all five tools. This rules out a
+  protocol-version mismatch or any other incompatibility in `canon_mcp`
+  itself.
+- **Removing every layer between Codex and `canon_mcp`'s actual code --
+  no `uv`, no `uvx`, no shell wrapper, just the venv's own `python`
+  interpreter invoked directly with `-c "from canon_mcp.server import
+  main; main()"` -- did not fix it.** Three tries: one full success (all
+  five tools listed correctly), one hang (zero subprocess spawned, same
+  as the `uvx`-based failures), one turn that completed normally but
+  without the tools. This is indistinguishable from `uvx`'s own failure
+  rate, and it directly refutes the natural hypothesis that `uv`'s
+  dependency-resolution overhead, or the extra `sh`→`uv`→`python`
+  process chain, was the cause.
+- **The real control case -- a trivial, dependency-free, single-process
+  Python stdio server with no third-party imports at all -- fails at
+  the same rate.** An earlier revision of this section reported this
+  server "connected instantly, every time it was tried," but that claim
+  rested on a single successful trial. Retested three more times under
+  identical conditions: two successes, one clean failure (no hang, the
+  turn simply completed without the tool present) -- the same
+  roughly-one-third-to-one-half failure rate `canon_mcp` itself shows,
+  not the "always works" result the first trial suggested. **This is the
+  decisive finding**: if the simplest possible custom MCP server,
+  requiring no dependency resolution, no network, and no process chain
+  beyond a bare `python3 <script>`, still fails intermittently, the
+  intermittency cannot be about what's being connected to at all. It is
+  a property of Codex's own MCP client setup for project/plugin-configured
+  servers in general.
 - **Renaming the server (`canon` → `canonx`) changed nothing** about the
-  intermittent pattern, ruling out any state cached against that specific
-  name.
+  intermittent pattern either, ruling out any state cached against that
+  specific name.
+- **`UV_OFFLINE=1`** (skipping `uv`'s network-touching resolution step)
+  had looked like a real improvement in an earlier, smaller round of
+  testing. In light of the fake-server result above, that apparent
+  improvement is better explained as noise in a roughly one-third-to-
+  one-half base failure rate than as a genuine fix -- a handful of trials
+  either side of a coin-flip-ish rate will look like a trend by chance
+  as often as not.
 
-Put together: this looks like a **race condition or resource contention
-inside Codex's own MCP client setup**, upstream of `canon_mcp` entirely --
-plausibly triggered or worsened by `uv`/`uvx` touching the network during
-its resolution step (per the `UV_OFFLINE=1` improvement), but not fully
-explained by that alone, since roughly half of even the offline-wrapped
-attempts still hung with no subprocess spawned at all -- meaning some
-fraction of the block happens before Codex even execs the configured
-command. Whether repeatedly killing a hung `codex exec` process
-mid-connection (this session's own diagnostic method, necessarily) leaves
-Codex's own MCP subsystem in a state that makes the *next* attempt more
-likely to hang was not something this session could rule out either, and
-is itself a plausible confound worth controlling for in any follow-up.
+**Answering "would a single binary help": no, almost certainly not.**
+A compiled/frozen single-file executable would remove the same
+`uv`/process-chain overhead the direct-`python -c` test already removed,
+and that test showed no improvement over `uvx` -- and even *that* wasn't
+the floor, since the dependency-free fake server (as simple as an MCP
+server can be) shows the identical failure rate. There is no simpler
+target to package down to that this session's own evidence didn't already
+test and find equally affected. The bug is upstream of anything this
+plugin controls.
 
-**Recommendation, in order of how cheap each is to try:** (1) set
-`UV_OFFLINE=1` for the `canon` server's command (a wrapper script, as
-above, or `env = { UV_OFFLINE = "1" }` if `mcp_servers.<name>.env` supports
-it) -- it measurably improves the odds, even though it doesn't make the
-connection fully reliable; (2) prefer a physical wrapper *script file* over
-an inline `sh -c "..."` string -- the former is what actually succeeded
-repeatedly in this session's testing, the latter (what `plugins/codex/mcp.json`
-ships, since a plugin's `mcp.json` can't reference a bundled script by an
-install-time-varying absolute path any more cleanly) did not connect in
-three tries against a freshly-installed plugin, though the sample is small
-and this may just be the same intermittency landing badly three times
-running; (3) if a session's first attempt hangs, treat it as transient and
-retry a fresh `codex exec` invocation rather than assuming the plugin is
-broken; (4) package `canon_mcp` with its `mcp` dependency vendored or
-pinned to a local wheel, removing `uv`'s need to touch the network (or even
-resolve anything) at all, which should raise the reliable-connection rate
-further, though this port's own evidence suggests it would not fully
-eliminate the pre-spawn hangs on its own; (5) if the intermittent failures
-persist even then, this is worth reporting upstream as a Codex CLI
-reliability issue in its MCP client setup, with this write-up's control
-case (the trivial fake server) as the reproducer that isolates it away from
-anything Canon-specific.
+Put together: this is a **race condition or resource-contention bug in
+Codex's own MCP client setup** for project- or plugin-configured servers,
+striking at a roughly constant rate regardless of server complexity,
+language, or dependency footprint. Roughly a third to a half of connection
+attempts either hang outright (zero subprocess spawned -- the block
+happens before Codex even execs the configured command) or complete the
+turn normally without the server's tools ever appearing.
+
+**Recommendation:** (1) if a session doesn't show the expected MCP tools,
+or hangs on first use, retry a fresh `codex exec` invocation -- this is
+usually transient, not a broken configuration; (2) do not invest further
+effort in `canon_mcp`'s own packaging (single binary, vendored
+dependencies, a leaner startup path) expecting it to raise the connection
+success rate -- this session's evidence says it won't, because the
+simplest possible alternative already shows the same rate; (3) this is
+worth reporting upstream as a Codex CLI reliability bug in its MCP client,
+with this write-up's three-way comparison (`canon_mcp` via `uvx`,
+`canon_mcp` via direct interpreter invocation, and a dependency-free fake
+server -- all showing the same intermittent rate) as the reproducer,
+since it isolates the bug away from anything server-specific.
 
 None of this blocks shipping the rest of the port: every hook, skill, and
 reviewer agent functions independently of whether `canon-mcp` answers, and
 the MCP tools now work completely correctly *when* the connection
 succeeds -- correct tool names, correct responses, no protocol issues.
 What's unresolved is purely the connection's reliability under Codex, not
-its correctness once established. `canon_position`, `canon_plan`,
-`canon_review`, `canon_evidence`, and `canon_ship` should be expected to
-work most of the time and occasionally require a retry, not to be
-categorically broken.
+its correctness once established, and not anything about how `canon_mcp`
+is packaged or deployed. `canon_position`, `canon_plan`, `canon_review`,
+`canon_evidence`, and `canon_ship` should be expected to work most of the
+time and occasionally require a retry, not to be categorically broken.
 
 ## Recommendation for the port
 

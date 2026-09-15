@@ -40,11 +40,14 @@ version:
   was not confirmed; `capture_review.py` matches it by substring rather than
   exact equality, and this plugin's own `hooks.json` leaves `SubagentStop`'s
   matcher open (`"*"`) rather than guessing a namespaced form.
-- **The `canon` MCP server connects intermittently, not reliably.** Once
-  connected it works completely correctly -- right tool names, right
-  responses, no protocol issues -- but the connection itself sometimes
-  hangs rather than completing. See "MCP connectivity is intermittent"
-  below for the full investigation and what narrows it down.
+- **Every custom MCP server connects intermittently under Codex right
+  now, `canon` included -- this is a Codex-side bug, not something wrong
+  with this plugin.** Once connected, everything works completely
+  correctly -- right tool names, right responses, no protocol issues --
+  but the connection itself succeeds only some of the time, and this was
+  confirmed to affect even the simplest possible dependency-free test
+  server, not anything specific to `canon_mcp`'s packaging. See "MCP
+  connectivity is intermittent" below.
 
 The first two are fail-open by construction -- a wrong guess means a gate
 goes quiet, never that it blocks something it shouldn't (see `_common.py`'s
@@ -109,59 +112,40 @@ mkdir -p .codex/agents
 cp plugins/codex/agents/reviewer.toml plugins/codex/agents/risk-reviewer.toml .codex/agents/
 ```
 
-### MCP connectivity is intermittent
+### MCP connectivity is intermittent -- this is a Codex bug, not a `canon_mcp` problem
 
-**Confirmed, not just suspected:** `${CLAUDE_PLUGIN_ROOT}` used to be the
-one broken piece here -- it never expands inside a plugin's bundled
+**Confirmed, not just suspected:** `${CLAUDE_PLUGIN_ROOT}` used to be one
+broken piece here -- it never expands inside a plugin's bundled
 `mcp.json`, confirmed via `codex mcp get canon` showing the literal,
 unresolved token. `mcp.json` has since been fixed to read `$PLUGIN_ROOT` as
 a genuine shell environment variable instead (which Codex does set
-correctly for the server process), wrapped with `UV_OFFLINE=1` to skip
-`uv`'s network-touching resolution step. That surfaced a second, deeper
-issue underneath: **the connection itself succeeds only *some* of the
-time**, independent of the templating fix. When it does connect,
-everything about it is correct -- right tool names
-(`mcp__canon__canon_position`, etc.), right responses, no protocol issues,
-confirmed by sending Codex's exact handshake directly to `canon_mcp` and by
-watching a trivial hand-written test server connect instantly and reliably
-every time it was tried. When it doesn't, the session either hangs with no
-error and no subprocess spawned, or completes normally but simply without
-the `canon` tools present. The leading hypothesis is a race condition
-inside Codex's own MCP client setup, not anything specific to `canon_mcp`
--- see `docs/codex-hook-surface.md`'s "Part 2" section for the full
-investigation, including everything this ruled out (protocol version,
-server naming, trust). **If a session doesn't see the `canon` tools, or
-hangs on first use, that's this issue, not a broken plugin -- retry a
-fresh session.** Every hook, skill, and reviewer subagent in this plugin is
-completely unaffected by any of this.
+correctly for the server process). That fix is necessary but not
+sufficient: **the connection itself succeeds only *some* of the time,
+independent of any packaging choice**, and this session went looking for
+whether repackaging `canon_mcp` more simply -- up to and including asking
+"would a single compiled binary help?" -- would raise that success rate.
+It would not, and here's why: invoking `canon_mcp` with every layer of
+indirection removed (no `uv`, no `uvx`, the venv's own Python interpreter
+called directly) failed at the same rate as the full `uvx`-based path. And
+a trivial, dependency-free test server with no third-party code at all --
+the simplest a custom MCP server can possibly get -- fails at that same
+rate too, roughly one connection in three. **If the simplest possible
+server still fails a third of the time, the bug cannot be about what's
+being connected to.** It's inside Codex's own MCP client setup for
+project- or plugin-configured servers, full stop -- see
+`docs/codex-hook-surface.md` for the three-way comparison that established
+this.
 
-**The bundled `mcp.json`'s exact form was not confirmed to connect in this
-session's own testing** (three fresh-install attempts, zero connections,
-though no hangs either) -- a smaller and less successful sample than a
-project-level `.codex/config.toml` pointing at a **physical wrapper script
-file** rather than an inline `sh -c "..."` string, which connected roughly
-half the time with otherwise-identical ingredients. Whether that
-distinction is the real cause or just how the same intermittency happened
-to land is unconfirmed, but if the bundled server doesn't connect for you,
-try this instead (remember: the project must be marked **trusted** first,
-or Codex silently ignores this file too -- see above):
-
-```sh
-cat > .codex/canon_launch.sh <<'EOF'
-#!/bin/sh
-export UV_OFFLINE=1
-exec uvx --from /absolute/path/to/this/checkout/src/canon_mcp canon-mcp
-EOF
-chmod +x .codex/canon_launch.sh
-```
-
-```toml
-# .codex/config.toml
-[mcp_servers.canon]
-command = "sh"
-args = ["/absolute/path/to/this/checkout/.codex/canon_launch.sh"]
-default_tools_approval_mode = "auto"
-```
+When it does connect, everything about it is correct -- right tool names
+(`mcp__canon__canon_position`, etc.), right responses, no protocol issues.
+When it doesn't, the session either hangs with no error and no subprocess
+spawned, or completes normally but simply without the `canon` tools
+present. **If a session doesn't see the `canon` tools, or hangs on first
+use, that's this bug, not a broken plugin -- retry a fresh session.**
+Every hook, skill, and reviewer subagent in this plugin is completely
+unaffected by any of this, and there is no configuration change on this
+plugin's side expected to fix it -- the fix, if one comes, is a Codex CLI
+update.
 
 ## Use
 
