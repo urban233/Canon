@@ -1,0 +1,37 @@
+load("@rules_python//python:defs.bzl", "py_library")
+
+# imports = ["."] makes this directory the package root, so both Bazel
+# tests and a hook invoked directly by Codex (which adds its own
+# directory to sys.path before `import _common`) resolve the same module
+# the same way. Mirrors //plugins/claude/hooks:hooks_lib exactly, except
+# `normalize_plan.py` where //plugins/claude/hooks has `save_plan.py` --
+# see normalize_plan.py's docstring for why that one file forks per
+# platform while everything else here is vendored byte-for-byte from
+# //src/canon_hooks.
+py_library(
+    name = "hooks_lib",
+    srcs = [
+        "_common.py",
+        "_config.py",
+        "stop.py",
+        "normalize_plan.py",
+        "session_start.py",
+        "capture_review.py",
+        "check_scope.py",
+        "plan_gate.py",
+        "git_guard.py",
+        "plan_header.py",
+        "__init__.py",
+    ],
+    imports = ["."],
+    visibility = ["//tests:__pkg__"],
+)
+
+# Exposes this package's own .py files to the root package's lint/typecheck
+# targets, which need the whole tree laid out with real repo-relative paths
+# -- glob() alone can't cross this package's boundary from outside it.
+filegroup(
+    name = "py_sources",
+    srcs = glob(["*.py"]),
+    visibility = ["//:__pkg__"],
+)

@@ -1,0 +1,35 @@
+load("@rules_python//python:defs.bzl", "py_library")
+
+# The one canonical copy of every hook module that needs no per-platform
+# branching once generalized (see this package's module docstrings for
+# what's generalized and why). `just sync-hooks` vendors these files
+# byte-for-byte into //plugins/claude/hooks and //plugins/codex/hooks;
+# `just sync-check` fails the build if a vendored copy has drifted. This
+# target exists so lint/format/typecheck cover the canonical copy, not
+# just the vendored ones -- it is not itself imported by any hook at
+# runtime, since a hook runs via bare `python3` with only its own
+# directory on `sys.path`.
+py_library(
+    name = "canon_hooks_lib",
+    srcs = [
+        "_common.py",
+        "_config.py",
+        "capture_review.py",
+        "check_scope.py",
+        "git_guard.py",
+        "plan_gate.py",
+        "plan_header.py",
+        "session_start.py",
+        "stop.py",
+        "__init__.py",
+    ],
+    imports = ["."],
+)
+
+# Exposes this package's own .py files to the root package's lint/typecheck
+# targets -- see plugins/claude/hooks/BUILD.bazel's py_sources for why.
+filegroup(
+    name = "py_sources",
+    srcs = glob(["*.py"]),
+    visibility = ["//:__pkg__"],
+)

@@ -34,13 +34,47 @@ typecheck:
 lock-check:
     bazel test //:requirements.test
 
+# The hook modules shared, byte-for-byte, between every platform Canon
+# ships for -- see src/canon_hooks's own BUILD.bazel and module
+# docstrings for what's shared and why. Neither plugin's copy is ever
+# hand-edited; fix the one canonical copy under src/canon_hooks and run
+# this to propagate it.
+_SHARED_HOOK_FILES := "_common.py _config.py capture_review.py check_scope.py git_guard.py plan_gate.py plan_header.py session_start.py stop.py"
+
+# Vendor src/canon_hooks/*.py into both plugins/*/hooks -- a hook runs via
+# bare `python3` with only its own directory on sys.path, so it cannot
+# import a sibling package at runtime; this is the mechanical alternative.
+sync-hooks:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    for f in {{_SHARED_HOOK_FILES}}; do
+        cp "src/canon_hooks/$f" "plugins/claude/hooks/$f"
+        cp "src/canon_hooks/$f" "plugins/codex/hooks/$f"
+    done
+
+# Fails if a vendored copy has drifted from src/canon_hooks -- the
+# regression guard for sync-hooks, part of `just ci`.
+sync-check:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    drifted=0
+    for f in {{_SHARED_HOOK_FILES}}; do
+        for plugin in claude codex; do
+            if ! diff -q "src/canon_hooks/$f" "plugins/$plugin/hooks/$f" > /dev/null; then
+                echo "drifted: plugins/$plugin/hooks/$f (run 'just sync-hooks')" >&2
+                drifted=1
+            fi
+        done
+    done
+    exit $drifted
+
 # Validate the plugin manifest and marketplace. --strict is what CI runs;
 # there's no reason to check less strictly locally than CI will.
 validate-plugin:
     claude plugin validate --strict ./plugins/claude
 
 # Everything CI runs.
-ci: build test lint fmt-check typecheck lock-check validate-plugin
+ci: build test lint fmt-check typecheck lock-check sync-check validate-plugin
 
 # Run Canon's own eval suite against its own plugin: a local, on-demand
 # check of what the model actually does with the instructions Canon

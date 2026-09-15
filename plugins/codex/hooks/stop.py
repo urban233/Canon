@@ -1,0 +1,218 @@
+# SPDX-License-Identifier: BSD-3-Clause
+"""Canon's `Stop` hook — the verification gate.
+
+Invariant III ("nothing ships on the agent's own word") is a precondition:
+if this repository has no configured verification command, Canon stays
+inert rather than operating unverified (see docs/plan.md §07, "No signal,
+no Canon"). So this hook does one of two things on every `Stop` event:
+
+- No `verify` command in `.canon/config.json` yet: block once per
+  session to surface the first-run question -- proposing whatever
+  `_config.suggest_verify_command` inferred, or asking outright when
+  nothing was inferred -- then allow silently on every later `Stop` in
+  the same session. A `Stop` hook has no "ask" permission decision and no
+  TTY-based degradation the way `PreToolUse` does; `block` is the only
+  mechanism that reliably puts text in front of the agent, which is then
+  expected to relay the question to the developer and, once answered,
+  write `.canon/config.json` itself -- a plain file edit, not a new tool.
+- A `verify` command is configured: run it and block on a red result,
+  attaching the failure so the claim "tests pass" is something the
+  harness checked rather than something the agent asserted.
+
+The one state this hook is allowed to remember, per `_common.py`'s module
+docstring and `AGENTS.md`: a same-session marker (so the first-run
+question is asked once, not on every `Stop`) and a consecutive-refusal
+counter (so a run of red results doesn't block forever). Both live under
+`_common.state_dir` -- the `scratchpad_dir` Claude Code includes in the
+`Stop` payload, or, on a platform that includes no such directory (Codex
+does not -- confirmed directly, see docs/codex-hook-surface.md), one
+`state_dir` derives itself from the payload's `session_id`. Either way,
+never under the repository.
+
+When `state_dir` returns None -- neither source was available -- both
+degrade to their empty state, and an empty state is not a safe one here:
+an always-zero counter never reaches its cap, so a persistently red
+repository would block every turn end for good, and an always-absent
+marker asks the first-run question on every `Stop` rather than once. So
+`stop_hook_active` -- the harness's own signal that this turn is already
+continuing because a `Stop` hook blocked it -- stands in for both, but
+*only* in that fully-degraded case. It cannot count, so it is a strictly
+weaker guarantee than three attempts: one block, then through. That is
+the right trade for a degraded payload and the wrong one for a healthy
+session, which is why it is a fallback rather than the mechanism.
+"""
+
+from __future__ import annotations
+
+import shlex
+import subprocess
+from pathlib import Path
+from typing import Any
+
+import _common
+import _config
+
+_MAX_CONSECUTIVE_REFUSALS = 3
+_VERIFY_TIMEOUT_SECONDS = 300
+_OUTPUT_TAIL_CHARS = 4000
+
+_PROMPTED_MARKER_NAME = "verify_prompted"
+_REFUSAL_COUNTER_NAME = "consecutive_refusals"
+
+
+def _stop_hook_active(payload: dict[str, Any] | None) -> bool:
+    """Whether the harness says this turn is already continuing because a
+    `Stop` hook blocked it. Absent or non-boolean reads as False."""
+    return bool(payload.get("stop_hook_active")) if payload else False
+
+
+def _has_been_prompted(state_dir: Path | None, stop_hook_active: bool) -> bool:
+    if state_dir is None:
+        return stop_hook_active
+    return (state_dir / _PROMPTED_MARKER_NAME).exists()
+
+
+def _mark_prompted(state_dir: Path | None) -> None:
+    if state_dir is None:
+        return
+    try:
+        state_dir.mkdir(parents=True, exist_ok=True)
+        (state_dir / _PROMPTED_MARKER_NAME).write_text("", encoding="utf-8")
+    except OSError:
+        pass
+
+
+def _read_refusal_count(state_dir: Path | None) -> int:
+    if state_dir is None:
+        return 0
+    try:
+        text = (state_dir / _REFUSAL_COUNTER_NAME).read_text(encoding="utf-8")
+        return int(text.strip())
+    except (OSError, ValueError):
+        return 0
+
+
+def _write_refusal_count(state_dir: Path | None, count: int) -> None:
+    if state_dir is None:
+        return
+    try:
+        state_dir.mkdir(parents=True, exist_ok=True)
+        (state_dir / _REFUSAL_COUNTER_NAME).write_text(str(count), encoding="utf-8")
+    except OSError:
+        pass
+
+
+def _should_give_up(
+    state_dir: Path | None, stop_hook_active: bool, refusals: int
+) -> bool:
+    """Whether a red result should be let through rather than blocked again.
+
+    With a scratchpad, that's the counter reaching its cap. Without one
+    there is no counter, so the harness's own loop guard is all that can
+    end the run -- see the module docstring for why a one-shot backstop
+    is accepted there and only there.
+    """
+    if state_dir is None:
+        return stop_hook_active
+    return refusals > _MAX_CONSECUTIVE_REFUSALS
+
+
+def _give_up_reason(state_dir: Path | None, refusals: int, detail: str) -> str:
+    if state_dir is None:
+        return (
+            "giving up: no session state to count refusals with, and the "
+            f"harness reports this turn already continued once -- {detail}"
+        )
+    return f"giving up after {refusals} consecutive failures: {detail}"
+
+
+def _first_run_reason(root: Path) -> str:
+    suggestion = _config.suggest_verify_command(root)
+    ask = (
+        f"A likely candidate, inferred from this repository: `{suggestion}`."
+        if suggestion
+        else "Nothing could be inferred -- ask what command should pass "
+        "before a turn ends (for example `pytest`, `npm test`, or "
+        "`make check`)."
+    )
+    return (
+        "Canon has no verification command configured for this repository "
+        "yet, and stays inert until it does. " + ask + " Confirm it with "
+        'the developer, then save it by writing {"verify": "<command>"} '
+        "to .canon/config.json."
+    )
+
+
+def _run_verification(root: Path, command: str) -> tuple[bool, str]:
+    try:
+        argv = shlex.split(command)
+    except ValueError as exc:
+        return False, f"Could not parse the configured verify command: {exc}"
+    if not argv:
+        return False, "The configured verify command is empty."
+    try:
+        completed = subprocess.run(
+            argv,
+            cwd=root,
+            capture_output=True,
+            text=True,
+            timeout=_VERIFY_TIMEOUT_SECONDS,
+            check=False,
+        )
+    except subprocess.TimeoutExpired:
+        return False, f"`{command}` timed out after {_VERIFY_TIMEOUT_SECONDS}s."
+    except OSError as exc:
+        return False, f"Could not run `{command}`: {exc}"
+    if completed.returncode == 0:
+        return True, ""
+    output = (completed.stdout or "") + (completed.stderr or "")
+    return (
+        False,
+        f"`{command}` exited {completed.returncode}:\n{output[-_OUTPUT_TAIL_CHARS:]}",
+    )
+
+
+def main() -> None:
+    payload = _common.read_payload()
+    root = _common.repo_root(payload)
+    state_dir = _common.state_dir(payload)
+    stop_hook_active = _stop_hook_active(payload)
+    config = _config.load_config(root)
+
+    if config is None or not _config.has_verification_signal(config):
+        if _has_been_prompted(state_dir, stop_hook_active):
+            _common.allow()
+            return
+        _mark_prompted(state_dir)
+        _common.block(_first_run_reason(root))
+        return
+
+    command = _config.resolve_verify_command(root, _common.current_branch(root), config)
+    if command is None:  # pragma: no cover - has_verification_signal implies one
+        _common.allow()
+        return
+    passed, detail = _run_verification(root, command)
+    if passed:
+        _write_refusal_count(state_dir, 0)
+        _common.log_decision(root, "stop.py", "allow", reason=f"`{command}` passed")
+        _common.allow()
+        return
+
+    refusals = _read_refusal_count(state_dir) + 1
+    if _should_give_up(state_dir, stop_hook_active, refusals):
+        _write_refusal_count(state_dir, 0)
+        _common.log_decision(
+            root,
+            "stop.py",
+            "allow",
+            reason=_give_up_reason(state_dir, refusals, detail),
+        )
+        _common.allow()
+        return
+    _write_refusal_count(state_dir, refusals)
+    _common.log_decision(root, "stop.py", "block", reason=detail)
+    _common.block(detail)
+
+
+if __name__ == "__main__":
+    _common.fail_open(main)()
