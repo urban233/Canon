@@ -3,7 +3,7 @@ name: audit-google-python-style
 description: Audit Python code against the Google Python Style Guide with a bundled deterministic checker, then apply only an explicitly approved remediation plan. Invoke only when the developer explicitly requests a Google Python Style audit or invokes $audit-google-python-style.
 license: BSD-3-Clause
 metadata:
-  author: Martin Urban <martin.urban@studmail.w-hs.de>, Hannah Kullik <hannah.kullik@studmail.w-hs.de>
+  author: Martin Urban <martin.urban@studmail.w-hs.de>
 ---
 
 # Google Python Style Audit
