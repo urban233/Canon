@@ -21,10 +21,12 @@ approved ones.
 
 Header derivation (what's genuinely derivable vs. left blank, the
 `verify:` field's asymmetry with `.canon/config.json`, the one-time ask
-for a missing required section, and the feature-vs-branch-plan split on
-a non-empty `## Steps` section) all live in `plan_header.py`, shared with
-Codex's `normalize_plan.py` -- see that module's docstring for the
-reasoning. What's specific to *this* hook is entirely about the trigger:
+for a missing required section, the feature-vs-branch-plan split on a
+non-empty `## Steps` section, and the "features/"-prefixed branch that
+would otherwise collide with the feature-plan namespace) all live in
+`plan_header.py`, shared with Codex's `normalize_plan.py` -- see that
+module's docstring for the reasoning. What's specific to *this* hook is
+entirely about the trigger:
 recognising an approved `ExitPlanMode` call and getting the body out of
 it, which only exists as a tool call on Claude Code. Codex has no
 `ExitPlanMode` equivalent (see docs/codex-hook-surface.md), so its own
@@ -99,7 +101,7 @@ def main() -> None:
 
     root = _common.repo_root(payload)
 
-    if _common.plan_sections(body).get("steps", "").strip():
+    if plan_header.is_feature_plan_body(body):
         plan_path = plan_header.feature_plan_path(root, plan_header.feature_slug(body))
         plan_path.parent.mkdir(parents=True, exist_ok=True)
         plan_path.write_text(
@@ -111,15 +113,24 @@ def main() -> None:
     branch = _common.current_branch(root) or "HEAD"
     header, missing = plan_header.derive_branch_header(root, branch, body)
 
+    # `branch_plan_path` itself redirects a "features/"-prefixed branch
+    # away from `.canon/plans/features/` -- see plan_header.py's
+    # docstring -- so this write can never collide with a feature plan.
     plan_path = plan_header.branch_plan_path(root, branch)
     plan_path.parent.mkdir(parents=True, exist_ok=True)
     plan_path.write_text(header + "\n\n" + body.strip("\n") + "\n", encoding="utf-8")
 
+    notices = []
+    if plan_header.branch_plan_collides_with_feature_namespace(branch):
+        notices.append(plan_header.branch_namespace_collision_message(branch))
     if missing:
-        plan_relative = f"{plan_header.plans_dir_relative()}/{branch}.md"
-        _common.context(
-            "PostToolUse", plan_header.missing_sections_message(plan_relative, missing)
+        notices.append(
+            plan_header.missing_sections_message(
+                plan_header.branch_plan_relative(branch), missing
+            )
         )
+    if notices:
+        _common.context("PostToolUse", " ".join(notices))
 
 
 if __name__ == "__main__":

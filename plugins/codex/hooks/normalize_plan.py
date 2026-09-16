@@ -36,6 +36,22 @@ This hook's own `main()` is the only thing in this plugin that genuinely
 has no Claude Code counterpart; the header-derivation logic it calls into
 lives in the shared `plan_header.py`, identical to what `save_plan.py`
 uses on Claude Code.
+
+One consequence of that is specific to this platform: the `plan` skill
+tells the agent, literally, to write a branch plan to
+`.canon/plans/<branch>.md` -- it has no knowledge of `plan_header.py`'s
+reserved "features/" prefix (see that module's docstring), so a branch
+named e.g. "features/public-permalinks" already landed at
+`.canon/plans/features/public-permalinks.md` -- the same path a feature
+plan of that slug uses -- by the time this hook is even invoked; unlike
+`save_plan.py`, which picks the destination itself and so never writes
+there in the first place. This hook cannot undo a write that already
+happened, but it can still stop the collision from *staying*: anything
+found under `.canon/plans/features/` is re-examined for a non-empty
+`## Steps` section (`plan_header.is_feature_plan_body`) before being
+trusted as a feature plan, and a file that fails that check is moved to
+where `plan_header.branch_plan_path` would have put a colliding branch's
+plan directly, with a one-time note saying so.
 """
 
 from __future__ import annotations
@@ -69,7 +85,20 @@ def _existing_body(text: str) -> str:
     return body
 
 
-def _normalize_branch_plan(root: Path, branch: str, path: Path) -> None:
+def _normalize_branch_plan(
+    root: Path, branch: str, path: Path, *, extra_notice: str | None = None
+) -> None:
+    """Derive `path`'s header from its own body and rewrite it in place.
+
+    `extra_notice`, when given, is folded into the same `additionalContext`
+    call as the missing-sections ask rather than sent separately -- only
+    one `_common.context` call can ever fire per hook invocation (it
+    exits the process), so a caller with more than one thing to say has
+    to say it in one call. Used by `_normalize_features_prefixed_path` to
+    attach the one-time collision note to the very write that relocated
+    the file, without losing the re-entrancy guard below for every write
+    after that.
+    """
     try:
         text = path.read_text(encoding="utf-8")
     except OSError:
@@ -77,14 +106,19 @@ def _normalize_branch_plan(root: Path, branch: str, path: Path) -> None:
     body = _existing_body(text)
     header, missing = plan_header.derive_branch_header(root, branch, body)
     new_text = header + "\n\n" + body.strip("\n") + "\n"
-    if new_text == text:
+    if new_text == text and extra_notice is None:
         return  # already normalized; avoid rewriting what we just wrote
-    path.write_text(new_text, encoding="utf-8")
+    if new_text != text:
+        path.write_text(new_text, encoding="utf-8")
+    notices = [extra_notice] if extra_notice else []
     if missing:
-        plan_relative = f"{plan_header.plans_dir_relative()}/{branch}.md"
-        _common.context(
-            "PostToolUse", plan_header.missing_sections_message(plan_relative, missing)
+        notices.append(
+            plan_header.missing_sections_message(
+                plan_header.branch_plan_relative(branch), missing
+            )
         )
+    if notices:
+        _common.context("PostToolUse", " ".join(notices))
 
 
 def _normalize_feature_plan(path: Path) -> None:
@@ -97,6 +131,52 @@ def _normalize_feature_plan(path: Path) -> None:
     if new_text == text:
         return
     path.write_text(new_text, encoding="utf-8")
+
+
+def _normalize_features_prefixed_path(root: Path, relative: str, path: Path) -> None:
+    """A write under `.canon/plans/features/` -- normally a feature plan,
+    but no longer provably so from its path alone (see the module
+    docstring's paragraph on the reserved "features/" prefix).
+
+    A genuine feature plan (non-empty `## Steps`) is normalized in place,
+    exactly as before. Anything else is a branch's plan that landed here
+    only because the `plan` skill writes to `.canon/plans/<branch>.md`
+    literally, with no knowledge that "features/" is reserved -- it is
+    moved to where `plan_header.branch_plan_path` would have put a
+    colliding branch's plan directly, and a one-time note is attached to
+    that same write.
+    """
+    if not relative.endswith(".md"):
+        _normalize_feature_plan(path)  # not a plan file this hook can parse
+        return
+    try:
+        text = path.read_text(encoding="utf-8")
+    except OSError:
+        return
+    body = _existing_body(text)
+    if plan_header.is_feature_plan_body(body):
+        _normalize_feature_plan(path)
+        return
+
+    plans_prefix = plan_header.plans_dir_relative() + "/"
+    branch = relative[len(plans_prefix) : -len(".md")]
+    destination = plan_header.branch_plan_path(root, branch)
+    if destination == path:
+        # Defensive only -- `branch` was derived from a path under
+        # `.canon/plans/features/`, so `branch_plan_collides_with_
+        # feature_namespace(branch)` is true by construction and
+        # `branch_plan_path` always redirects it. Normalize in place
+        # rather than silently doing nothing if that ever stops holding.
+        _normalize_branch_plan(root, branch, path)
+        return
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    path.replace(destination)
+    _normalize_branch_plan(
+        root,
+        branch,
+        destination,
+        extra_notice=plan_header.branch_namespace_collision_message(branch),
+    )
 
 
 def main() -> None:
@@ -112,22 +192,30 @@ def main() -> None:
     root = _common.repo_root(payload)
     plans_prefix = plan_header.plans_dir_relative() + "/"
     features_prefix = plan_header.feature_plans_dir_relative() + "/"
+    collision_prefix = plan_header.branch_plan_collision_dir_relative() + "/"
 
     for raw_path in touched:
         relative = _relative_path(root, raw_path)
         if relative is None or not relative.startswith(plans_prefix):
             continue
         absolute = root / relative
+
         if relative.startswith(features_prefix):
-            _normalize_feature_plan(absolute)
+            _normalize_features_prefixed_path(root, relative, absolute)
             continue
+
         # A branch plan's own name is the branch it belongs to -- derive
         # it from the path rather than assuming it matches the current
         # branch, since the write may have targeted any branch's file.
+        # Strip whichever of the two branch-plan roots this path is
+        # under: the ordinary one, or -- for a branch under the reserved
+        # "features/" prefix, already relocated once -- the one
+        # `plan_header.branch_plan_path` redirects to instead.
+        prefix = (
+            collision_prefix if relative.startswith(collision_prefix) else plans_prefix
+        )
         branch = (
-            relative[len(plans_prefix) : -len(".md")]
-            if relative.endswith(".md")
-            else None
+            relative[len(prefix) : -len(".md")] if relative.endswith(".md") else None
         )
         if branch:
             _normalize_branch_plan(root, branch, absolute)
