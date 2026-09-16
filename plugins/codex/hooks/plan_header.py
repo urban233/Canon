@@ -177,7 +177,7 @@ def branch_namespace_collision_message(branch: str) -> str:
         "writing there would silently overwrite a feature plan of the "
         "same name, or be silently overwritten by one saved later. The "
         "plan itself is saved either way; Canon mentions this once. If "
-        'this branch was never meant to imply a feature plan, consider '
+        "this branch was never meant to imply a feature plan, consider "
         'renaming it off the "features/" prefix.'
     )
 

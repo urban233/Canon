@@ -524,9 +524,7 @@ class BranchNamespaceCollisionTests(unittest.TestCase):
             )
             self.assertTrue(redirected.exists())
             self.assertIn("Do the thing.", redirected.read_text(encoding="utf-8"))
-            naive_path = (
-                root / ".canon" / "plans" / "features" / "public-permalinks.md"
-            )
+            naive_path = root / ".canon" / "plans" / "features" / "public-permalinks.md"
             self.assertFalse(naive_path.exists())
 
     def test_a_pre_existing_feature_plan_of_the_same_name_is_left_untouched(
@@ -570,7 +568,7 @@ class BranchNamespaceCollisionTests(unittest.TestCase):
             )
 
     def test_a_branch_literally_named_branches_slash_x_does_not_collide(self) -> None:
-        """"branches/<x>" is not the reserved prefix -- only "features/"
+        """ "branches/<x>" is not the reserved prefix -- only "features/"
         is -- so a branch that happens to be named this way is written
         at its ordinary path, `.canon/plans/branches/x.md`, with no
         redirect note. (This path does coincide with where a
@@ -589,7 +587,7 @@ class BranchNamespaceCollisionTests(unittest.TestCase):
             )
 
     def test_a_singular_feature_branch_does_not_collide(self) -> None:
-        """"feature/x" (singular -- the far more common convention) has a
+        """ "feature/x" (singular -- the far more common convention) has a
         different first path segment from "features" and is unaffected."""
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
