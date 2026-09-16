@@ -546,6 +546,48 @@ class BranchNamespaceCollisionTests(unittest.TestCase):
                 existing.read_text(encoding="utf-8"), "the real feature plan, untouched"
             )
 
+    def test_a_case_variant_of_the_reserved_prefix_still_collides(self) -> None:
+        """The reserved-prefix check is case-insensitive, because the
+        collision it guards against is a filesystem one:
+        `.canon/plans/Features/x.md` and `.canon/plans/features/x.md`
+        are the same file on the case-insensitive filesystems Canon's
+        supported platforms (macOS, Windows) default to."""
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            _init_repo(root, "Features/public-permalinks")
+            features_dir = root / ".canon" / "plans" / "features"
+            features_dir.mkdir(parents=True)
+            existing = features_dir / "public-permalinks.md"
+            existing.write_text("the real feature plan, untouched", encoding="utf-8")
+
+            message = self._approve(root, PLAN_WITH_SECTIONS)
+
+            self.assertIn(
+                ".canon/plans/branches/Features/public-permalinks.md", message
+            )
+            self.assertEqual(
+                existing.read_text(encoding="utf-8"), "the real feature plan, untouched"
+            )
+
+    def test_a_branch_literally_named_branches_slash_x_does_not_collide(self) -> None:
+        """"branches/<x>" is not the reserved prefix -- only "features/"
+        is -- so a branch that happens to be named this way is written
+        at its ordinary path, `.canon/plans/branches/x.md`, with no
+        redirect note. (This path does coincide with where a
+        "features/x" branch's plan is redirected to -- see
+        plan_header.py's docstring on that residual overlap -- but that
+        is a distinct, out-of-scope hazard from the one this test
+        covers.)"""
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            _init_repo(root, "branches/widget")
+            message = self._approve(root, PLAN_WITH_SECTIONS)
+
+            self.assertEqual(message, "")
+            self.assertTrue(
+                (root / ".canon" / "plans" / "branches" / "widget.md").exists()
+            )
+
     def test_a_singular_feature_branch_does_not_collide(self) -> None:
         """"feature/x" (singular -- the far more common convention) has a
         different first path segment from "features" and is unaffected."""

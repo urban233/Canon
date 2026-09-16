@@ -50,7 +50,19 @@ same "already written, this can only add context" posture as
 `missing_sections_message`. `feature/<x>` (singular -- the far more
 common convention for a single feature branch) does not collide: its
 first path segment is `feature`, a different directory entry from
-`features` entirely.
+`features` entirely. The reserved-prefix check is case-insensitive
+(`Features/<x>`, `FEATURES/<x>`) because the collision it guards against
+is a filesystem collision, and both of Canon's supported development
+platforms -- macOS and Windows -- resolve paths case-insensitively by
+default; a case-sensitive check would let exactly that filesystem
+silently do the overwriting this function exists to prevent.
+
+One overlap is left deliberately unresolved: a branch genuinely named
+`branches/features/<x>` reduces, via the same plain formula, to the
+identical path this redirect sends a `features/<x>` branch to. Not
+solvable without a sentinel of its own, and a far smaller hole than the
+one this fix replaces -- unlike `features/`, `branches/features/` is not
+a convention anyone reaches for by accident.
 """
 
 from __future__ import annotations
@@ -381,9 +393,15 @@ def branch_plan_collides_with_feature_namespace(branch: str) -> bool:
     `branch == "features"` (no further segment) does *not* collide --
     that reduces to the sibling file `.canon/plans/features.md`, not to
     anything inside the `features/` directory.
+
+    Compared case-insensitively (`.casefold()`): `Features/<x>` and
+    `.canon/plans/features/<x>.md` are the same path on a case-insensitive
+    filesystem, which is the default on both platforms Canon supports
+    development on (macOS, Windows). An exact-case comparison would let
+    that filesystem do the overwriting this function exists to prevent.
     """
     head, _, rest = branch.partition("/")
-    return head == _RESERVED_BRANCH_PLAN_SEGMENT and bool(rest)
+    return head.casefold() == _RESERVED_BRANCH_PLAN_SEGMENT and bool(rest)
 
 
 def branch_plan_relative(branch: str) -> str:

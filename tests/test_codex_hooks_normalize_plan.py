@@ -295,6 +295,75 @@ class BranchNamespaceCollisionTests(unittest.TestCase):
             self.assertIn("steps:", plan_path.read_text())
             self.assertFalse((root / ".canon" / "plans" / "branches").exists())
 
+    def test_a_features_prefixed_plan_on_a_different_branch_is_not_exiled(
+        self,
+    ) -> None:
+        """No `## Steps` is not proof of a colliding branch's plan -- a
+        genuine feature plan mid-draft, or headed "## Steps (ordered)"
+        rather than the exact heading this hook looks for, reads the
+        same way. On `main` (not `features/widget`), this can only be a
+        feature plan, so it must never be moved and re-headed as a
+        branch plan -- that would fabricate a `base:`/`scope:` for a
+        branch that doesn't exist and leave `.canon/plans/features/`
+        with a hole in it.
+        """
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            _init_repo(root, "main")
+            plan_path = root / ".canon" / "plans" / "features" / "widget.md"
+            plan_path.parent.mkdir(parents=True)
+            mid_draft = "# Widget\n\n## Steps (ordered)\n1. one\n"
+            plan_path.write_text(mid_draft)
+
+            context = _invoke_main(root, {"file_path": str(plan_path)})
+
+            self.assertEqual(context, "")
+            self.assertTrue(plan_path.exists())
+            self.assertNotIn("scope:", plan_path.read_text())
+            self.assertFalse((root / ".canon" / "plans" / "branches").exists())
+
+    def test_a_pre_existing_relocated_plan_is_never_clobbered(self) -> None:
+        """`destination.exists()` must never be `replace()`d over --
+        whatever is already saved there survives, and the candidate is
+        left where it is instead."""
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            _init_repo(root, "features/widget")
+            relocated = _relocated_widget_plan(root)
+            relocated.parent.mkdir(parents=True)
+            relocated.write_text("EXISTING RELOCATED PLAN -- do not overwrite")
+
+            naive_path = root / ".canon" / "plans" / "features" / "widget.md"
+            naive_path.parent.mkdir(parents=True)
+            naive_path.write_text(PLAN_BODY)
+
+            context = _invoke_main(root, {"file_path": str(naive_path)})
+
+            self.assertEqual(
+                relocated.read_text(), "EXISTING RELOCATED PLAN -- do not overwrite"
+            )
+            self.assertTrue(naive_path.exists())
+            self.assertIn("already saved there", context)
+
+    def test_a_branch_literally_named_branches_slash_x_is_not_misderived(
+        self,
+    ) -> None:
+        """A genuine branch named "branches/widget" writes its own,
+        unrelated plan at `.canon/plans/branches/widget.md` -- the same
+        shape of path the collision redirect uses. Stripping the
+        redirect prefix there would derive branch "widget" instead of
+        the true "branches/widget"."""
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            _init_repo(root, "branches/widget")
+            plan_path = root / ".canon" / "plans" / "branches" / "widget.md"
+            plan_path.parent.mkdir(parents=True)
+            plan_path.write_text(PLAN_BODY_MISSING_NON_GOALS)
+
+            context = _invoke_main(root, {"file_path": str(plan_path)})
+
+            self.assertIn(".canon/plans/branches/widget.md", context)
+
     def test_a_singular_feature_branch_plan_is_not_relocated(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)

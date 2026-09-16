@@ -47,11 +47,28 @@ plan of that slug uses -- by the time this hook is even invoked; unlike
 `save_plan.py`, which picks the destination itself and so never writes
 there in the first place. This hook cannot undo a write that already
 happened, but it can still stop the collision from *staying*: anything
-found under `.canon/plans/features/` is re-examined for a non-empty
-`## Steps` section (`plan_header.is_feature_plan_body`) before being
-trusted as a feature plan, and a file that fails that check is moved to
-where `plan_header.branch_plan_path` would have put a colliding branch's
-plan directly, with a one-time note saying so.
+found under `.canon/plans/features/` with no non-empty `## Steps`
+section (`plan_header.is_feature_plan_body`) is a candidate for having
+been a colliding branch's plan rather than a feature plan.
+
+A missing `## Steps` section is not proof, though -- a genuine feature
+plan mid-draft, or one headed "## Steps (ordered)" rather than the exact
+heading this hook looks for, reads the same way, and unlike the
+in-place header rewrite this hook does everywhere else, "wrong" here
+means *moving* a file and overwriting whatever the destination already
+held. So a second, independent signal is required before a rescue
+candidate is actually relocated: `_common.current_branch(root)` must
+equal the branch its own path implies. The genuine rescue case survives
+this -- the agent writes a branch's plan while standing on that branch
+-- and a false-negative `## Steps` read on a plan for some *other*
+branch (most commonly `main`, where a feature plan is drafted before any
+branch exists) degrades to being left alone and normalized as a feature
+plan in place, exactly as before this redirect existed, rather than
+being exiled. And even a true rescue candidate is never allowed to
+`replace()` an occupied destination -- if something is already saved
+where `plan_header.branch_plan_path` would put it, this hook leaves the
+candidate where it is and says so, instead of silently destroying
+whatever was there.
 """
 
 from __future__ import annotations
@@ -133,18 +150,40 @@ def _normalize_feature_plan(path: Path) -> None:
     path.write_text(new_text, encoding="utf-8")
 
 
+def _occupied_destination_message(branch: str) -> str:
+    """The one-time note for a rescue candidate that was left in place
+    because `plan_header.branch_plan_path` already has something saved
+    at its destination.
+
+    Never clobbers: `_normalize_features_prefixed_path` calls this
+    instead of moving the file when `destination.exists()`, the same
+    "already written, this can only add context" posture as every other
+    message in this module -- see `plan_header.missing_sections_message`.
+    """
+    return (
+        f"Canon left this branch's plan at .canon/plans/{branch}.md -- "
+        f"the same path a feature plan of the same name would use -- "
+        f"instead of moving it to {plan_header.branch_plan_relative(branch)}, "
+        "because something is already saved there. Look at both and merge "
+        "them by hand; Canon mentions this once."
+    )
+
+
 def _normalize_features_prefixed_path(root: Path, relative: str, path: Path) -> None:
     """A write under `.canon/plans/features/` -- normally a feature plan,
     but no longer provably so from its path alone (see the module
-    docstring's paragraph on the reserved "features/" prefix).
+    docstring's paragraph on the reserved "features/" prefix, and on why
+    a missing `## Steps` section alone is not enough to relocate it).
 
     A genuine feature plan (non-empty `## Steps`) is normalized in place,
-    exactly as before. Anything else is a branch's plan that landed here
-    only because the `plan` skill writes to `.canon/plans/<branch>.md`
-    literally, with no knowledge that "features/" is reserved -- it is
-    moved to where `plan_header.branch_plan_path` would have put a
-    colliding branch's plan directly, and a one-time note is attached to
-    that same write.
+    exactly as before. A file with no `## Steps` is relocated only when a
+    second, independent signal agrees it is a colliding branch's plan:
+    the repository's current branch must be the one its own path
+    implies. Anything that fails either check -- has `## Steps`, or
+    belongs to some other branch -- is left alone and normalized as a
+    feature plan in place, the same as before this redirect existed.
+    Even a confirmed rescue candidate is never moved onto an occupied
+    destination; see `_occupied_destination_message`.
     """
     if not relative.endswith(".md"):
         _normalize_feature_plan(path)  # not a plan file this hook can parse
@@ -160,6 +199,17 @@ def _normalize_features_prefixed_path(root: Path, relative: str, path: Path) -> 
 
     plans_prefix = plan_header.plans_dir_relative() + "/"
     branch = relative[len(plans_prefix) : -len(".md")]
+
+    if _common.current_branch(root) != branch:
+        # No `## Steps` doesn't prove this ISN'T a feature plan -- a
+        # mid-draft one, or one headed differently
+        # (e.g. "## Steps (ordered)"), reads the same way. Only relocate
+        # when the write can be tied to the branch actually being worked
+        # on; anything else degrades to "normalized as a feature plan in
+        # place", not "moved and possibly overwrites the destination".
+        _normalize_feature_plan(path)
+        return
+
     destination = plan_header.branch_plan_path(root, branch)
     if destination == path:
         # Defensive only -- `branch` was derived from a path under
@@ -169,6 +219,14 @@ def _normalize_features_prefixed_path(root: Path, relative: str, path: Path) -> 
         # rather than silently doing nothing if that ever stops holding.
         _normalize_branch_plan(root, branch, path)
         return
+    if destination.exists():
+        # Never clobber: something is already saved at the redirect
+        # target (e.g. a second write landed here after an earlier one
+        # was already relocated). Leave this file where it is.
+        _normalize_branch_plan(
+            root, branch, path, extra_notice=_occupied_destination_message(branch)
+        )
+        return
     destination.parent.mkdir(parents=True, exist_ok=True)
     path.replace(destination)
     _normalize_branch_plan(
@@ -177,6 +235,31 @@ def _normalize_features_prefixed_path(root: Path, relative: str, path: Path) -> 
         destination,
         extra_notice=plan_header.branch_namespace_collision_message(branch),
     )
+
+
+def _branch_for_plan_path(
+    relative: str, plans_prefix: str, collision_prefix: str
+) -> str | None:
+    """The branch a plan path under `.canon/plans/` (but not
+    `.canon/plans/features/`, handled separately) belongs to.
+
+    A path under the collision-redirect root (`.canon/plans/branches/`)
+    only means "strip that prefix instead" when what is left really is a
+    "features/"-prefixed branch -- a genuine branch literally named
+    "branches/<x>" (see plan_header.py's docstring on this residual
+    overlap) writes its own, unrelated plan at this same shape of path,
+    and stripping the redirect prefix there would derive "<x>" instead
+    of the true branch "branches/<x>". `relative` is checked against
+    both candidates, and `plan_header.branch_plan_collides_with_feature_
+    namespace` decides which one is real.
+    """
+    if not relative.endswith(".md"):
+        return None
+    if relative.startswith(collision_prefix):
+        candidate = relative[len(collision_prefix) : -len(".md")]
+        if plan_header.branch_plan_collides_with_feature_namespace(candidate):
+            return candidate
+    return relative[len(plans_prefix) : -len(".md")]
 
 
 def main() -> None:
@@ -207,16 +290,7 @@ def main() -> None:
         # A branch plan's own name is the branch it belongs to -- derive
         # it from the path rather than assuming it matches the current
         # branch, since the write may have targeted any branch's file.
-        # Strip whichever of the two branch-plan roots this path is
-        # under: the ordinary one, or -- for a branch under the reserved
-        # "features/" prefix, already relocated once -- the one
-        # `plan_header.branch_plan_path` redirects to instead.
-        prefix = (
-            collision_prefix if relative.startswith(collision_prefix) else plans_prefix
-        )
-        branch = (
-            relative[len(prefix) : -len(".md")] if relative.endswith(".md") else None
-        )
+        branch = _branch_for_plan_path(relative, plans_prefix, collision_prefix)
         if branch:
             _normalize_branch_plan(root, branch, absolute)
 
