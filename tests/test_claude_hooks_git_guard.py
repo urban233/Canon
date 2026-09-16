@@ -92,6 +92,65 @@ class DestructiveCommandTests(unittest.TestCase):
     def test_remote_branch_delete_via_empty_refspec(self) -> None:
         self._assert_denied("git push origin :feature/x")
 
+    def test_pr_merge(self) -> None:
+        self._assert_denied("gh pr merge 42")
+
+    def test_pr_merge_no_args(self) -> None:
+        self._assert_denied("gh pr merge")
+
+    def test_pr_merge_squash(self) -> None:
+        self._assert_denied("gh pr merge 42 --squash")
+
+    def test_pr_merge_rebase(self) -> None:
+        self._assert_denied("gh pr merge 42 --rebase")
+
+    def test_pr_merge_merge_flag(self) -> None:
+        self._assert_denied("gh pr merge 42 --merge")
+
+    def test_pr_merge_admin(self) -> None:
+        self._assert_denied("gh pr merge 42 --admin")
+
+    def test_pr_merge_auto(self) -> None:
+        self._assert_denied("gh pr merge 42 --auto")
+
+    def test_pr_close(self) -> None:
+        self._assert_denied("gh pr close 42")
+
+    def test_pr_review_approve_long_flag(self) -> None:
+        self._assert_denied("gh pr review 42 --approve")
+
+    def test_pr_review_approve_short_flag(self) -> None:
+        self._assert_denied("gh pr review -a")
+
+    def test_pr_review_bare_no_flags(self) -> None:
+        """No verdict flag at all: `gh`'s own interactive path to any of
+        the three review verdicts, including approval -- see
+        git_guard.py's module docstring for why this is denied rather
+        than let through."""
+        self._assert_denied("gh pr review 42")
+
+    def test_pr_review_bare_survives_a_later_line(self) -> None:
+        """`_NON_DELIMITER` treats a newline as a segment boundary, the
+        same as `|`/`;`/`&` -- a verdict flag on a later line of a
+        multi-line command must not excuse a bare review on an earlier
+        one."""
+        self._assert_denied("gh pr review 42\ngh pr review 43 --comment -b ok")
+
+    def test_force_push_across_a_line_continuation(self) -> None:
+        """A backslash-newline is an ordinary shell line continuation,
+        not a segment boundary -- this repo's own eval fixtures write
+        multi-line `git` invocations exactly this way. Regression test
+        for the newline-segment-boundary fix overshooting onto the
+        five §07 patterns it wasn't targeting."""
+        self._assert_denied("git push \\\n  --force origin main")
+
+    def test_force_push_quoted_flag_with_no_whitespace(self) -> None:
+        """A quoted flag with no whitespace inside it (`"--force"`) is a
+        single token the shell hands to `git` with the quotes stripped
+        -- indistinguishable from the same flag written bare, and must
+        still be denied."""
+        self._assert_denied('git push origin "--force"')
+
     def test_safe_push_is_allowed(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -159,6 +218,128 @@ class NearMissTests(unittest.TestCase):
     def test_log_merges_is_read_only(self) -> None:
         self._assert_allowed("git log --merges")
 
+    def test_pr_create_is_the_deliverable(self) -> None:
+        """docs/plan.md §12: opening a pull request is yes, it IS the
+        deliverable -- this must never share a pattern with `pr close`
+        or `pr merge`."""
+        self._assert_allowed('gh pr create --title x --body "y"')
+
+    def test_pr_view_is_read_only(self) -> None:
+        self._assert_allowed("gh pr view 42")
+
+    def test_pr_list_is_read_only(self) -> None:
+        self._assert_allowed("gh pr list")
+
+    def test_pr_diff_is_read_only(self) -> None:
+        self._assert_allowed("gh pr diff 42")
+
+    def test_pr_checkout_is_not_a_merge(self) -> None:
+        self._assert_allowed("gh pr checkout 42")
+
+    def test_pr_status_is_read_only(self) -> None:
+        self._assert_allowed("gh pr status")
+
+    def test_pr_comment_is_the_correction_loop(self) -> None:
+        """docs/plan.md §12: "Read PR comments, reply to them -- yes."
+        `gh pr comment` (a reply) is a different subcommand from `gh pr
+        review --comment` (a review verdict) and must stay unblocked."""
+        self._assert_allowed('gh pr comment 42 --body "thanks, fixed"')
+
+    def test_pr_review_comment_long_flag(self) -> None:
+        self._assert_allowed('gh pr review 42 --comment -b "interesting"')
+
+    def test_pr_review_comment_short_flag(self) -> None:
+        self._assert_allowed('gh pr review 42 -c -b "interesting"')
+
+    def test_pr_review_request_changes_long_flag(self) -> None:
+        self._assert_allowed('gh pr review 42 --request-changes -b "needs work"')
+
+    def test_pr_review_request_changes_short_flag(self) -> None:
+        self._assert_allowed('gh pr review 42 -r -b "needs work"')
+
+    def test_issue_list_is_untouched(self) -> None:
+        """§12 permits reading issues; none of the new `gh pr` patterns
+        should ever fire on `gh issue ...`."""
+        self._assert_allowed("gh issue list")
+
+    def test_issue_close_is_untouched(self) -> None:
+        self._assert_allowed("gh issue close 3")
+
+    def test_issue_comment_is_untouched(self) -> None:
+        self._assert_allowed('gh issue comment 3 --body "on it"')
+
+    def test_pr_review_help_is_read_only(self) -> None:
+        """The very command used to confirm gh's own flag set while
+        building this hook must not itself be denied."""
+        self._assert_allowed("gh pr review --help")
+
+    def test_pr_review_help_short_flag(self) -> None:
+        self._assert_allowed("gh pr review -h")
+
+    def test_merge_abort_quoted_flag_is_still_recovery(self) -> None:
+        """`_blank_quoted_spans` only blanks a quoted span that contains
+        whitespace -- `"--abort"` has none, so it must still read as
+        the recovery flag it is, quoted or not."""
+        self._assert_allowed('git merge "--abort"')
+
+    def test_pr_review_comment_quoted_flag_is_still_read_only(self) -> None:
+        self._assert_allowed('gh pr review 42 "--comment" -b x')
+
+
+class QuotedProseTests(unittest.TestCase):
+    """A destructive verb mentioned inside a quoted span *that contains
+    whitespace* is prose, not the command being run -- `_blank_quoted_
+    spans` keeps it from feeding the destructive-pattern check. (A
+    quoted span with no whitespace in it is a flag, not prose, and is
+    covered separately in `NearMissTests`/`DestructiveCommandTests`.)
+    See git_guard.py's module docstring for why.
+    """
+
+    def _assert_allowed(self, command: str) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            _init_repo(root)
+            self.assertEqual(_invoke_main(_payload(root, command)), "")
+
+    def test_destructive_phrase_in_a_commit_message_is_allowed(self) -> None:
+        """This is literally this change's own commit message on this
+        branch -- with Canon active, unfixed, it could not have been
+        committed."""
+        self._assert_allowed(
+            'git commit -m "fix: deny gh pr merge/close in the git guard"'
+        )
+
+    def test_destructive_phrase_in_a_pr_body_is_allowed(self) -> None:
+        self._assert_allowed('gh pr create --title "deny gh pr merge" --body x')
+
+    def test_request_changes_body_mentioning_approve_flag_is_allowed(self) -> None:
+        """The body text names `-a` in passing; the actual flag on the
+        command is `--request-changes`, which must decide the verdict,
+        not a word inside the quotes."""
+        self._assert_allowed(
+            'gh pr review 42 --request-changes -b "document the -a flag"'
+        )
+
+    def test_comment_body_mentioning_approve_flag_is_allowed(self) -> None:
+        self._assert_allowed("gh pr review 42 -c -b 'run it with -a next time'")
+
+    def test_force_push_phrase_in_a_commit_message_is_allowed(self) -> None:
+        """Pre-existing behaviour change, called out explicitly: before
+        quote-blanking, this was denied -- `git push --force` matched
+        literally inside the quoted commit message. That was always a
+        false positive against a command the developer had every right
+        to run; blanking quotes fixes it along with the four new `gh
+        pr` patterns."""
+        self._assert_allowed('git commit -m "don\'t use git push --force"')
+
+    def test_bash_dash_c_is_the_documented_false_negative(self) -> None:
+        """Quote-blanking is a deliberate trade, not an oversight: it
+        hides a destructive command from the guard when the whole thing
+        is itself inside quotes. Documented in git_guard.py's module
+        docstring as an accepted gap -- the guard is a tripwire against
+        casual action, not a sandbox."""
+        self._assert_allowed('bash -c "gh pr merge 42"')
+
 
 class InertWithoutVerificationSignalTests(unittest.TestCase):
     """docs/plan.md §07: "Not the gate alone -- the whole plugin."
@@ -209,6 +390,28 @@ class AttributionStrippingTests(unittest.TestCase):
             _init_repo(root)
             output = _invoke_main(_payload(root, 'git commit -m "fix: thing"'))
             self.assertEqual(output, "")
+
+    def test_strips_trailer_from_a_bash_dash_c_commit(self) -> None:
+        """Regression test: the `git commit` detection must run against
+        the *original* command, not the quote-blanked one -- the whole
+        `bash -c "git commit ..."` argument contains whitespace, so
+        blanking would hide the words `git commit` from that check
+        entirely and this commit's attribution would reach the repo
+        unstripped."""
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            _init_repo(root)
+            command = (
+                "bash -c \"git commit -m 'fix: thing\n\n"
+                "Co-Authored-By: Claude Sonnet 5 <noreply@anthropic.com>\n"
+                "done'\""
+            )
+            output = _invoke_main(_payload(root, command))
+            payload = json.loads(output)
+            hook_output = payload["hookSpecificOutput"]
+            self.assertEqual(hook_output["permissionDecision"], "allow")
+            self.assertNotIn("Co-Authored-By", hook_output["updatedInput"]["command"])
+            self.assertIn("fix: thing", hook_output["updatedInput"]["command"])
 
 
 class MiscTests(unittest.TestCase):
