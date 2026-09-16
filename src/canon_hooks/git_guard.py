@@ -22,18 +22,29 @@ casually" spine-table row and §12's authorship section:
    `--squash`, `--rebase`, `--admin`, `--auto` all still open with the
    literal words `pr merge`) and `gh pr close` are denied outright.
    `gh pr review --approve` (and its short form `-a`, confirmed against
-   `gh pr review --help` rather than guessed) is denied the same way.
-   A bare `gh pr review` -- no `--approve`, `--comment`/`-c`, or
-   `--request-changes`/`-r` -- is denied too: unlike the git patterns
-   above, this one is a deliberate false-positive risk rather than a
-   loose regex accident. `gh pr review` with no verdict flag is
-   `gh`'s own interactive path to any of the three verdicts, including
-   approval, and a command that reaches for that path has no legitimate
-   non-interactive use Canon needs to allow -- an automated caller
-   always has a verdict in mind and can name it. `gh pr review
-   --comment` and `--request-changes` (and their short forms `-c`/
-   `-r`) are the read-and-reply loop §12 says Canon needs, and are left
-   untouched.
+   `gh pr review --help` rather than guessed) is denied the same way,
+   and so is a bare `gh pr review` naming none of `--approve`,
+   `--comment`/`-c`, or `--request-changes`/`-r` -- see that pattern's
+   own comment below for why the bare form earns a deny rather than a
+   pass-through. `gh pr review --comment` and `--request-changes` (and
+   their short forms) are the read-and-reply loop §12 says Canon needs,
+   and stay untouched, as does the read-only `gh pr review --help`.
+
+   Matching runs against the command with every single- and
+   double-quoted span blanked to spaces first (`_blank_quoted_spans`),
+   not the raw text -- without that, `git commit -m "fix: deny gh pr
+   merge/close in the git guard"` would deny itself, and `gh pr review
+   42 --request-changes -b "document the -a flag"` would deny the very
+   correction-loop reply §12 asks for. The guard inspects the command,
+   not its prose arguments. That is a tripwire against casual action,
+   not a sandbox, and it accepts one deliberate false negative in
+   exchange: `bash -c "gh pr merge 42"` now passes, because the literal
+   text is inside quotes. An agent determined to evade a regex always
+   can; closing that particular gap is not this hook's job, and doing
+   so would cost every legitimate quoted mention of a forbidden verb.
+   The trailer stripper below is the one place that must see the
+   original, unblanked command -- the trailer it looks for lives inside
+   the very quoted text this blanks out.
 
    Each pattern is written to match the destructive operation and
    nothing adjacent to it. That cuts both ways: a false negative here
@@ -43,10 +54,10 @@ casually" spine-table row and §12's authorship section:
    caught by a loose pattern, `git merge-base` and a `HEAD:refs/...`
    refspec, are both read-only or routine. `gh pr create`, `gh pr
    view/list/diff/checkout/status/comment`, and every `gh issue ...`
-   command are the equivalent near-misses for the new patterns -- none
-   of them contain the literal `pr merge`, `pr close`, or an
-   unaccompanied `pr review`. The tests name every near-miss explicitly
-   for that reason.
+   command are the equivalent near-misses for the new patterns -- once
+   quoted arguments are blanked, none of them contain the literal `pr
+   merge`, `pr close`, or an unaccompanied `pr review`. The tests name
+   every near-miss explicitly for that reason.
 2. `git commit` commands carrying a `Co-Authored-By:` trailer have it
    stripped via `updatedInput` before the commit runs -- the mechanised
    half of §12's authorship guidance ("the git guard, which is already
@@ -80,7 +91,7 @@ import _config
 
 _SHELL_TOOL_NAMES = ("Bash",)
 
-_NON_DELIMITER = r"[^|;&]*"
+_NON_DELIMITER = r"[^|;&\n]*"
 _DESTRUCTIVE_PATTERNS = [
     (
         re.compile(rf"\bgit\s+push\b{_NON_DELIMITER}(--force\b|-f\b)"),
@@ -136,22 +147,44 @@ _DESTRUCTIVE_PATTERNS = [
         "an approving pull request review",
     ),
     (
-        # The bare form: no `--approve`/`-a`, `--comment`/`-c`, or
-        # `--request-changes`/`-r` anywhere in this segment. This is
-        # `gh`'s own interactive path to any of the three verdicts --
-        # see the module docstring for why an automated caller is
-        # expected to always name one instead.
+        # The bare form: none of `--approve`/`-a`, `--comment`/`-c`,
+        # `--request-changes`/`-r`, or `--help`/`-h` appear anywhere in
+        # this segment. Unflagged, `gh pr review` is `gh`'s own
+        # interactive path to any of the three verdicts, including
+        # approval, and a non-interactive caller always has a verdict
+        # in mind and can name it -- so there is no legitimate
+        # non-interactive use this excludes. `--help`/`-h` is carved
+        # out separately because it is the one bare-looking invocation
+        # that verdicts nothing at all -- a read-only documentation
+        # lookup, not a path to approval.
         re.compile(
             rf"\bgh\s+pr\s+review\b"
             rf"(?!{_NON_DELIMITER}(--approve\b|-a\b|--comment\b|-c\b"
-            rf"|--request-changes\b|-r\b))"
+            rf"|--request-changes\b|-r\b|--help\b|-h\b))"
         ),
-        "an unflagged pull request review (it could end up approving)",
+        "a pull request review with no verdict flag "
+        "(name --comment or --request-changes instead)",
     ),
 ]
 
 _COMMIT_PATTERN = re.compile(r"\bgit\s+commit\b", re.IGNORECASE)
 _TRAILER_LINE = re.compile(r"^[ \t]*Co-Authored-By:.*\n?", re.IGNORECASE | re.MULTILINE)
+
+_QUOTED_SPAN = re.compile(r"'[^']*'|\"[^\"]*\"")
+
+
+def _blank_quoted_spans(command: str) -> str:
+    """`command` with every single- or double-quoted span replaced by
+    spaces of the same length.
+
+    Used only for destructive-pattern matching and for detecting
+    whether the command is a `git commit` -- see the module docstring's
+    first section for why prose inside quotes must not feed those two
+    checks. Never used for `_strip_attribution`, which has to see the
+    original text: the trailer it strips lives inside the very quote
+    this would blank out.
+    """
+    return _QUOTED_SPAN.sub(lambda match: " " * len(match.group()), command)
 
 
 def _matched_destructive_operation(command: str) -> str | None:
@@ -197,7 +230,13 @@ def main() -> None:
     if not _config.canon_is_active(_config.load_config(root)):
         return  # no verification signal: Canon is inert, not guarding
 
-    label = _matched_destructive_operation(command)
+    # Quoted prose (a commit message, a `gh pr create --body`, a review
+    # reply) is not part of the command being run and must not feed
+    # either check below -- see the module docstring for the cases this
+    # fixes and the one false negative it deliberately accepts.
+    unquoted = _blank_quoted_spans(command)
+
+    label = _matched_destructive_operation(unquoted)
     if label is not None:
         reason = (
             f"Canon never runs {label} -- if you genuinely want this, run it yourself."
@@ -206,7 +245,7 @@ def main() -> None:
         _common.deny(reason)
         return
 
-    if _COMMIT_PATTERN.search(command):
+    if _COMMIT_PATTERN.search(unquoted):
         stripped = _strip_attribution(command)
         if stripped is not None:
             _common.log_decision(

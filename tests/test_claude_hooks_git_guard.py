@@ -129,6 +129,13 @@ class DestructiveCommandTests(unittest.TestCase):
         than let through."""
         self._assert_denied("gh pr review 42")
 
+    def test_pr_review_bare_survives_a_later_line(self) -> None:
+        """`_NON_DELIMITER` treats a newline as a segment boundary, the
+        same as `|`/`;`/`&` -- a verdict flag on a later line of a
+        multi-line command must not excuse a bare review on an earlier
+        one."""
+        self._assert_denied("gh pr review 42\ngh pr review 43 --comment -b ok")
+
     def test_safe_push_is_allowed(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -245,6 +252,69 @@ class NearMissTests(unittest.TestCase):
 
     def test_issue_comment_is_untouched(self) -> None:
         self._assert_allowed('gh issue comment 3 --body "on it"')
+
+    def test_pr_review_help_is_read_only(self) -> None:
+        """The very command used to confirm gh's own flag set while
+        building this hook must not itself be denied."""
+        self._assert_allowed("gh pr review --help")
+
+    def test_pr_review_help_short_flag(self) -> None:
+        self._assert_allowed("gh pr review -h")
+
+
+class QuotedProseTests(unittest.TestCase):
+    """A destructive verb mentioned inside a quoted argument is prose,
+    not the command being run -- `_blank_quoted_spans` keeps it from
+    feeding either the destructive-pattern check or the `git commit`
+    check. See git_guard.py's module docstring for why.
+    """
+
+    def _assert_allowed(self, command: str) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            _init_repo(root)
+            self.assertEqual(_invoke_main(_payload(root, command)), "")
+
+    def test_destructive_phrase_in_a_commit_message_is_allowed(self) -> None:
+        """This is literally this change's own commit message on this
+        branch -- with Canon active, unfixed, it could not have been
+        committed."""
+        self._assert_allowed(
+            'git commit -m "fix: deny gh pr merge/close in the git guard"'
+        )
+
+    def test_destructive_phrase_in_a_pr_body_is_allowed(self) -> None:
+        self._assert_allowed('gh pr create --title "deny gh pr merge" --body x')
+
+    def test_request_changes_body_mentioning_approve_flag_is_allowed(self) -> None:
+        """The body text names `-a` in passing; the actual flag on the
+        command is `--request-changes`, which must decide the verdict,
+        not a word inside the quotes."""
+        self._assert_allowed(
+            'gh pr review 42 --request-changes -b "document the -a flag"'
+        )
+
+    def test_comment_body_mentioning_approve_flag_is_allowed(self) -> None:
+        self._assert_allowed(
+            "gh pr review 42 -c -b 'run it with -a next time'"
+        )
+
+    def test_force_push_phrase_in_a_commit_message_is_allowed(self) -> None:
+        """Pre-existing behaviour change, called out explicitly: before
+        quote-blanking, this was denied -- `git push --force` matched
+        literally inside the quoted commit message. That was always a
+        false positive against a command the developer had every right
+        to run; blanking quotes fixes it along with the four new `gh
+        pr` patterns."""
+        self._assert_allowed("git commit -m \"don't use git push --force\"")
+
+    def test_bash_dash_c_is_the_documented_false_negative(self) -> None:
+        """Quote-blanking is a deliberate trade, not an oversight: it
+        hides a destructive command from the guard when the whole thing
+        is itself inside quotes. Documented in git_guard.py's module
+        docstring as an accepted gap -- the guard is a tripwire against
+        casual action, not a sandbox."""
+        self._assert_allowed('bash -c "gh pr merge 42"')
 
 
 class InertWithoutVerificationSignalTests(unittest.TestCase):
