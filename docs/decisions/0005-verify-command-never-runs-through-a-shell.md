@@ -44,15 +44,16 @@ Two reasons, not one:
 gate exists to eliminate.** `docs/plan.md` §07 is explicit that
 Invariant III's entire point is that nothing ships on the agent's own
 word -- the harness checks a claim, deterministically. `ruff check . &&
-pytest` run through a real shell can fail because `ruff` failed, because
-`pytest` failed, or (with `set -e` unset, the default) can report a
-non-zero-but-misleading exit code depending on which half ran. "Which
-half was red" is exactly the kind of question a human has to go
-re-derive by hand, defeating the purpose of an automated gate that is
-supposed to answer it for them. A single named command has one exit
-code and one meaning; a chain does not, unless someone writes the chain
-into a script that decides how partial failure is reported -- which is
-the next paragraph.
+pytest` run through a real shell returns the status of whichever
+command ran last -- `pytest`'s, if `ruff` passed; `ruff`'s, if it
+didn't, because `pytest` never ran at all. That single number is not
+the same claim as "the repository is red": a developer reading a
+failure has no way to tell which command actually produced it without
+re-deriving it by hand, defeating the purpose of an automated gate that
+is supposed to answer that for them. A single named command has one
+exit code and one meaning; a chain does not, unless someone writes the
+chain into a script that decides how partial failure is reported --
+which is the next paragraph.
 
 **Running a string through a shell means Canon executes text a
 developer wrote into a JSON config file or a plan header as code, with

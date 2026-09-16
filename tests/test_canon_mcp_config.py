@@ -122,6 +122,17 @@ class ShellMetacharacterTests(unittest.TestCase):
             _config.shell_metacharacter("bazel test //... --test_output=errors")
         )
 
+    def test_a_wholly_quoted_operator_only_argument_is_rejected_conservatively(
+        self,
+    ) -> None:
+        """See plugins/claude/hooks/_config.py's identical test for the
+        full reasoning: shlex strips quotes before this function ever
+        sees the token, so `cmd "|"` and a bare `cmd |` arrive as the
+        same token. Pinned so a future change that makes this accept
+        has to argue with a named test."""
+        self.assertIsNotNone(_config.shell_metacharacter('cmd "|"'))
+        self.assertIsNotNone(_config.shell_metacharacter("cmd '&&'"))
+
 
 class VerifyCommandProblemTests(unittest.TestCase):
     def test_plain_command_has_no_problem(self) -> None:
@@ -144,6 +155,34 @@ class VerifyCommandProblemTests(unittest.TestCase):
         self.assertIsNotNone(problem)
         assert problem is not None
         self.assertIn("could not parse", problem)
+
+    def _assert_named_operator_appears_in_the_explanation(self, command: str) -> None:
+        """See plugins/claude/hooks/_config.py's identical test for the
+        full reasoning behind this regression check."""
+        metacharacter = _config.shell_metacharacter(command)
+        assert metacharacter is not None
+        problem = _config.verify_command_problem(command)
+        assert problem is not None
+        prefix = f"this command contains `{metacharacter}`, "
+        self.assertTrue(problem.startswith(prefix))
+        explanation = problem[len(prefix) :]
+        self.assertIn(metacharacter, explanation)
+
+    def test_stderr_redirect_operator_appears_in_the_explanation(self) -> None:
+        self._assert_named_operator_appears_in_the_explanation("pytest 2>&1")
+
+    def test_lone_ampersand_operator_appears_in_the_explanation(self) -> None:
+        self._assert_named_operator_appears_in_the_explanation(
+            "ruff check . & pytest"
+        )
+
+    def test_append_redirect_operator_appears_in_the_explanation(self) -> None:
+        self._assert_named_operator_appears_in_the_explanation("pytest >> log")
+
+    def test_advice_is_conditional_on_being_a_sequence(self) -> None:
+        problem = _config.verify_command_problem("pytest 2>&1")
+        assert problem is not None
+        self.assertIn("if the real answer is a sequence", problem.lower())
 
 
 class VerifyCommandSourceTests(unittest.TestCase):

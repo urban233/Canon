@@ -255,6 +255,18 @@ def shell_metacharacter(command: str) -> str | None:
     `pytest &`, `pytest >> log`, and `pytest &> log`, none of which the
     exact-membership version this replaced would catch.
 
+    A second deliberate over-rejection, the same family as `$(`'s below:
+    a *wholly quoted* argument made only of operator characters --
+    `cmd "|"`, `cmd '&&'`, `find . -exec cmd {} \\;` -- is rejected too,
+    the same as the bare operator would be. shlex strips the quotes
+    before this function ever sees the token, so `"|"` and a bare `|`
+    both arrive as the single-character token `|`; there is no way to
+    tell them apart without re-deriving shlex's own quote tracking by
+    hand, which is exactly what asking shlex directly (rather than
+    scanning the raw string) is meant to avoid. This fails in the safe
+    direction -- a block-once with a named, fixable reason, never a
+    silent mis-split -- so it is kept rather than special-cased away.
+
     `commenters` defaults to `"#"` in `shlex.shlex` but to `""` in
     `shlex.split` -- confirmed directly, and easy to miss because the
     two normally agree. Left at the default here, this function would
@@ -359,14 +371,30 @@ def verify_command_problem(command: str) -> str | None:
     metacharacter = shell_metacharacter(command)
     if metacharacter is None:
         return None
+    # Describes the character set `shell_metacharacter` checks against,
+    # not an enumerated list of tokens -- an earlier version of this
+    # message listed `&&`, `||`, `|`, `;`, a newline, `>`, `<`, a
+    # backtick, and `$(` explicitly, which stopped matching what the
+    # detector actually catches the moment it grew past exact-token
+    # matching (round 2 added a lone `&`, `>>`, `&>`/`2>&1`-style merges,
+    # and more): the operator named at the start of this message no
+    # longer necessarily appeared anywhere in this list. Naming the
+    # *characters* instead of the tokens keeps the two from drifting
+    # apart again the next time the detector's coverage grows. The
+    # closing advice is conditional -- "if the real answer is a
+    # sequence" -- because it is right for `a && b` and simply wrong for
+    # `pytest 2>&1`, which is not a sequence at all.
     return (
-        f"this command contains `{metacharacter}`, a shell operator -- "
-        "Canon runs the configured command directly, with no shell, so "
-        "`&&`, `||`, `|`, `;`, a newline, `>`, `<`, a backtick, and `$(` "
-        "are refused rather than silently handed to the first program as "
-        "a literal argument. Wrap the sequence in a recipe or script (a "
-        "Justfile recipe, an npm script, a shell script committed to the "
-        "repo) and name that single command instead."
+        f"this command contains `{metacharacter}`, which Canon can't run "
+        "as configured -- it runs the configured command directly, with "
+        "no shell, so anything built from `&`, `;`, `|`, `<`, `>`, a "
+        "backtick, or a newline -- `&&`, `||`, a pipe, a `;`-separated "
+        "sequence, a redirection such as `>`, `>>`, or `2>&1` -- plus "
+        "`$(`, is refused rather than silently handed to the first "
+        "program as a literal argument. If the real answer is a "
+        "sequence, wrap it in a recipe or script (a Justfile recipe, an "
+        "npm script, a shell script committed to the repo) and name that "
+        "single command instead."
     )
 
 

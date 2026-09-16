@@ -124,8 +124,13 @@ def shell_metacharacter(command: str) -> str | None:
     lone `&`, `>>`, `&>`-style combined redirects, and an operator
     sitting after a `#` (which `shlex.shlex` treats as a comment by
     default, but `shlex.split` -- what actually runs the command --
-    does not); and why `$(` needs its own `startswith` check, including
-    the one case that check is conservative about.
+    does not); why `$(` needs its own `startswith` check, including the
+    one case that check is conservative about; and why a *wholly
+    quoted* argument made only of operator characters (`cmd "|"`, `cmd
+    '&&'`) is rejected the same as a bare operator would be -- a second,
+    deliberate over-rejection in the same family as `$(`'s, kept because
+    it fails in the safe direction and the alternative is re-deriving
+    shlex's own quote tracking by hand.
     """
     lexer = shlex.shlex(
         command, posix=True, punctuation_chars=_SHELL_METACHARACTER_PUNCTUATION
@@ -178,14 +183,22 @@ def verify_command_problem(command: str) -> str | None:
     metacharacter = shell_metacharacter(command)
     if metacharacter is None:
         return None
+    # Describes the character set `shell_metacharacter` checks against,
+    # not an enumerated list of tokens -- see the sibling docstring in
+    # plugins/claude/hooks/_config.py for why an earlier, token-listing
+    # version of this message stopped matching what the detector
+    # actually catches once it grew past exact-token matching.
     return (
-        f"this command contains `{metacharacter}`, a shell operator -- "
-        "Canon runs the configured command directly, with no shell, so "
-        "`&&`, `||`, `|`, `;`, a newline, `>`, `<`, a backtick, and `$(` "
-        "are refused rather than silently handed to the first program as "
-        "a literal argument. Wrap the sequence in a recipe or script (a "
-        "Justfile recipe, an npm script, a shell script committed to the "
-        "repo) and name that single command instead."
+        f"this command contains `{metacharacter}`, which Canon can't run "
+        "as configured -- it runs the configured command directly, with "
+        "no shell, so anything built from `&`, `;`, `|`, `<`, `>`, a "
+        "backtick, or a newline -- `&&`, `||`, a pipe, a `;`-separated "
+        "sequence, a redirection such as `>`, `>>`, or `2>&1` -- plus "
+        "`$(`, is refused rather than silently handed to the first "
+        "program as a literal argument. If the real answer is a "
+        "sequence, wrap it in a recipe or script (a Justfile recipe, an "
+        "npm script, a shell script committed to the repo) and name that "
+        "single command instead."
     )
 
 

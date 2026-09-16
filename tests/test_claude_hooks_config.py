@@ -359,6 +359,24 @@ class ShellMetacharacterTests(unittest.TestCase):
             _config.shell_metacharacter("bazel test //... --test_output=errors")
         )
 
+    def test_a_wholly_quoted_operator_only_argument_is_rejected_conservatively(
+        self,
+    ) -> None:
+        """A second deliberate over-rejection, the same family as `$('s
+        above: `cmd "|"` quotes a pipe as ordinary argument content, but
+        shlex strips the quotes before this function ever sees the
+        token, so the quoted `"|"` and a bare `|` both arrive as the
+        identical single-character token `|` -- there is no way to tell
+        them apart without re-deriving shlex's own quote tracking by
+        hand, which asking shlex directly is meant to avoid. This fails
+        in the safe direction (a named, fixable block, never a silent
+        mis-split), so it is kept rather than special-cased away -- see
+        the docstring's paragraph on this. Pinned here so a future
+        change that makes this accept has to argue with a named test
+        rather than silently changing the contract."""
+        self.assertIsNotNone(_config.shell_metacharacter('cmd "|"'))
+        self.assertIsNotNone(_config.shell_metacharacter("cmd '&&'"))
+
 
 class VerifyCommandProblemTests(unittest.TestCase):
     def test_plain_command_has_no_problem(self) -> None:
@@ -386,6 +404,49 @@ class VerifyCommandProblemTests(unittest.TestCase):
         self.assertIsNotNone(problem)
         assert problem is not None
         self.assertIn("could not parse", problem)
+
+    def _assert_named_operator_appears_in_the_explanation(self, command: str) -> None:
+        """The regression an independent review caught: the message
+        names the operator it actually found in a leading clause, then
+        used to fall back to a hard-coded token list in the explanation
+        that follows -- a list that only ever covered the two-character
+        operators this function's *first* version special-cased. Once
+        the detector grew to catch a lone `&`, `>>`, and `&>`/`2>&1`
+        merges, the operator named at the start stopped appearing
+        anywhere in that list, so a developer reading "contains `>&`...
+        so `&&`, `||`, `|`, `;`... are refused" would see an explanation
+        that flatly does not mention what was actually found. Checked by
+        stripping the deterministic leading clause and asserting the
+        operator still appears in what's left, not just anywhere in the
+        whole string -- the leading clause trivially contains it and
+        would hide the bug."""
+        metacharacter = _config.shell_metacharacter(command)
+        assert metacharacter is not None
+        problem = _config.verify_command_problem(command)
+        assert problem is not None
+        prefix = f"this command contains `{metacharacter}`, "
+        self.assertTrue(problem.startswith(prefix))
+        explanation = problem[len(prefix) :]
+        self.assertIn(metacharacter, explanation)
+
+    def test_stderr_redirect_operator_appears_in_the_explanation(self) -> None:
+        self._assert_named_operator_appears_in_the_explanation("pytest 2>&1")
+
+    def test_lone_ampersand_operator_appears_in_the_explanation(self) -> None:
+        self._assert_named_operator_appears_in_the_explanation(
+            "ruff check . & pytest"
+        )
+
+    def test_append_redirect_operator_appears_in_the_explanation(self) -> None:
+        self._assert_named_operator_appears_in_the_explanation("pytest >> log")
+
+    def test_advice_is_conditional_on_being_a_sequence(self) -> None:
+        """`pytest 2>&1` is not a sequence -- the old unconditional "Wrap
+        the sequence in a recipe or script" advice was simply wrong for
+        it. The message must hedge."""
+        problem = _config.verify_command_problem("pytest 2>&1")
+        assert problem is not None
+        self.assertIn("if the real answer is a sequence", problem.lower())
 
 
 class VerifyCommandSourceTests(unittest.TestCase):
