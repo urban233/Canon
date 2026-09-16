@@ -24,6 +24,15 @@ load("@rules_python//python:defs.bzl", "py_test")
     py_test(
         name = src[:-3],
         srcs = [src, "__init__.py"],
+        data = ["//plugins/canon-companion:py_sources"],
+    )
+    for src in glob(["test_audit_google_python_style.py"])
+]
+
+[
+    py_test(
+        name = src[:-3],
+        srcs = [src, "__init__.py"],
         deps = ["//plugins/codex/hooks:hooks_lib"],
     )
     for src in glob(["test_codex_hooks_*.py"])

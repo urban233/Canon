@@ -1,0 +1,10 @@
+{
+  "name": "canon-companion",
+  "description": "Opt-in code-quality skills for Canon, starting with an explicit Google Python Style audit and bounded remediation workflow.",
+  "version": "0.0.1",
+  "author": {
+    "name": "Martin Urban"
+  },
+  "license": "BSD-3-Clause",
+  "homepage": "https://github.com/urban233/Canon"
+}

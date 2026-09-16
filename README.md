@@ -169,6 +169,17 @@ Full install steps, hook/project trust, and what's genuinely different
 about this port from the Claude plugin are in
 [`plugins/codex/README.md`](plugins/codex/README.md).
 
+`canon-companion` is a separate, opt-in plugin for code-quality skills that
+should not load with Canon's workflow core. Install it from the same
+marketplace only when needed:
+
+```
+/plugin install canon-companion@canon
+```
+
+Its first skill, `$audit-google-python-style`, performs a read-only audit and
+requires explicit approval before it applies any remediation.
+
 ## Use
 
 There's nothing to configure up front. The first time a turn in a repository

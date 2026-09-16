@@ -107,6 +107,7 @@ sync-check:
 # there's no reason to check less strictly locally than CI will.
 validate-plugin:
     claude plugin validate --strict ./plugins/claude
+    claude plugin validate --strict ./plugins/canon-companion
 
 # Everything CI runs.
 ci: build test lint fmt-check typecheck lock-check sync-check validate-plugin
@@ -119,5 +120,14 @@ eval *args:
     cd plugins/claude && claude plugin eval . \
         --trust-plugin --scaffold --no-publish \
         --allow-tools Bash Write Edit "mcp__plugin_canon_canon__*" \
+        --mocks off \
+        {{args}}
+
+# Run the opt-in code-quality skill evals. These are model-backed and remain a
+# local, on-demand check for the same cost and credential reasons as `eval`.
+eval-companion *args:
+    cd plugins/canon-companion && claude plugin eval . \
+        --trust-plugin --scaffold --no-publish \
+        --allow-tools Bash Write Edit \
         --mocks off \
         {{args}}

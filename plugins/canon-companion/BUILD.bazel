@@ -1,0 +1,5 @@
+filegroup(
+    name = "py_sources",
+    srcs = glob(["**/*.py"]),
+    visibility = ["//:__pkg__", "//tests:__pkg__"],
+)

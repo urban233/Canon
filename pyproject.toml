@@ -27,6 +27,7 @@ project-includes = ["plugins", "tests", "src"]
 project-excludes = [
     "**/__pycache__",
     "**/*.pyc",
+    "plugins/canon-companion/skills/audit-google-python-style/scripts/check_google_rules.py",
     "src/canon_mcp/canon_mcp/server.py",
 ]
 # 3.9, matching the hooks floor: canon_mcp's pure-logic modules are
