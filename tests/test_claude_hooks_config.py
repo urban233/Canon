@@ -227,9 +227,7 @@ class ShellMetacharacterTests(unittest.TestCase):
     characters sitting quoted, as ordinary argument content."""
 
     def test_double_ampersand_is_detected(self) -> None:
-        self.assertEqual(
-            _config.shell_metacharacter("ruff check . && pytest"), "&&"
-        )
+        self.assertEqual(_config.shell_metacharacter("ruff check . && pytest"), "&&")
 
     def test_double_pipe_is_detected(self) -> None:
         self.assertEqual(_config.shell_metacharacter("ruff check . || pytest"), "||")
@@ -271,9 +269,7 @@ class ShellMetacharacterTests(unittest.TestCase):
         self.assertIsNone(_config.shell_metacharacter("just test --flag='a|b'"))
 
     def test_double_quoted_ampersands_are_not_a_metacharacter(self) -> None:
-        self.assertIsNone(
-            _config.shell_metacharacter('just check --flags="x && y"')
-        )
+        self.assertIsNone(_config.shell_metacharacter('just check --flags="x && y"'))
 
     def test_quoted_backtick_is_not_a_metacharacter(self) -> None:
         self.assertIsNone(_config.shell_metacharacter('echo "`whoami`"'))
@@ -342,9 +338,7 @@ class ShellMetacharacterTests(unittest.TestCase):
         comment at all. Left at the default, this function would stop
         reading at the `#` and miss the `&&` that `shlex.split` still
         hands to the first program as a literal argument."""
-        self.assertIsNotNone(
-            _config.shell_metacharacter("just test # && ruff check .")
-        )
+        self.assertIsNotNone(_config.shell_metacharacter("just test # && ruff check ."))
 
     # Required accepts an independent review pinned explicitly, so a
     # future tightening of the operator rule can't silently break them.
@@ -358,9 +352,7 @@ class ShellMetacharacterTests(unittest.TestCase):
         self.assertIsNone(_config.shell_metacharacter("cmd <(foo)"))
 
     def test_pytest_dash_m_with_parens_is_not_rejected(self) -> None:
-        self.assertIsNone(
-            _config.shell_metacharacter('pytest -m "not (slow or net)"')
-        )
+        self.assertIsNone(_config.shell_metacharacter('pytest -m "not (slow or net)"'))
 
     def test_bazel_test_output_errors_is_not_rejected(self) -> None:
         self.assertIsNone(

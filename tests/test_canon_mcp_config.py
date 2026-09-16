@@ -24,9 +24,7 @@ from canon_mcp import _config
 
 class ShellMetacharacterTests(unittest.TestCase):
     def test_double_ampersand_is_detected(self) -> None:
-        self.assertEqual(
-            _config.shell_metacharacter("ruff check . && pytest"), "&&"
-        )
+        self.assertEqual(_config.shell_metacharacter("ruff check . && pytest"), "&&")
 
     def test_double_pipe_is_detected(self) -> None:
         self.assertEqual(_config.shell_metacharacter("ruff check . || pytest"), "||")
@@ -108,9 +106,7 @@ class ShellMetacharacterTests(unittest.TestCase):
         self.assertIsNotNone(_config.shell_metacharacter("pytest 1>&2"))
 
     def test_operator_after_a_hash_is_still_detected(self) -> None:
-        self.assertIsNotNone(
-            _config.shell_metacharacter("just test # && ruff check .")
-        )
+        self.assertIsNotNone(_config.shell_metacharacter("just test # && ruff check ."))
 
     # Required accepts pinned explicitly so a future tightening of the
     # operator rule can't silently break them.
@@ -119,9 +115,7 @@ class ShellMetacharacterTests(unittest.TestCase):
         self.assertIsNone(_config.shell_metacharacter("cmd <(foo)"))
 
     def test_pytest_dash_m_with_parens_is_not_rejected(self) -> None:
-        self.assertIsNone(
-            _config.shell_metacharacter('pytest -m "not (slow or net)"')
-        )
+        self.assertIsNone(_config.shell_metacharacter('pytest -m "not (slow or net)"'))
 
     def test_bazel_test_output_errors_is_not_rejected(self) -> None:
         self.assertIsNone(
