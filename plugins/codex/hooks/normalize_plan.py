@@ -47,9 +47,14 @@ plan of that slug uses -- by the time this hook is even invoked; unlike
 `save_plan.py`, which picks the destination itself and so never writes
 there in the first place. This hook cannot undo a write that already
 happened, but it can still stop the collision from *staying*: anything
-found under `.canon/plans/features/` with no non-empty `## Steps`
-section (`plan_header.is_feature_plan_body`) is a candidate for having
-been a colliding branch's plan rather than a feature plan.
+found under `.canon/plans/features/` -- matched case-insensitively, so
+`.canon/plans/Features/` is recognised too (see
+`_relative_is_under_features_prefix`; `plan_header.py`'s own
+`branch_plan_collides_with_feature_namespace` compares the same way, for
+the same reason -- macOS and Windows resolve the two paths to the same
+file) -- with no non-empty `## Steps` section
+(`plan_header.is_feature_plan_body`) is a candidate for having been a
+colliding branch's plan rather than a feature plan.
 
 A missing `## Steps` section is not proof, though -- a genuine feature
 plan mid-draft, or one headed "## Steps (ordered)" rather than the exact
@@ -79,6 +84,12 @@ import _common
 import plan_header
 
 _EDIT_TOOL_NAMES = (None, "Edit", "Write", "apply_patch")
+# The one path segment `feature_plan_path` ever writes under, compared
+# case-insensitively wherever a touched path's own segment is checked
+# against it -- see `_relative_is_under_features_prefix` and
+# plan_header.py's docstring on why the reserved-prefix check itself is
+# case-insensitive.
+_FEATURE_SEGMENT = plan_header.feature_plans_dir_relative().rsplit("/", 1)[-1]
 
 
 def _relative_path(root: Path, file_path: str) -> str | None:
@@ -237,6 +248,26 @@ def _normalize_features_prefixed_path(root: Path, relative: str, path: Path) -> 
     )
 
 
+def _relative_is_under_features_prefix(relative: str, plans_prefix: str) -> bool:
+    """Case-insensitive counterpart to `relative.startswith(features_
+    prefix)`.
+
+    `plan_header.branch_plan_collides_with_feature_namespace` compares
+    case-insensitively, because macOS and Windows resolve
+    `.canon/plans/Features/<x>.md` and `.canon/plans/features/<x>.md` to
+    the same file. This dispatch has to agree: an agent's write to the
+    capitalized path lands on that identical file, and if this check
+    stayed exact-case, `_normalize_features_prefixed_path` -- and the
+    collision check inside it -- would simply never run for it, leaving
+    the write silently unexamined exactly as it was before this hook's
+    redirect existed.
+    """
+    if not relative.startswith(plans_prefix):
+        return False
+    head = relative[len(plans_prefix) :].split("/", 1)[0]
+    return head.casefold() == _FEATURE_SEGMENT
+
+
 def _branch_for_plan_path(
     relative: str, plans_prefix: str, collision_prefix: str
 ) -> str | None:
@@ -274,7 +305,6 @@ def main() -> None:
 
     root = _common.repo_root(payload)
     plans_prefix = plan_header.plans_dir_relative() + "/"
-    features_prefix = plan_header.feature_plans_dir_relative() + "/"
     collision_prefix = plan_header.branch_plan_collision_dir_relative() + "/"
 
     for raw_path in touched:
@@ -283,7 +313,7 @@ def main() -> None:
             continue
         absolute = root / relative
 
-        if relative.startswith(features_prefix):
+        if _relative_is_under_features_prefix(relative, plans_prefix):
             _normalize_features_prefixed_path(root, relative, absolute)
             continue
 

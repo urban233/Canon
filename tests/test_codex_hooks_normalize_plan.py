@@ -364,6 +364,32 @@ class BranchNamespaceCollisionTests(unittest.TestCase):
 
             self.assertIn(".canon/plans/branches/widget.md", context)
 
+    def test_a_case_variant_features_prefixed_branch_plan_is_recognised(self) -> None:
+        """The dispatch itself has to recognise "Features/" as the
+        reserved prefix too, case-insensitively -- matching
+        `plan_header.branch_plan_collides_with_feature_namespace`'s own
+        comparison. On a real case-insensitive filesystem (macOS,
+        Windows, both default) an agent's write to
+        `.canon/plans/Features/widget.md` lands on the identical file as
+        a committed `.canon/plans/features/widget.md`; this reproduces
+        the write side of that without depending on the test runner's
+        own filesystem being case-insensitive."""
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            _init_repo(root, "Features/widget")
+            naive_path = root / ".canon" / "plans" / "Features" / "widget.md"
+            naive_path.parent.mkdir(parents=True)
+            naive_path.write_text(PLAN_BODY)
+
+            context = _invoke_main(root, {"file_path": str(naive_path)})
+
+            self.assertIn("Features/widget", context)
+            self.assertFalse(naive_path.exists())
+            relocated = (
+                root / ".canon" / "plans" / "branches" / "Features" / "widget.md"
+            )
+            self.assertTrue(relocated.exists())
+
     def test_a_singular_feature_branch_plan_is_not_relocated(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)

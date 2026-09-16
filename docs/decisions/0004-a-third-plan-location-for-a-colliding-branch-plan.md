@@ -30,8 +30,8 @@ Redirect, and say so once. A branch under the reserved `features/` prefix
 writes its plan to `.canon/plans/branches/<branch>.md` instead — a third,
 narrower location, used only for this one case — and
 `branch_namespace_collision_message` names the redirect in the same
-one-time, never-blocking voice as `missing_sections_message` ("the plan is
-saved either way; Canon mentions this once").
+one-time, never-blocking voice as `missing_sections_message` ("The plan
+itself is saved either way; Canon mentions this once").
 
 A sibling directory, not a same-directory suffix. An earlier version of this
 fix redirected to `.canon/plans/features/<branch>.branch.md` — same
