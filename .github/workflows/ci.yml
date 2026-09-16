@@ -27,10 +27,15 @@ jobs:
       - name: Install claude CLI
         run: npm install -g @anthropic-ai/claude-code
 
-      - run: just build
-      - run: just test
-      - run: just lint
-      - run: just fmt-check
-      - run: just typecheck
-      - run: just lock-check
-      - run: just validate-plugin
+      # A single `just ci` instead of one `- run:` step per recipe on
+      # purpose: the Justfile's `ci` recipe is the one place that list is
+      # allowed to live. A hand-copied enumeration here previously drifted
+      # from it silently -- this workflow omitted `sync-check` entirely,
+      # so a vendored copy under plugins/*/hooks or plugins/*/vendor
+      # (see 033815f, the bug sync-check exists to catch) could drift from
+      # its canonical source under src/canon_hooks or src/canon_mcp and
+      # still pass CI. Adding a `just ci` step here can't drift from the
+      # Justfile because it IS the Justfile's list; the `claude` CLI
+      # install above still runs first, which `validate-plugin` (the last
+      # recipe `ci` runs) needs.
+      - run: just ci
