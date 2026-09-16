@@ -321,9 +321,7 @@ class QuotedProseTests(unittest.TestCase):
         )
 
     def test_comment_body_mentioning_approve_flag_is_allowed(self) -> None:
-        self._assert_allowed(
-            "gh pr review 42 -c -b 'run it with -a next time'"
-        )
+        self._assert_allowed("gh pr review 42 -c -b 'run it with -a next time'")
 
     def test_force_push_phrase_in_a_commit_message_is_allowed(self) -> None:
         """Pre-existing behaviour change, called out explicitly: before
@@ -332,7 +330,7 @@ class QuotedProseTests(unittest.TestCase):
         false positive against a command the developer had every right
         to run; blanking quotes fixes it along with the four new `gh
         pr` patterns."""
-        self._assert_allowed("git commit -m \"don't use git push --force\"")
+        self._assert_allowed('git commit -m "don\'t use git push --force"')
 
     def test_bash_dash_c_is_the_documented_false_negative(self) -> None:
         """Quote-blanking is a deliberate trade, not an oversight: it
