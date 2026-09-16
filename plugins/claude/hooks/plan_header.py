@@ -32,6 +32,37 @@ message to relay, never a block) rather than silently recorded: §06 says
 the hook "asks, once" and never rejects the plan, so the plan is written
 first and the ask goes out as extra context. Feature plans are exempt --
 `## Verification` has no meaning for a document that describes no branch.
+
+One consequence of the plain `<branch>.md` formula deserves its own
+paragraph, because it is not obvious from §06's own examples: a branch
+named `features/<x>` reduces to exactly the same relative path
+`feature_plan_path` gives a feature plan titled `<x>` --
+`.canon/plans/features/<x>.md`. Saving there would silently overwrite
+that feature plan, or be silently overwritten by one saved later, which
+is exactly the failure Invariant II (docs/plan.md §04 -- position is
+derived, never stored, so nothing can silently diverge from git) exists
+to rule out everywhere else. So `branch_plan_path` treats the whole
+`features/` prefix as reserved and redirects a colliding branch to
+`.canon/plans/branches/<branch>.md` instead -- a third, narrower location
+than §06 describes, used only for this one case -- and the caller is
+expected to say so via `branch_namespace_collision_message`, once, the
+same "already written, this can only add context" posture as
+`missing_sections_message`. `feature/<x>` (singular -- the far more
+common convention for a single feature branch) does not collide: its
+first path segment is `feature`, a different directory entry from
+`features` entirely. The reserved-prefix check is case-insensitive
+(`Features/<x>`, `FEATURES/<x>`) because the collision it guards against
+is a filesystem collision, and both of Canon's supported development
+platforms -- macOS and Windows -- resolve paths case-insensitively by
+default; a case-sensitive check would let exactly that filesystem
+silently do the overwriting this function exists to prevent.
+
+One overlap is left deliberately unresolved: a branch genuinely named
+`branches/features/<x>` reduces, via the same plain formula, to the
+identical path this redirect sends a `features/<x>` branch to. Not
+solvable without a sentinel of its own, and a far smaller hole than the
+one this fix replaces -- unlike `features/`, `branches/features/` is not
+a convention anyone reaches for by accident.
 """
 
 from __future__ import annotations
@@ -44,6 +75,10 @@ import _common
 
 _PLANS_DIR_RELATIVE = ".canon/plans"
 _FEATURE_PLANS_DIR_RELATIVE = ".canon/plans/features"
+_BRANCH_PLAN_COLLISION_DIR_RELATIVE = ".canon/plans/branches"
+# The one path segment `feature_plan_path` ever writes under -- see the
+# module docstring's paragraph on the reserved "features/" prefix.
+_RESERVED_BRANCH_PLAN_SEGMENT = "features"
 
 _REQUIRED_SECTION_LABELS = {
     "non-goals": "Non-goals",
@@ -88,6 +123,22 @@ def missing_required_sections(body: str) -> list[str]:
     return [name for name in _REQUIRED_SECTION_LABELS if not sections.get(name)]
 
 
+def is_feature_plan_body(body: str) -> bool:
+    """Whether `body` is a feature plan -- has a non-empty `## Steps`
+    section -- rather than a branch plan.
+
+    The one disambiguator `save_plan.py` uses to route between
+    `feature_plan_path` and `branch_plan_path`. `normalize_plan.py` needs
+    it too: a file physically sitting under `.canon/plans/features/` is
+    no longer provably a feature plan just because of where it is, now
+    that a branch under the reserved "features/" prefix can land there
+    first, before Canon ever gets a chance to redirect it (see the module
+    docstring). Shared here so both platforms agree on the one signal
+    that settles it.
+    """
+    return bool(_common.plan_sections(body).get("steps", "").strip())
+
+
 def missing_sections_message(plan_relative: str, missing: list[str]) -> str:
     """The one-time ask for required sections that were not in the plan.
 
@@ -105,6 +156,29 @@ def missing_sections_message(plan_relative: str, missing: list[str]) -> str:
         "-- otherwise `canon_ship` will report it as missing when this "
         "branch is ready for a human. The plan itself is saved either way; "
         "Canon mentions this once."
+    )
+
+
+def branch_namespace_collision_message(branch: str) -> str:
+    """The one-time note for a branch plan redirected out of the
+    feature-plan namespace -- see the module docstring's paragraph on the
+    reserved "features/" prefix, and `branch_plan_collides_with_feature_
+    namespace`.
+
+    Same posture as `missing_sections_message`: the plan is already
+    written, at the path this message itself names, by the time this is
+    built. This only adds context; it never withholds the save or asks
+    for confirmation.
+    """
+    return (
+        f"Canon saved this branch's plan to {branch_plan_relative(branch)} "
+        f"instead of .canon/plans/{branch}.md, because '{branch}' starts "
+        'with "features/", the prefix feature plans live under -- '
+        "writing there would silently overwrite a feature plan of the "
+        "same name, or be silently overwritten by one saved later. The "
+        "plan itself is saved either way; Canon mentions this once. If "
+        "this branch was never meant to imply a feature plan, consider "
+        'renaming it off the "features/" prefix.'
     )
 
 
@@ -306,11 +380,51 @@ def derive_branch_header(
     return BranchHeaderFields(header="\n".join(lines), missing=missing)
 
 
+def branch_plan_collides_with_feature_namespace(branch: str) -> bool:
+    """Whether `branch` reduces, via the plain `<branch>.md` formula, to
+    a path inside `.canon/plans/features/` -- the one directory
+    `feature_plan_path` also writes to. See the module docstring's
+    paragraph on the reserved "features/" prefix.
+
+    A prefix check, not an existing-file check: the whole "features/"
+    segment is reserved, not just the slugs a feature plan happens to
+    occupy today, since a branch plan written under it now would collide
+    just as fatally with a feature plan of the same name saved later.
+    `branch == "features"` (no further segment) does *not* collide --
+    that reduces to the sibling file `.canon/plans/features.md`, not to
+    anything inside the `features/` directory.
+
+    Compared case-insensitively (`.casefold()`): `Features/<x>` and
+    `.canon/plans/features/<x>.md` are the same path on a case-insensitive
+    filesystem, which is the default on both platforms Canon supports
+    development on (macOS, Windows). An exact-case comparison would let
+    that filesystem do the overwriting this function exists to prevent.
+    """
+    head, _, rest = branch.partition("/")
+    return head.casefold() == _RESERVED_BRANCH_PLAN_SEGMENT and bool(rest)
+
+
+def branch_plan_relative(branch: str) -> str:
+    """The path `branch_plan_path` writes to, relative to the repo root,
+    as a string -- for building a message without needing `root`."""
+    base = (
+        _BRANCH_PLAN_COLLISION_DIR_RELATIVE
+        if branch_plan_collides_with_feature_namespace(branch)
+        else _PLANS_DIR_RELATIVE
+    )
+    return f"{base}/{branch}.md"
+
+
 def branch_plan_path(root: Path, branch: str) -> Path:
     # `branch` may contain "/" (e.g. "feature/widget"), so the plan's own
     # parent directory -- not just .canon/plans/ itself -- needs creating
     # by the caller before writing.
-    return root / _PLANS_DIR_RELATIVE / f"{branch}.md"
+    #
+    # A branch under the reserved "features/" prefix is redirected to
+    # `.canon/plans/branches/<branch>.md` instead of the usual
+    # `.canon/plans/<branch>.md` -- see `branch_plan_relative` and the
+    # module docstring for why.
+    return root / branch_plan_relative(branch)
 
 
 def feature_plan_path(root: Path, slug: str) -> Path:
@@ -323,3 +437,7 @@ def plans_dir_relative() -> str:
 
 def feature_plans_dir_relative() -> str:
     return _FEATURE_PLANS_DIR_RELATIVE
+
+
+def branch_plan_collision_dir_relative() -> str:
+    return _BRANCH_PLAN_COLLISION_DIR_RELATIVE
