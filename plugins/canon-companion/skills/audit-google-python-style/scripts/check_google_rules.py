@@ -81,11 +81,19 @@ TYPE_COMMENT = re.compile(r"#\s*type:\s*(?!ignore\b)")
 TODO = re.compile(r"#\s*TODO(?!\s*:\s*\S+\s+-\s+\S+)", re.IGNORECASE)
 PYLINT = re.compile(r"#\s*pylint\s*:", re.IGNORECASE)
 SECTION = re.compile(r"^(Args|Raises|Returns|Yields):$")
+STRING_TOKEN_TYPES = frozenset(
+    {tokenize.STRING}
+    | {
+        getattr(tokenize, name)
+        for name in ("FSTRING_START", "FSTRING_MIDDLE", "FSTRING_END")
+        if hasattr(tokenize, name)
+    }
+)
 # Structural pattern matching landed in 3.10, but this checker runs on the
 # user's own python3 and is held to the repository's 3.9 floor (see
 # pyproject.toml), so the node types are resolved defensively the same way
-# `type_params` is below. An empty tuple makes every isinstance check false,
-# which is correct on 3.9: a `match` statement cannot parse there at all.
+# type_params is below. An empty tuple makes every isinstance check false,
+# which is correct on 3.9: a match statement cannot parse there at all.
 MATCH_NAME_PATTERNS = tuple(
     node_type
     for node_type in (getattr(ast, "MatchAs", None), getattr(ast, "MatchStar", None))
@@ -210,6 +218,39 @@ def confirmed_class_usages(tree):
             names.add(node.func.id)
         elif isinstance(node, ast.ClassDef):
             names.update(base.id for base in node.bases if isinstance(base, ast.Name))
+    return names
+
+
+def type_alias_bindings(tree):
+    """Return CapWords names bound to a type alias or a class-producing call.
+
+    The guide names type aliases in CapWords, so the ordinary snake_case
+    binding rule would demand renaming an alias bound to a class or to a
+    class-producing call, breaking every importer. Literal values stay subject
+    to that rule: only a name bound to another name, attribute, call,
+    subscript, or type union is exempt.
+
+    Args:
+        tree: Parsed module syntax tree.
+    Returns:
+        Names bound at least once to an alias-shaped value.
+    """
+    alias_values = (ast.Name, ast.Attribute, ast.Call, ast.Subscript, ast.BinOp)
+    names = set()
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Assign) and isinstance(node.value, alias_values):
+            targets = node.targets
+        elif isinstance(node, ast.AnnAssign) and isinstance(node.value, alias_values):
+            targets = [node.target]
+        elif isinstance(node, getattr(ast, "TypeAlias", ())):
+            targets = [node.name]
+        else:
+            continue
+        names.update(
+            target.id
+            for target in targets
+            if isinstance(target, ast.Name) and valid_class(target.id)
+        )
     return names
 
 
@@ -482,7 +523,11 @@ def _scope_bindings(node):
             walk(expression)
 
     def walk(current):
-        """Collect bindings without descending into child lexical scopes."""
+        """Collect bindings without descending into child lexical scopes.
+
+        Args:
+            current: Syntax node to collect bindings from.
+        """
         nonlocal wildcard_import
         if current is not node and isinstance(
             current, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef, ast.Lambda)
@@ -683,25 +728,36 @@ def _doc_sections(lines):
     sections = {}
     current = None
     current_name = None
+    entry_indent = 0
     for line in lines:
         heading = re.match(r"^\s*(Args|Raises|Returns|Yields):\s*$", line)
         if heading:
             current_name = heading.group(1)
             current = []
             sections[current_name] = current
+            entry_indent = 0
             continue
-        if current is None:
+        if current is None or not line.strip():
             continue
         # The name must start with a non-space character, otherwise a
-        # colon-leading line inside a section (a leftover reST `:param x:`,
-        # say) matches with the indentation alone as its name.
+        # colon-leading line inside a section, such as a leftover reST param
+        # directive, matches with the indentation alone as its name.
         entry = re.match(r"^\s*([^:\s][^:]*):\s*(.*)$", line)
         if entry:
             current.append([entry.group(1).strip(), entry.group(2).strip()])
-        elif line.strip() and current_name in {"Returns", "Yields"} and not current:
+            entry_indent = len(line) - len(line.lstrip())
+            continue
+        if current_name in {"Returns", "Yields"} and not current:
             current.append(["__prose__", line.strip()])
-        elif line.strip() and current and current[-1][1]:
-            current[-1][1] += " " + line.strip()
+            continue
+        if not current:
+            continue
+        # A description may start on the line after its name, which is the
+        # form the guide itself uses when one line is not enough. Requiring a
+        # deeper indent than the name keeps a malformed sibling entry out.
+        indent = len(line) - len(line.lstrip())
+        if current[-1][1] or indent > entry_indent:
+            current[-1][1] = f"{current[-1][1]} {line.strip()}".strip()
     return sections
 
 
@@ -764,17 +820,19 @@ def _check_section_entries(results, root, path, node, sections, section, require
 class Visitor(ast.NodeVisitor):
     """Collect AST-based audit findings without treating methods as nested functions."""
 
-    def __init__(self, root, path, class_usages):
+    def __init__(self, root, path, class_usages, type_aliases=frozenset()):
         """Initialize the visitor.
 
         Args:
             root: Audit root.
             path: Source path.
             class_usages: Names confirmed as classes by call or base-class usage.
+            type_aliases: CapWords names bound to an alias-shaped value.
         """
         self.root, self.path, self.results, self.scopes = root, path, [], ["module"]
         self.bindings = []
         self.class_usages = class_usages
+        self.type_aliases = type_aliases
 
     def visit_Module(self, node):
         """Track names that can shadow built-ins at module scope.
@@ -896,11 +954,10 @@ class Visitor(ast.NodeVisitor):
         Args:
             node: Attribute syntax node.
         """
-        if (
-            isinstance(node.value, ast.Name)
-            and node.value.id == "typing"
-            and node.attr == "Text"
-        ):
+        qualified_typing = (
+            isinstance(node.value, ast.Name) and node.value.id == "typing"
+        )
+        if qualified_typing and node.attr == "Text":
             add(
                 self.results,
                 self.root,
@@ -909,6 +966,16 @@ class Visitor(ast.NodeVisitor):
                 "no-typing-text",
                 "violation",
                 "Use str instead of typing.Text.",
+            )
+        if qualified_typing and node.attr in {"List", "Dict", "Set", "Tuple"}:
+            add(
+                self.results,
+                self.root,
+                self.path,
+                node,
+                "legacy-typing-alias",
+                "review",
+                "Prefer built-in collection types when supported.",
             )
         self.generic_visit(node)
 
@@ -985,7 +1052,7 @@ class Visitor(ast.NodeVisitor):
                 "Bindings must not use the tmp_ prefix.",
             )
         if isinstance(node.ctx, (ast.Store, ast.Del)) and not (
-            node.id.isupper() or valid_snake(node.id)
+            node.id.isupper() or valid_snake(node.id) or node.id in self.type_aliases
         ):
             add(
                 self.results,
@@ -1023,6 +1090,10 @@ class Visitor(ast.NodeVisitor):
                 "violation",
                 "Parameters must use snake_case.",
             )
+        # Without this the visitor never reaches a parameter annotation, so
+        # typing.Text on a parameter went unreported while the same
+        # annotation on a variable was caught.
+        self.generic_visit(node)
 
     def visit_FunctionDef(self, node):
         """Check synchronous function documentation and names.
@@ -1179,6 +1250,45 @@ class Visitor(ast.NodeVisitor):
         self.scopes.pop()
 
 
+def _inside_string(position, regions):
+    """Return whether a source position falls inside a string literal.
+
+    Args:
+        position: Row and column pair.
+        regions: Start and end pairs for every string token.
+    Returns:
+        Whether the position is covered by a string token.
+    """
+    return any(start <= position < end for start, end in regions)
+
+
+def _comment_blocks(comments, lines):
+    """Group consecutive own-line comments into one logical comment.
+
+    A comment wrapped over several lines is one sentence, so only its last
+    line carries the closing period. Checking each physical line separately
+    reported a violation on every line but the last.
+
+    Args:
+        comments: Comment tokens in source order.
+        lines: Source lines.
+    Returns:
+        Lists of comment tokens, one list per logical comment.
+    """
+    blocks = []
+    previous_row = None
+    previous_own_line = False
+    for token in comments:
+        row, column = token.start
+        own_line = not lines[row - 1][:column].strip()
+        if blocks and own_line and previous_own_line and row == previous_row + 1:
+            blocks[-1].append(token)
+        else:
+            blocks.append([token])
+        previous_row, previous_own_line = row, own_line
+    return blocks
+
+
 def token_findings(source, root, path):
     """Check comments, punctuation, and tokenization.
 
@@ -1191,7 +1301,30 @@ def token_findings(source, root, path):
     """
     results = []
     excluded_comment_lines = leading_comment_lines(source)
-    for line_number, line in enumerate(source.splitlines(), start=1):
+    lines = source.splitlines()
+    # One tokenization pass feeds every check below. The comment rules used to
+    # run as regexes over raw lines, which cannot tell code from string data,
+    # so a type comment quoted inside a string literal was reported as real.
+    tokens = []
+    try:
+        for token in tokenize.generate_tokens(
+            iter(source.splitlines(keepends=True)).__next__
+        ):
+            tokens.append(token)
+    except (tokenize.TokenError, IndentationError) as error:
+        add(
+            results,
+            root,
+            path,
+            ast.Constant(value=None),
+            "tokenization",
+            "violation",
+            f"Tokenization failed: {error}.",
+        )
+    string_regions = [
+        (token.start, token.end) for token in tokens if token.type in STRING_TOKEN_TYPES
+    ]
+    for line_number, line in enumerate(lines, start=1):
         if line_number in excluded_comment_lines:
             continue
         if len(line) > 80:
@@ -1205,40 +1338,12 @@ def token_findings(source, root, path):
                 "Review this line over the Google 80-character limit.",
                 line_number,
             )
-        if TYPE_COMMENT.search(line):
-            add(
-                results,
-                root,
-                path,
-                ast.Constant(value=None),
-                "type-comments",
-                "violation",
-                "Use annotations instead of type comments.",
-                line_number,
-            )
-        if TODO.search(line):
-            add(
-                results,
-                root,
-                path,
-                ast.Constant(value=None),
-                "todo-format",
-                "review",
-                "Use TODO: context - explanation with a traceable context link.",
-                line_number,
-            )
-        if PYLINT.search(line):
-            add(
-                results,
-                root,
-                path,
-                ast.Constant(value=None),
-                "ruff-suppression",
-                "review",
-                "Review whether this Pylint suppression should be replaced with scoped Ruff syntax.",
-                line_number,
-            )
-        if re.search(r"\\\s*$", line) and not line.lstrip().startswith("#"):
+        continuation = re.search(r"\\\s*$", line)
+        if (
+            continuation
+            and not line.lstrip().startswith("#")
+            and not _inside_string((line_number, continuation.start()), string_regions)
+        ):
             add(
                 results,
                 root,
@@ -1249,63 +1354,87 @@ def token_findings(source, root, path):
                 "Prefer implicit line joining.",
                 line_number,
             )
-    try:
-        tokens = tokenize.generate_tokens(
-            iter(source.splitlines(keepends=True)).__next__
-        )
-        for token in tokens:
-            if token.type == tokenize.OP and token.string == ";":
-                add(
-                    results,
-                    root,
-                    path,
-                    token,
-                    "semicolons",
-                    "violation",
-                    "Do not use statement semicolons.",
-                    token.start[0],
-                )
-            if token.type != tokenize.COMMENT:
-                continue
-            text = token.string.lstrip("#").strip()
-            if not text:
-                continue
-            if token.start[0] in excluded_comment_lines:
-                continue
-            if "`" in text or ":class:" in text:
-                add(
-                    results,
-                    root,
-                    path,
-                    token,
-                    "comment-markup",
-                    "violation",
-                    "Comments must not contain backticks or Sphinx class markup.",
-                    token.start[0],
-                )
-            if section_or_fold_comment(text):
-                continue
-            if not text.endswith("."):
-                add(
-                    results,
-                    root,
-                    path,
-                    token,
-                    "comment-punctuation",
-                    "violation",
-                    "Code comments must end with a period.",
-                    token.start[0],
-                )
-    except (tokenize.TokenError, IndentationError) as error:
-        add(
-            results,
-            root,
-            path,
-            ast.Constant(value=None),
-            "tokenization",
-            "violation",
-            f"Tokenization failed: {error}.",
-        )
+    for token in tokens:
+        if token.type == tokenize.OP and token.string == ";":
+            add(
+                results,
+                root,
+                path,
+                token,
+                "semicolons",
+                "violation",
+                "Do not use statement semicolons.",
+                token.start[0],
+            )
+    comments = [
+        token
+        for token in tokens
+        if token.type == tokenize.COMMENT
+        and token.string.lstrip("#").strip()
+        and token.start[0] not in excluded_comment_lines
+    ]
+    for token in comments:
+        text = token.string.lstrip("#").strip()
+        if TYPE_COMMENT.search(token.string):
+            add(
+                results,
+                root,
+                path,
+                token,
+                "type-comments",
+                "violation",
+                "Use annotations instead of type comments.",
+                token.start[0],
+            )
+        if TODO.search(token.string):
+            add(
+                results,
+                root,
+                path,
+                token,
+                "todo-format",
+                "review",
+                "Use TODO: context - explanation with a traceable context link.",
+                token.start[0],
+            )
+        if PYLINT.search(token.string):
+            add(
+                results,
+                root,
+                path,
+                token,
+                "ruff-suppression",
+                "review",
+                "Review whether this Pylint suppression should be replaced with scoped Ruff syntax.",
+                token.start[0],
+            )
+        if "`" in text or ":class:" in text:
+            add(
+                results,
+                root,
+                path,
+                token,
+                "comment-markup",
+                "violation",
+                "Comments must not contain backticks or Sphinx class markup.",
+                token.start[0],
+            )
+    for block in _comment_blocks(comments, lines):
+        last = block[-1]
+        text = last.string.lstrip("#").strip()
+        if section_or_fold_comment(text):
+            continue
+        if not text.endswith("."):
+            add(
+                results,
+                root,
+                path,
+                last,
+                "comment-punctuation",
+                "violation",
+                "Code comments must end with a period.",
+                last.start[0],
+            )
     return results
 
 
@@ -1347,7 +1476,9 @@ def audit(path, root):
             )
         )
     else:
-        visitor = Visitor(root, path, confirmed_class_usages(tree))
+        visitor = Visitor(
+            root, path, confirmed_class_usages(tree), type_alias_bindings(tree)
+        )
         visitor.visit(tree)
         results.extend(visitor.results)
         if ast.get_docstring(tree) is None:
