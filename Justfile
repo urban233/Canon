@@ -119,8 +119,17 @@ validate-plugin:
 test-py39:
     python3 -m unittest discover -s tests -p "*_py39.py" -t . -v
 
+# Static shape check of every eval case's frontmatter -- no model call, no
+# credential, no quota. This is deliberately NOT the same thing as `eval`
+# below: docs/decisions/0003-eval-suite-is-not-a-ci-gate.md bars wiring the
+# billed, model-backed run into CI, and explicitly leaves "everything `just
+# ci` already runs" unaffected. A grader that can never pass should fail a
+# pull request, not a paid run.
+eval-check:
+    bazel test //tests:test_evals_graders
+
 # Everything CI runs. `test-py39` is not here on purpose -- see its comment.
-ci: build test lint fmt-check typecheck lock-check sync-check validate-plugin
+ci: build test lint fmt-check typecheck lock-check sync-check eval-check validate-plugin
 
 # Run Canon's own eval suite against its own plugin: a local, on-demand
 # check of what the model actually does with the instructions Canon

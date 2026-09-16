@@ -36,6 +36,22 @@ load("@rules_python//python:defs.bzl", "py_test")
     )
 ]
 
+# The eval-suite shape checker. `data`, not `deps`: a filegroup of markdown
+# and YAML provides no PyInfo, and nothing here is imported -- the test reads
+# the files as text. It carries both suites, because a grader is just as
+# unpassable in the companion plugin as in this one.
+[
+    py_test(
+        name = src[:-3],
+        srcs = [src, "__init__.py"],
+        data = [
+            "//plugins/canon-companion:eval_sources",
+            "//plugins/claude:eval_sources",
+        ],
+    )
+    for src in glob(["test_evals_*.py"])
+]
+
 [
     py_test(
         name = src[:-3],

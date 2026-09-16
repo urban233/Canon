@@ -1,0 +1,11 @@
+# The eval case files, exposed so //tests can validate their shape
+# statically -- see tests/test_evals_graders.py for why a malformed
+# grader has to be caught here rather than by a paid `claude plugin eval`
+# run. Data only: these are markdown and YAML, never imported, so they
+# travel as `data` on the consuming py_test rather than as `deps`, which
+# would expect a target providing PyInfo.
+filegroup(
+    name = "eval_sources",
+    srcs = glob(["evals/**"]),
+    visibility = ["//tests:__pkg__"],
+)
