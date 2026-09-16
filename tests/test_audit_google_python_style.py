@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import ast
 import importlib.util
+import subprocess
 import sys
 import tempfile
 import unittest
@@ -448,6 +450,123 @@ class Container[dict]:
             finding for finding in findings if finding.rule == "comment-punctuation"
         ]
         self.assertEqual([finding.line for finding in comment_findings], [3])
+
+    def test_colon_leading_section_line_does_not_abort_the_audit(self) -> None:
+        """Survive a reST parameter line inside a Google Args section."""
+        findings = self.audit(
+            '''"""Sample module."""
+
+
+def summarize(rows):
+    """Summarize rows.
+
+    Args:
+        :param rows: Source rows.
+
+    Returns:
+        A summary.
+    """
+    return rows
+'''
+        )
+        self.assertIn("docstring-args", {finding.rule for finding in findings})
+
+    def test_star_args_entries_still_satisfy_required_parameters(self) -> None:
+        """Keep matching starred Args entries to their parameter names."""
+        findings = self.audit(
+            '''"""Sample module."""
+
+
+def summarize(rows, *extras, **options):
+    """Summarize rows.
+
+    Args:
+        rows: Source rows.
+        *extras: Extra rows.
+        **options: Extra options.
+
+    Returns:
+        A summary.
+    """
+    return rows, extras, options
+'''
+        )
+        self.assertEqual(
+            [finding for finding in findings if finding.rule == "docstring-args"], []
+        )
+
+    def test_pattern_node_types_resolve_without_python_310(self) -> None:
+        """Hold the checker to the repository's 3.9 floor for match nodes.
+
+        Structural pattern matching node types do not exist before 3.10, so
+        referencing them directly raised AttributeError on every audited file.
+        """
+        self.assertEqual(
+            CHECKER.MATCH_NAME_PATTERNS,
+            tuple(
+                node_type
+                for node_type in (
+                    getattr(ast, "MatchAs", None),
+                    getattr(ast, "MatchStar", None),
+                )
+                if node_type is not None
+            ),
+        )
+        self.assertEqual(
+            CHECKER.MATCH_MAPPING_PATTERNS,
+            tuple(
+                node_type
+                for node_type in (getattr(ast, "MatchMapping", None),)
+                if node_type is not None
+            ),
+        )
+
+
+class GooglePythonStyleCliTests(unittest.TestCase):
+    """Cover the command line contract Phase A depends on."""
+
+    def run_checker(self, *arguments: str) -> subprocess.CompletedProcess[str]:
+        """Run the checker as a subprocess and capture its result."""
+        return subprocess.run(
+            [sys.executable, str(CHECKER_PATH), *arguments],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+
+    def test_missing_root_is_a_usage_error_rather_than_a_clean_audit(self) -> None:
+        """Reject a root that does not exist."""
+        with tempfile.TemporaryDirectory() as directory:
+            missing = Path(directory) / "absent"
+            result = self.run_checker("--root", str(missing))
+        self.assertEqual(result.returncode, 2)
+        self.assertIn("does not exist", result.stderr)
+
+    def test_file_root_is_a_usage_error_rather_than_a_clean_audit(self) -> None:
+        """Reject a root that points at a file instead of a directory."""
+        result = self.run_checker("--root", str(CHECKER_PATH))
+        self.assertEqual(result.returncode, 2)
+        self.assertIn("must be a directory", result.stderr)
+
+    def test_root_without_python_files_is_a_usage_error(self) -> None:
+        """Reject a root that holds nothing the checker can audit."""
+        with tempfile.TemporaryDirectory() as directory:
+            (Path(directory) / "notes.txt").write_text("text", encoding="utf-8")
+            result = self.run_checker("--root", directory)
+        self.assertEqual(result.returncode, 2)
+        self.assertIn("no Python files", result.stderr)
+
+    def test_clean_root_exits_zero_and_violations_exit_one(self) -> None:
+        """Preserve the pass and fail statuses Phase B loops on."""
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "sample.py"
+            path.write_text('"""Sample module."""\n', encoding="utf-8")
+            clean = self.run_checker("--root", directory)
+            path.write_text("value = 1\n", encoding="utf-8")
+            dirty = self.run_checker("--root", directory)
+        self.assertEqual(clean.returncode, 0)
+        self.assertEqual(dirty.returncode, 1)
+        self.assertIn("module-docstring", dirty.stdout)
 
 
 if __name__ == "__main__":

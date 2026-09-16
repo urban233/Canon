@@ -81,6 +81,21 @@ TYPE_COMMENT = re.compile(r"#\s*type:\s*(?!ignore\b)")
 TODO = re.compile(r"#\s*TODO(?!\s*:\s*\S+\s+-\s+\S+)", re.IGNORECASE)
 PYLINT = re.compile(r"#\s*pylint\s*:", re.IGNORECASE)
 SECTION = re.compile(r"^(Args|Raises|Returns|Yields):$")
+# Structural pattern matching landed in 3.10, but this checker runs on the
+# user's own python3 and is held to the repository's 3.9 floor (see
+# pyproject.toml), so the node types are resolved defensively the same way
+# `type_params` is below. An empty tuple makes every isinstance check false,
+# which is correct on 3.9: a `match` statement cannot parse there at all.
+MATCH_NAME_PATTERNS = tuple(
+    node_type
+    for node_type in (getattr(ast, "MatchAs", None), getattr(ast, "MatchStar", None))
+    if node_type is not None
+)
+MATCH_MAPPING_PATTERNS = tuple(
+    node_type
+    for node_type in (getattr(ast, "MatchMapping", None),)
+    if node_type is not None
+)
 
 
 def leading_comment_lines(source):
@@ -500,9 +515,9 @@ def _scope_bindings(node):
             )
         elif isinstance(current, ast.ExceptHandler) and current.name:
             names.add(current.name)
-        elif isinstance(current, (ast.MatchAs, ast.MatchStar)) and current.name:
+        elif isinstance(current, MATCH_NAME_PATTERNS) and current.name:
             names.add(current.name)
-        elif isinstance(current, ast.MatchMapping) and current.rest:
+        elif isinstance(current, MATCH_MAPPING_PATTERNS) and current.rest:
             names.add(current.rest)
         for child in ast.iter_child_nodes(current):
             walk(child)
@@ -677,7 +692,10 @@ def _doc_sections(lines):
             continue
         if current is None:
             continue
-        entry = re.match(r"^\s*([^:]+):\s*(.*)$", line)
+        # The name must start with a non-space character, otherwise a
+        # colon-leading line inside a section (a leftover reST `:param x:`,
+        # say) matches with the indentation alone as its name.
+        entry = re.match(r"^\s*([^:\s][^:]*):\s*(.*)$", line)
         if entry:
             current.append([entry.group(1).strip(), entry.group(2).strip()])
         elif line.strip() and current_name in {"Returns", "Yields"} and not current:
@@ -713,7 +731,11 @@ def _check_section_entries(results, root, path, node, sections, section, require
         )
         return
     if required:
-        found = {entry[0].lstrip("*").split()[0] for entry in entries}
+        found = set()
+        for entry in entries:
+            name = entry[0].lstrip("*").split()
+            if name:
+                found.add(name[0])
         missing = [name for name in required if name not in found]
         if missing:
             add(
@@ -1348,16 +1370,26 @@ def main():
     """Emit JSON-lines findings and return nonzero for violations.
 
     Returns:
-        Process exit status.
+        Process exit status: 0 when clean, 1 when any violation was found.
+        An unusable --root exits 2 through argparse instead.
     """
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--root", type=pathlib.Path, default=pathlib.Path.cwd())
     root = parser.parse_args().root.resolve()
+    # The caller derives --root from pyproject.toml, setup.py or src/, so a bad
+    # guess is the expected failure mode. Every one below used to scan nothing
+    # and exit 0, which reads as a clean audit rather than as a missed one.
+    if not root.exists():
+        parser.error(f"--root does not exist: {root}")
+    if not root.is_dir():
+        parser.error(f"--root must be a directory, not a file: {root}")
     paths = sorted(
         path
         for path in root.rglob("*.py")
         if not any(part.lower() in EXCLUDED for part in path.relative_to(root).parts)
     )
+    if not paths:
+        parser.error(f"--root contains no Python files to check: {root}")
     findings = [finding for path in paths for finding in audit(path, root)]
     for finding in findings:
         print(json.dumps(dataclasses.asdict(finding), sort_keys=True))
