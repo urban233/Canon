@@ -14,7 +14,7 @@ MODULE.bazel.lock
 .canon/hooks/
 
 # A `claude plugin eval` run's own output -- never committed.
-plugins/claude/evals/results/
+plugins/*/evals/results/
 
 # A Codex contributor's own local project config (e.g. the mcp_servers
 # fallback plugins/codex/README.md documents) -- personal, per-checkout,

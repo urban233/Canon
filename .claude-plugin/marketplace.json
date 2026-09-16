@@ -18,6 +18,17 @@
       },
       "license": "BSD-3-Clause",
       "homepage": "https://github.com/urban233/Canon"
+    },
+    {
+      "name": "canon-companion",
+      "source": "canon-companion",
+      "description": "Opt-in Canon companion: explicit code-quality and style skills.",
+      "version": "0.0.1",
+      "author": {
+        "name": "Martin Urban, Hannah Kullik"
+      },
+      "license": "BSD-3-Clause",
+      "homepage": "https://github.com/urban233/Canon"
     }
   ]
 }

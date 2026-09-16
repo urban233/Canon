@@ -39,3 +39,27 @@ jobs:
       # install above still runs first, which `validate-plugin` (the last
       # recipe `ci` runs) needs.
       - run: just ci
+
+  # The companion style checker runs on the developer's own python3, not on a
+  # resolved Bazel toolchain, so it is held to the 3.9 floor the README and
+  # pyproject.toml advertise. `just ci` above cannot cover this: Bazel pins a
+  # hermetic 3.13, which cannot see a 3.10-only attribute reference. Its own
+  # job rather than a step, because it needs a different interpreter than the
+  # Bazel job. The command itself stays in the Justfile for the same reason
+  # the recipe list does.
+  python39-floor:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7.0.1
+
+      - uses: extractions/setup-just@v4.0.0
+
+      - uses: actions/setup-python@v7.0.0
+        with:
+          python-version: "3.9"
+
+      # Turns a skipped floor check into a failure. Without it this job
+      # would report green on any interpreter, having verified nothing.
+      - run: just test-py39
+        env:
+          CANON_REQUIRE_PY39: "1"

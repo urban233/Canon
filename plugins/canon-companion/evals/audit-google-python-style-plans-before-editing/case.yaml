@@ -1,0 +1,5 @@
+schema_version: "1.1"
+name: audit-google-python-style-plans-before-editing
+tags: [audit-google-python-style, code-quality]
+context:
+  scaffold_script: fixture.sh

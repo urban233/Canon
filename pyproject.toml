@@ -14,6 +14,11 @@ line-length = 88
 # failing silently on an older machine. See docs/plan.md.
 [tool.ruff.per-file-target-version]
 "plugins/*/hooks/*.py" = "py39"
+# The companion style checker ships beside its skill and runs on the user's
+# own python3 too, so it is held to the same floor. Its 3.9-only tests are
+# the ones CI runs on a real 3.9 interpreter (see .github/workflows/ci.yml).
+"plugins/canon-companion/skills/*/scripts/*.py" = "py39"
+"tests/*_py39.py" = "py39"
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "UP", "B"]
@@ -27,6 +32,7 @@ project-includes = ["plugins", "tests", "src"]
 project-excludes = [
     "**/__pycache__",
     "**/*.pyc",
+    "plugins/canon-companion/skills/audit-google-python-style/scripts/check_google_rules.py",
     "src/canon_mcp/canon_mcp/server.py",
 ]
 # 3.9, matching the hooks floor: canon_mcp's pure-logic modules are

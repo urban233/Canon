@@ -20,6 +20,22 @@ load("@rules_python//python:defs.bzl", "py_test")
     for src in glob(["test_claude_hooks_*.py"])
 ]
 
+# *_py39.py is excluded on purpose, not by oversight. Bazel pins a hermetic
+# 3.13 (see MODULE.bazel), so a py_test target for it would run the 3.9 floor
+# checks on 3.13 and report PASSED -- which reads as proof of a floor it never
+# touched. It runs via `just test-py39` and the python39-floor CI job instead.
+[
+    py_test(
+        name = src[:-3],
+        srcs = [src, "__init__.py"],
+        data = ["//plugins/canon-companion:py_sources"],
+    )
+    for src in glob(
+        ["test_audit_google_python_style*.py"],
+        exclude = ["*_py39.py"],
+    )
+]
+
 [
     py_test(
         name = src[:-3],
