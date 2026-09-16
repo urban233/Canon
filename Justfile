@@ -109,7 +109,17 @@ validate-plugin:
     claude plugin validate --strict ./plugins/claude
     claude plugin validate --strict ./plugins/canon-companion
 
-# Everything CI runs.
+# The companion style checker's tests on whatever `python3` is on PATH,
+# outside Bazel on purpose. Bazel pins a hermetic 3.13 (see MODULE.bazel),
+# so nothing it runs can see a 3.10-only attribute reference such as
+# ast.MatchAs -- which is how that bug survived review here. Point a 3.9
+# interpreter at this to check the floor pyproject.toml advertises; CI runs
+# it on a real 3.9 in its own job. Deliberately not part of `ci`: under
+# Bazel's 3.13 it would pass without testing the thing it exists to test.
+test-py39:
+    python3 -m unittest discover -s tests -p "*_py39.py" -t . -v
+
+# Everything CI runs. `test-py39` is not here on purpose -- see its comment.
 ci: build test lint fmt-check typecheck lock-check sync-check validate-plugin
 
 # Run Canon's own eval suite against its own plugin: a local, on-demand
