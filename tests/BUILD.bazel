@@ -26,7 +26,7 @@ load("@rules_python//python:defs.bzl", "py_test")
         srcs = [src, "__init__.py"],
         data = ["//plugins/canon-companion:py_sources"],
     )
-    for src in glob(["test_audit_google_python_style.py"])
+    for src in glob(["test_audit_google_python_style*.py"])
 ]
 
 [

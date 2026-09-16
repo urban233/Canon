@@ -34,3 +34,20 @@ jobs:
       - run: just typecheck
       - run: just lock-check
       - run: just validate-plugin
+
+  # The companion style checker runs on the developer's own python3, not on a
+  # resolved Bazel toolchain, so it is held to the 3.9 floor the README and
+  # pyproject.toml advertise. Bazel pins a hermetic 3.13, which cannot see a
+  # 3.10-only attribute reference, so this one job runs the checker's 3.9-safe
+  # tests on a real 3.9 interpreter.
+  python39-floor:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7.0.1
+
+      - uses: actions/setup-python@v6.0.0
+        with:
+          python-version: "3.9"
+
+      - name: Run the companion checker's 3.9 tests
+        run: python -m unittest discover -s tests -p "*_py39.py" -t . -v
