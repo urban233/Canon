@@ -136,6 +136,21 @@ class DestructiveCommandTests(unittest.TestCase):
         one."""
         self._assert_denied("gh pr review 42\ngh pr review 43 --comment -b ok")
 
+    def test_force_push_across_a_line_continuation(self) -> None:
+        """A backslash-newline is an ordinary shell line continuation,
+        not a segment boundary -- this repo's own eval fixtures write
+        multi-line `git` invocations exactly this way. Regression test
+        for the newline-segment-boundary fix overshooting onto the
+        five §07 patterns it wasn't targeting."""
+        self._assert_denied("git push \\\n  --force origin main")
+
+    def test_force_push_quoted_flag_with_no_whitespace(self) -> None:
+        """A quoted flag with no whitespace inside it (`"--force"`) is a
+        single token the shell hands to `git` with the quotes stripped
+        -- indistinguishable from the same flag written bare, and must
+        still be denied."""
+        self._assert_denied('git push origin "--force"')
+
     def test_safe_push_is_allowed(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -261,12 +276,23 @@ class NearMissTests(unittest.TestCase):
     def test_pr_review_help_short_flag(self) -> None:
         self._assert_allowed("gh pr review -h")
 
+    def test_merge_abort_quoted_flag_is_still_recovery(self) -> None:
+        """`_blank_quoted_spans` only blanks a quoted span that contains
+        whitespace -- `"--abort"` has none, so it must still read as
+        the recovery flag it is, quoted or not."""
+        self._assert_allowed('git merge "--abort"')
+
+    def test_pr_review_comment_quoted_flag_is_still_read_only(self) -> None:
+        self._assert_allowed('gh pr review 42 "--comment" -b x')
+
 
 class QuotedProseTests(unittest.TestCase):
-    """A destructive verb mentioned inside a quoted argument is prose,
-    not the command being run -- `_blank_quoted_spans` keeps it from
-    feeding either the destructive-pattern check or the `git commit`
-    check. See git_guard.py's module docstring for why.
+    """A destructive verb mentioned inside a quoted span *that contains
+    whitespace* is prose, not the command being run -- `_blank_quoted_
+    spans` keeps it from feeding the destructive-pattern check. (A
+    quoted span with no whitespace in it is a flag, not prose, and is
+    covered separately in `NearMissTests`/`DestructiveCommandTests`.)
+    See git_guard.py's module docstring for why.
     """
 
     def _assert_allowed(self, command: str) -> None:
@@ -366,6 +392,28 @@ class AttributionStrippingTests(unittest.TestCase):
             _init_repo(root)
             output = _invoke_main(_payload(root, 'git commit -m "fix: thing"'))
             self.assertEqual(output, "")
+
+    def test_strips_trailer_from_a_bash_dash_c_commit(self) -> None:
+        """Regression test: the `git commit` detection must run against
+        the *original* command, not the quote-blanked one -- the whole
+        `bash -c "git commit ..."` argument contains whitespace, so
+        blanking would hide the words `git commit` from that check
+        entirely and this commit's attribution would reach the repo
+        unstripped."""
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            _init_repo(root)
+            command = (
+                "bash -c \"git commit -m 'fix: thing\n\n"
+                "Co-Authored-By: Claude Sonnet 5 <noreply@anthropic.com>\n"
+                "done'\""
+            )
+            output = _invoke_main(_payload(root, command))
+            payload = json.loads(output)
+            hook_output = payload["hookSpecificOutput"]
+            self.assertEqual(hook_output["permissionDecision"], "allow")
+            self.assertNotIn("Co-Authored-By", hook_output["updatedInput"]["command"])
+            self.assertIn("fix: thing", hook_output["updatedInput"]["command"])
 
 
 class MiscTests(unittest.TestCase):
