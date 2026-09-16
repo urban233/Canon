@@ -58,4 +58,8 @@ jobs:
         with:
           python-version: "3.9"
 
+      # Turns a skipped floor check into a failure. Without it this job
+      # would report green on any interpreter, having verified nothing.
       - run: just test-py39
+        env:
+          CANON_REQUIRE_PY39: "1"

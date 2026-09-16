@@ -2,15 +2,24 @@
 
 The checker runs on whatever python3 the developer has, not on a resolved
 Bazel toolchain, so it is held to the same 3.9 floor as the hooks. This file
-stays free of 3.10-and-later syntax on purpose: CI runs it on a real 3.9
-interpreter, where referencing a node type such as ast.MatchAs directly used
-to raise AttributeError on every audited file.
+stays free of 3.10-and-later syntax on purpose.
+
+Run it with `just test-py39` on a real 3.9 interpreter, which is what the
+python39-floor CI job does. It is deliberately NOT a Bazel test target: Bazel
+pins a hermetic 3.13 (see MODULE.bazel), so a green Bazel run would say
+nothing about the floor while looking exactly like proof of it. The tests
+that depend on the interpreter skip rather than pass when it is not 3.9, so
+running this on 3.13 by hand cannot be misread either.
+
+The version-independent half of this check -- that no 3.10-and-later syntax
+reaches the checker at all -- lives in test_audit_google_python_style_rules.py
+instead, so the Bazel suite still guards it on every run.
 """
 
 from __future__ import annotations
 
-import ast
 import importlib.util
+import os
 import sys
 import tempfile
 import unittest
@@ -87,13 +96,22 @@ def load_checker():
     return module
 
 
-class Python39FloorTests(unittest.TestCase):
-    """Cover what breaks first when the 3.9 floor is not honoured."""
+ON_THE_FLOOR = sys.version_info[:2] == (3, 9)
+NOT_ON_THE_FLOOR = (
+    "needs a real 3.9 interpreter; this ran on "
+    + ".".join(str(part) for part in sys.version_info[:3])
+    + " -- run `just test-py39` with 3.9 on PATH"
+)
 
-    def test_the_checker_source_parses_under_39(self):
-        """Keep 3.10-and-later syntax out of the checker itself."""
-        source = CHECKER_PATH.read_text(encoding="utf-8")
-        ast.parse(source, feature_version=(3, 9))
+
+@unittest.skipUnless(ON_THE_FLOOR, NOT_ON_THE_FLOOR)
+class Python39FloorTests(unittest.TestCase):
+    """Cover what breaks first when the 3.9 floor is not honoured.
+
+    Skipped wholesale off 3.9. Passing these on 3.13 would prove nothing
+    about the floor, and a silent pass is what let a 3.10-only attribute
+    reference reach review in the first place.
+    """
 
     def test_the_checker_imports_and_audits_without_raising(self):
         """Audit representative sources on whichever interpreter runs this."""
@@ -110,16 +128,35 @@ class Python39FloorTests(unittest.TestCase):
         self.assertIn("no-wildcard-imports", reported["dirty.py"])
         self.assertEqual(reported["comprehensions.py"], set())
 
-    def test_structural_pattern_node_types_resolve_on_any_version(self):
-        """Resolve the 3.10-only match node types without AttributeError."""
+    def test_structural_pattern_node_types_resolve_to_nothing(self):
+        """Resolve the 3.10-only match node types without AttributeError.
+
+        On 3.9 these names do not exist, so the checker must resolve them to
+        an empty tuple: every isinstance check against it is then false,
+        which is correct because a match statement cannot parse here at all.
+        """
         checker = load_checker()
         for name in ("MATCH_NAME_PATTERNS", "MATCH_MAPPING_PATTERNS"):
             patterns = getattr(checker, name)
             self.assertIsInstance(patterns, tuple)
-            if sys.version_info < (3, 10):
-                self.assertEqual(patterns, ())
-            else:
-                self.assertTrue(patterns)
+            self.assertEqual(patterns, ())
+
+
+class FloorEnforcementTests(unittest.TestCase):
+    """Refuse to let the floor check pass by skipping."""
+
+    def test_the_interpreter_is_39_where_the_floor_is_required(self):
+        """Fail, rather than skip, in a job that exists to check the floor.
+
+        Skipping is the right answer for a developer without 3.9 installed.
+        It is the wrong answer for the python39-floor CI job, which would
+        otherwise report green having verified nothing -- the same silent
+        pass this whole file exists to prevent. That job sets
+        CANON_REQUIRE_PY39, which turns the skip into a failure.
+        """
+        if not os.environ.get("CANON_REQUIRE_PY39"):
+            self.skipTest("set CANON_REQUIRE_PY39=1 to require 3.9 here")
+        self.assertTrue(ON_THE_FLOOR, NOT_ON_THE_FLOOR)
 
 
 if __name__ == "__main__":

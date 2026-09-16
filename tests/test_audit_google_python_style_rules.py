@@ -781,6 +781,21 @@ class RuleMatrixTests(unittest.TestCase):
         self.assertEqual(vocabulary - set(RULE_CASES) - {"source-read"}, set())
 
 
+class PythonFloorSyntaxTests(unittest.TestCase):
+    """Guard the 3.9 floor in the half that does not need a 3.9 interpreter."""
+
+    def test_the_checker_source_carries_no_syntax_newer_than_39(self) -> None:
+        """Keep 3.10-and-later syntax out of the checker itself.
+
+        This runs on any interpreter, so the Bazel suite guards it on every
+        run. The half that does need a real 3.9 interpreter -- a name such as
+        ast.MatchAs that parses everywhere but only exists from 3.10 -- lives
+        in test_audit_google_python_style_py39.py and runs in its own CI job.
+        """
+        source = CHECKER_PATH.read_text(encoding="utf-8")
+        ast.parse(source, feature_version=(3, 9))
+
+
 class CleanCorpusTests(unittest.TestCase):
     """Hold the checker silent on code that is already correct."""
 
