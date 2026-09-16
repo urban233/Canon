@@ -8,11 +8,20 @@ only ever reads whether a verification signal exists, never writes
 `save_config`/`suggest_verify_command` are not copied over. See
 _git.py's module docstring for why hooks and this package don't share a
 dependency edge.
+
+`shell_metacharacter` and `verify_command_problem` *are* copied over,
+byte-for-byte in logic if not in surrounding comments: `evidence.py`'s
+`_run_local_check` runs the configured command the same way
+`stop.py`'s `_run_verification` does -- `shlex.split`, no shell -- so it
+has the identical compound-command bug and needs the identical guard
+against it. Keep the two in sync by hand; nothing enforces that but this
+comment and the pull request that adds a change to one of them.
 """
 
 from __future__ import annotations
 
 import json
+import shlex
 from pathlib import Path
 from typing import Any
 
@@ -73,6 +82,124 @@ def resolve_verify_command(
         return None
     verify = config.get("verify")
     return verify.strip() if isinstance(verify, str) and verify.strip() else None
+
+
+def verify_command_source(
+    root: Path, branch: str | None, config: dict[str, Any] | None
+) -> str:
+    """Where the value `resolve_verify_command` returns actually came
+    from: the branch's plan header if it named one, else
+    `.canon/config.json`.
+
+    Duplicated from plugins/claude/hooks/_config.py. `evidence.py`'s
+    `build_evidence` uses this to name the file a human should actually
+    go fix when reporting a configuration fault -- naming
+    `.canon/config.json` unconditionally would send them to edit the
+    wrong file for a command that came from a plan header instead.
+    """
+    if branch:
+        plan = read_plan_file(root, f"{_PLANS_DIR_RELATIVE}/{branch}.md")
+        if plan is not None:
+            override = str(plan["header"].get("verify", "")).strip()
+            if override:
+                return f"{_PLANS_DIR_RELATIVE}/{branch}.md"
+    return _CONFIG_PATH_RELATIVE
+
+
+_SHELL_METACHARACTER_PUNCTUATION = "();<>|&`$\n"
+_SHELL_METACHARACTER_CHARS = frozenset("&;<>|`\n")
+
+
+def shell_metacharacter(command: str) -> str | None:
+    """The first shell metacharacter `command` contains outside of a
+    quoted argument, or None if it contains none.
+
+    Duplicated from plugins/claude/hooks/_config.py -- see that copy's
+    docstring for the full reasoning: why `shlex.split` alone silently
+    mishandles `&&`, `||`, `|`, `;`, a newline, `>`, `<`, a backtick,
+    and `$(`; how "every character in a token is an operator character"
+    (not "contains one") is what tells an operator from the identical
+    character sitting quoted inside an argument like `pytest -k "a and
+    b"` or `just test --flag='a|b'`, and what it takes to also catch a
+    lone `&`, `>>`, `&>`-style combined redirects, and an operator
+    sitting after a `#` (which `shlex.shlex` treats as a comment by
+    default, but `shlex.split` -- what actually runs the command --
+    does not); why `$(` needs its own `startswith` check, including the
+    one case that check is conservative about; and why a *wholly
+    quoted* argument made only of operator characters (`cmd "|"`, `cmd
+    '&&'`) is rejected the same as a bare operator would be -- a second,
+    deliberate over-rejection in the same family as `$(`'s, kept because
+    it fails in the safe direction and the alternative is re-deriving
+    shlex's own quote tracking by hand.
+    """
+    lexer = shlex.shlex(
+        command, posix=True, punctuation_chars=_SHELL_METACHARACTER_PUNCTUATION
+    )
+    lexer.whitespace_split = True
+    # Keep "\n" out of whitespace so it surfaces as punctuation instead of
+    # silently acting as an ordinary token separator (see the docstring).
+    lexer.whitespace = " \t\r"
+    # Match what `shlex.split` actually does at verification time -- see
+    # the docstring's "commenters" paragraph.
+    lexer.commenters = ""
+    try:
+        tokens = list(lexer)
+    except ValueError:
+        return None
+    for index, token in enumerate(tokens):
+        if token and all(
+            character in _SHELL_METACHARACTER_CHARS for character in token
+        ):
+            return token
+        if token.startswith("$("):
+            return "$("
+        # A "$" and a "(" only stay as two tokens when whitespace
+        # separates them (`$ (...)`); contiguous `$(...)` already starts
+        # a token with "$(" and is caught above. This is the rare
+        # fallback for the spaced-out form.
+        if token == "$" and tokens[index + 1 : index + 2] == ["("]:
+            return "$("
+    return None
+
+
+def verify_command_problem(command: str) -> str | None:
+    """Why `command` cannot be run the way this server runs it --
+    directly, via `shlex.split`, with no shell -- or None when it can.
+
+    Duplicated from plugins/claude/hooks/_config.py; used by
+    `evidence.py`'s `build_evidence` before it ever calls
+    `_run_local_check`, so a `.canon/config.json` fault is reported as
+    exactly that -- `green: None` with an explanatory `message`, the
+    same shape already used for "not configured yet" -- rather than as
+    `green: False`, which `ship.py`'s `_evidence_reason` reads as "the
+    configured verification failed."
+    """
+    try:
+        argv = shlex.split(command)
+    except ValueError as exc:
+        return f"could not parse this command: {exc}"
+    if not argv:
+        return "this command is empty"
+    metacharacter = shell_metacharacter(command)
+    if metacharacter is None:
+        return None
+    # Describes the character set `shell_metacharacter` checks against,
+    # not an enumerated list of tokens -- see the sibling docstring in
+    # plugins/claude/hooks/_config.py for why an earlier, token-listing
+    # version of this message stopped matching what the detector
+    # actually catches once it grew past exact-token matching.
+    return (
+        f"this command contains `{metacharacter}`, which Canon can't run "
+        "as configured -- it runs the configured command directly, with "
+        "no shell, so anything built from `&`, `;`, `|`, `<`, `>`, a "
+        "backtick, or a newline -- `&&`, `||`, a pipe, a `;`-separated "
+        "sequence, a redirection such as `>`, `>>`, or `2>&1` -- plus "
+        "`$(`, is refused rather than silently handed to the first "
+        "program as a literal argument. If the real answer is a "
+        "sequence, wrap it in a recipe or script (a Justfile recipe, an "
+        "npm script, a shell script committed to the repo) and name that "
+        "single command instead."
+    )
 
 
 _VALID_MODES = {"pair", "solo", "async"}
