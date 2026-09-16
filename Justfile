@@ -39,7 +39,7 @@ lock-check:
 # docstrings for what's shared and why. Neither plugin's copy is ever
 # hand-edited; fix the one canonical copy under src/canon_hooks and run
 # this to propagate it.
-_SHARED_HOOK_FILES := "_common.py _config.py capture_review.py check_scope.py git_guard.py plan_gate.py plan_header.py session_start.py stop.py"
+_SHARED_HOOK_FILES := "_common.py _config.py capture_review.py check_scope.py fast_check.py git_guard.py plan_gate.py plan_header.py session_start.py stop.py"
 
 # Vendor src/canon_hooks/*.py into both plugins/*/hooks -- a hook runs via
 # bare `python3` with only its own directory on sys.path, so it cannot

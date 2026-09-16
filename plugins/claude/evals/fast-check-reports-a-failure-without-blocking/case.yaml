@@ -1,0 +1,5 @@
+schema_version: "1.1"
+name: fast-check-reports-a-failure-without-blocking
+tags: [fast-check]
+context:
+  scaffold_script: fixture.sh

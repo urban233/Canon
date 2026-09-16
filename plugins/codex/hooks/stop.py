@@ -63,8 +63,6 @@ healthy session, which is why it is a fallback rather than the mechanism.
 
 from __future__ import annotations
 
-import shlex
-import subprocess
 from pathlib import Path
 from typing import Any
 
@@ -73,7 +71,6 @@ import _config
 
 _MAX_CONSECUTIVE_REFUSALS = 3
 _VERIFY_TIMEOUT_SECONDS = 300
-_OUTPUT_TAIL_CHARS = 4000
 
 _PROMPTED_MARKER_NAME = "verify_prompted"
 _CONFIG_FAULT_MARKER_NAME = "verify_config_fault_prompted"
@@ -213,57 +210,6 @@ def _configuration_fault_reason(command: str, source: str, detail: str) -> str:
     )
 
 
-def _run_verification(root: Path, command: str) -> tuple[bool, str, bool]:
-    """Run `command` with no shell and report the result.
-
-    Returns `(passed, detail, configuration_fault)`. `configuration_fault`
-    is True for the two ways this can go wrong that have nothing to do
-    with whether the repository's checks pass -- the command could not be
-    parsed at all, or the named binary is not on `PATH` (`OSError`,
-    typically `FileNotFoundError`) -- and False for a command that ran
-    and either timed out or exited non-zero. `main` uses the flag to keep
-    a configuration fault from being reported, or counted against the
-    refusal budget, as though it were a red run; see
-    `_configuration_fault_reason`.
-
-    The compound-command case -- `ruff check . && pytest` becoming
-    `['ruff', 'check', '.', '&&', 'pytest']` -- is caught earlier, by
-    `_config.verify_command_problem`, before this function is ever
-    called; the `ValueError` branch here remains as the same defense in
-    depth `_config.shell_metacharacter`'s own docstring describes, for a
-    malformed command that slips past that check some other way (for
-    instance an unbalanced quote, which is a parse failure rather than a
-    metacharacter).
-    """
-    try:
-        argv = shlex.split(command)
-    except ValueError as exc:
-        return False, f"Could not parse the configured verify command: {exc}", True
-    if not argv:
-        return False, "The configured verify command is empty.", True
-    try:
-        completed = subprocess.run(
-            argv,
-            cwd=root,
-            capture_output=True,
-            text=True,
-            timeout=_VERIFY_TIMEOUT_SECONDS,
-            check=False,
-        )
-    except subprocess.TimeoutExpired:
-        return False, f"`{command}` timed out after {_VERIFY_TIMEOUT_SECONDS}s.", False
-    except OSError as exc:
-        return False, f"Could not run `{command}`: {exc}", True
-    if completed.returncode == 0:
-        return True, "", False
-    output = (completed.stdout or "") + (completed.stderr or "")
-    return (
-        False,
-        f"`{command}` exited {completed.returncode}:\n{output[-_OUTPUT_TAIL_CHARS:]}",
-        False,
-    )
-
-
 def _handle_configuration_fault(
     root: Path,
     state_dir: Path | None,
@@ -329,7 +275,12 @@ def main() -> None:
         )
         return
 
-    passed, detail, configuration_fault = _run_verification(root, command)
+    result = _common.run_command(root, command, _VERIFY_TIMEOUT_SECONDS)
+    passed, detail, configuration_fault = (
+        result.passed,
+        result.detail,
+        result.configuration_fault,
+    )
     if passed:
         _write_refusal_count(state_dir, 0)
         _common.log_decision(root, "stop.py", "allow", reason=f"`{command}` passed")

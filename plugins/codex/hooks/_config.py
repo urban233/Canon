@@ -398,6 +398,37 @@ def verify_command_problem(command: str) -> str | None:
     )
 
 
+def fast_check_command(config: dict[str, Any] | None) -> str | None:
+    """The fast command that should pass after an edit, or None.
+
+    docs/plan.md §11 describes three quality layers at three latencies,
+    and this is the first of them: cheap, immediate, and with no
+    authority at all. `verify` answers "can this turn end?" and belongs
+    to the `Stop` gate; `check` answers "is the file I just wrote
+    obviously wrong?" and belongs to `fast_check.py`. A repository names
+    a formatter, a linter and a typechecker here -- never its tests,
+    which is what `verify` is for and what makes that gate slow enough to
+    be worth running only once per turn.
+
+    Optional, and unlike `verify` its absence does **not** make Canon
+    inert. §07's precondition is about being able to check the agent's
+    word before a turn ends; a repository with no fast check is simply a
+    repository where layer one does nothing, which is exactly what Canon
+    did before this existed.
+
+    Canon does not infer this. `suggest_verify_command` exists because
+    §07 asks Canon to propose a verification command on first run, and
+    that proposal is confirmed by a human before it is written. There is
+    no equivalent first-run question here, so a wrong guess would be
+    wrong-but-plausible with nobody asked -- the failure §07 names. A
+    repository that wants layer one says so.
+    """
+    if config is None:
+        return None
+    command = config.get("check")
+    return command.strip() if isinstance(command, str) and command.strip() else None
+
+
 def suggest_verify_command(root: Path) -> str | None:
     """Infer a plausible "verify" command for the first-run proposal.
 
