@@ -5,14 +5,35 @@ guard and commit-trailer stripper.
 Two independent jobs, per docs/plan.md §07's "Destructive git run
 casually" spine-table row and §12's authorship section:
 
-1. A short, fixed list of destructive git operations -- exactly the
-   five §07 names (force push, hard reset, forced clean, branch
-   deletion, merge) -- are denied outright, always, with no exception
-   and no `ask`: these are the operations §12's table marks "never" for
-   Canon regardless of interaction mode. `rebase` onto a shared branch
-   and `tag` deletion are in §12's broader table too, but both need a
-   "is this actually shared" judgement this hook doesn't make, so
-   they're left out rather than guessed at.
+1. A short, fixed list of destructive operations -- the five §07 names
+   (force push, hard reset, forced clean, branch deletion, merge) plus
+   four `gh pr` operations -- are denied outright, always, with no
+   exception and no `ask`: these are the operations §12's table marks
+   "never" for Canon regardless of interaction mode. `rebase` onto a
+   shared branch and `tag` deletion are in §12's broader table too, but
+   both need a "is this actually shared" judgement this hook doesn't
+   make, so they're left out rather than guessed at.
+
+   §12's table calls merging or closing a pull request "the only real
+   gate in the whole system," and separately says posting an
+   *approving* review is never Canon's -- but until now that lived only
+   as prose in the ship skill, which §07 explicitly says the spine must
+   not depend on the model remembering. `gh pr merge` (any flags --
+   `--squash`, `--rebase`, `--admin`, `--auto` all still open with the
+   literal words `pr merge`) and `gh pr close` are denied outright.
+   `gh pr review --approve` (and its short form `-a`, confirmed against
+   `gh pr review --help` rather than guessed) is denied the same way.
+   A bare `gh pr review` -- no `--approve`, `--comment`/`-c`, or
+   `--request-changes`/`-r` -- is denied too: unlike the git patterns
+   above, this one is a deliberate false-positive risk rather than a
+   loose regex accident. `gh pr review` with no verdict flag is
+   `gh`'s own interactive path to any of the three verdicts, including
+   approval, and a command that reaches for that path has no legitimate
+   non-interactive use Canon needs to allow -- an automated caller
+   always has a verdict in mind and can name it. `gh pr review
+   --comment` and `--request-changes` (and their short forms `-c`/
+   `-r`) are the read-and-reply loop §12 says Canon needs, and are left
+   untouched.
 
    Each pattern is written to match the destructive operation and
    nothing adjacent to it. That cuts both ways: a false negative here
@@ -20,8 +41,12 @@ casually" spine-table row and §12's authorship section:
    is a `deny` with no `ask` and no override, against a command the
    developer had every right to run -- and the two commands most easily
    caught by a loose pattern, `git merge-base` and a `HEAD:refs/...`
-   refspec, are both read-only or routine. The tests name every
-   near-miss explicitly for that reason.
+   refspec, are both read-only or routine. `gh pr create`, `gh pr
+   view/list/diff/checkout/status/comment`, and every `gh issue ...`
+   command are the equivalent near-misses for the new patterns -- none
+   of them contain the literal `pr merge`, `pr close`, or an
+   unaccompanied `pr review`. The tests name every near-miss explicitly
+   for that reason.
 2. `git commit` commands carrying a `Co-Authored-By:` trailer have it
    stripped via `updatedInput` before the commit runs -- the mechanised
    half of §12's authorship guidance ("the git guard, which is already
@@ -94,6 +119,34 @@ _DESTRUCTIVE_PATTERNS = [
             rf"(?!{_NON_DELIMITER}--(abort|quit|continue)\b)"
         ),
         "a merge",
+    ),
+    (
+        # No flag check needed: every accepted form (`--squash`,
+        # `--rebase`, `--merge`, `--admin`, `--auto`, or none at all)
+        # still contains the literal `pr merge`.
+        re.compile(r"\bgh\s+pr\s+merge\b"),
+        "a pull request merge",
+    ),
+    (
+        re.compile(r"\bgh\s+pr\s+close\b"),
+        "a pull request close",
+    ),
+    (
+        re.compile(rf"\bgh\s+pr\s+review\b{_NON_DELIMITER}(--approve\b|-a\b)"),
+        "an approving pull request review",
+    ),
+    (
+        # The bare form: no `--approve`/`-a`, `--comment`/`-c`, or
+        # `--request-changes`/`-r` anywhere in this segment. This is
+        # `gh`'s own interactive path to any of the three verdicts --
+        # see the module docstring for why an automated caller is
+        # expected to always name one instead.
+        re.compile(
+            rf"\bgh\s+pr\s+review\b"
+            rf"(?!{_NON_DELIMITER}(--approve\b|-a\b|--comment\b|-c\b"
+            rf"|--request-changes\b|-r\b))"
+        ),
+        "an unflagged pull request review (it could end up approving)",
     ),
 ]
 

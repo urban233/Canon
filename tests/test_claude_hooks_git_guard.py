@@ -92,6 +92,43 @@ class DestructiveCommandTests(unittest.TestCase):
     def test_remote_branch_delete_via_empty_refspec(self) -> None:
         self._assert_denied("git push origin :feature/x")
 
+    def test_pr_merge(self) -> None:
+        self._assert_denied("gh pr merge 42")
+
+    def test_pr_merge_no_args(self) -> None:
+        self._assert_denied("gh pr merge")
+
+    def test_pr_merge_squash(self) -> None:
+        self._assert_denied("gh pr merge 42 --squash")
+
+    def test_pr_merge_rebase(self) -> None:
+        self._assert_denied("gh pr merge 42 --rebase")
+
+    def test_pr_merge_merge_flag(self) -> None:
+        self._assert_denied("gh pr merge 42 --merge")
+
+    def test_pr_merge_admin(self) -> None:
+        self._assert_denied("gh pr merge 42 --admin")
+
+    def test_pr_merge_auto(self) -> None:
+        self._assert_denied("gh pr merge 42 --auto")
+
+    def test_pr_close(self) -> None:
+        self._assert_denied("gh pr close 42")
+
+    def test_pr_review_approve_long_flag(self) -> None:
+        self._assert_denied("gh pr review 42 --approve")
+
+    def test_pr_review_approve_short_flag(self) -> None:
+        self._assert_denied("gh pr review -a")
+
+    def test_pr_review_bare_no_flags(self) -> None:
+        """No verdict flag at all: `gh`'s own interactive path to any of
+        the three review verdicts, including approval -- see
+        git_guard.py's module docstring for why this is denied rather
+        than let through."""
+        self._assert_denied("gh pr review 42")
+
     def test_safe_push_is_allowed(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -158,6 +195,56 @@ class NearMissTests(unittest.TestCase):
 
     def test_log_merges_is_read_only(self) -> None:
         self._assert_allowed("git log --merges")
+
+    def test_pr_create_is_the_deliverable(self) -> None:
+        """docs/plan.md §12: opening a pull request is yes, it IS the
+        deliverable -- this must never share a pattern with `pr close`
+        or `pr merge`."""
+        self._assert_allowed('gh pr create --title x --body "y"')
+
+    def test_pr_view_is_read_only(self) -> None:
+        self._assert_allowed("gh pr view 42")
+
+    def test_pr_list_is_read_only(self) -> None:
+        self._assert_allowed("gh pr list")
+
+    def test_pr_diff_is_read_only(self) -> None:
+        self._assert_allowed("gh pr diff 42")
+
+    def test_pr_checkout_is_not_a_merge(self) -> None:
+        self._assert_allowed("gh pr checkout 42")
+
+    def test_pr_status_is_read_only(self) -> None:
+        self._assert_allowed("gh pr status")
+
+    def test_pr_comment_is_the_correction_loop(self) -> None:
+        """docs/plan.md §12: "Read PR comments, reply to them -- yes."
+        `gh pr comment` (a reply) is a different subcommand from `gh pr
+        review --comment` (a review verdict) and must stay unblocked."""
+        self._assert_allowed('gh pr comment 42 --body "thanks, fixed"')
+
+    def test_pr_review_comment_long_flag(self) -> None:
+        self._assert_allowed('gh pr review 42 --comment -b "interesting"')
+
+    def test_pr_review_comment_short_flag(self) -> None:
+        self._assert_allowed('gh pr review 42 -c -b "interesting"')
+
+    def test_pr_review_request_changes_long_flag(self) -> None:
+        self._assert_allowed('gh pr review 42 --request-changes -b "needs work"')
+
+    def test_pr_review_request_changes_short_flag(self) -> None:
+        self._assert_allowed('gh pr review 42 -r -b "needs work"')
+
+    def test_issue_list_is_untouched(self) -> None:
+        """§12 permits reading issues; none of the new `gh pr` patterns
+        should ever fire on `gh issue ...`."""
+        self._assert_allowed("gh issue list")
+
+    def test_issue_close_is_untouched(self) -> None:
+        self._assert_allowed("gh issue close 3")
+
+    def test_issue_comment_is_untouched(self) -> None:
+        self._assert_allowed('gh issue comment 3 --body "on it"')
 
 
 class InertWithoutVerificationSignalTests(unittest.TestCase):
