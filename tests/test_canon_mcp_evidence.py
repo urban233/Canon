@@ -143,6 +143,47 @@ class BuildEvidenceTests(unittest.TestCase):
         self.assertFalse(result["green"])
         self.assertIn("exited", result["detail"])
 
+    def test_compound_verify_command_is_reported_as_unknown_not_red(self) -> None:
+        """A `.canon/config.json` fault -- here, a command Canon runs
+        with no shell would silently mishandle -- must land as `green:
+        None` with an explanatory message, the same shape as "not
+        configured yet," never as `green: False`, which `ship.py`'s
+        `_evidence_reason` would read as "the configured verification
+        failed."."""
+        with tempfile.TemporaryDirectory() as tmp:
+            with (
+                mock.patch(
+                    "canon_mcp.evidence.full_head_sha", return_value="abc123full"
+                ),
+                mock.patch("canon_mcp.evidence.is_pushed", return_value=False),
+                mock.patch(
+                    "canon_mcp.evidence.load_config",
+                    return_value={"verify": "ruff check . && pytest"},
+                ),
+            ):
+                result = evidence.build_evidence(Path(tmp))
+        self.assertIsNone(result["green"])
+        self.assertIn(".canon/config.json", result["message"])
+        self.assertIn("&&", result["message"])
+
+    def test_missing_binary_is_reported_as_unknown_not_red(self) -> None:
+        """Discovered only at execution time, unlike the compound case
+        above -- but it must land in the exact same place."""
+        with tempfile.TemporaryDirectory() as tmp:
+            with (
+                mock.patch(
+                    "canon_mcp.evidence.full_head_sha", return_value="abc123full"
+                ),
+                mock.patch("canon_mcp.evidence.is_pushed", return_value=False),
+                mock.patch(
+                    "canon_mcp.evidence.load_config",
+                    return_value={"verify": "canon-nonexistent-command-xyz"},
+                ),
+            ):
+                result = evidence.build_evidence(Path(tmp))
+        self.assertIsNone(result["green"])
+        self.assertIn(".canon/config.json", result["message"])
+
 
 if __name__ == "__main__":
     unittest.main()

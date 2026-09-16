@@ -8,11 +8,20 @@ only ever reads whether a verification signal exists, never writes
 `save_config`/`suggest_verify_command` are not copied over. See
 _git.py's module docstring for why hooks and this package don't share a
 dependency edge.
+
+`shell_metacharacter` and `verify_command_problem` *are* copied over,
+byte-for-byte in logic if not in surrounding comments: `evidence.py`'s
+`_run_local_check` runs the configured command the same way
+`stop.py`'s `_run_verification` does -- `shlex.split`, no shell -- so it
+has the identical compound-command bug and needs the identical guard
+against it. Keep the two in sync by hand; nothing enforces that but this
+comment and the pull request that adds a change to one of them.
 """
 
 from __future__ import annotations
 
 import json
+import shlex
 from pathlib import Path
 from typing import Any
 
@@ -73,6 +82,77 @@ def resolve_verify_command(
         return None
     verify = config.get("verify")
     return verify.strip() if isinstance(verify, str) and verify.strip() else None
+
+
+_SHELL_METACHARACTER_PUNCTUATION = "();<>|&`$\n"
+_SHELL_METACHARACTERS = frozenset({"&&", "||", "|", ";", ">", "<", "`", "\n", "$("})
+
+
+def shell_metacharacter(command: str) -> str | None:
+    """The first shell metacharacter `command` contains outside of a
+    quoted argument, or None if it contains none.
+
+    Duplicated from plugins/claude/hooks/_config.py -- see that copy's
+    docstring for the full reasoning (why `shlex.split` alone silently
+    mishandles `&&`, `||`, `|`, `;`, a newline, `>`, `<`, a backtick,
+    and `$(`, and how `punctuation_chars` is used to tell an operator
+    from the identical character sitting quoted inside an argument like
+    `pytest -k "a and b"` or `just test --flag='a|b'`). Summary only,
+    here: `shlex.shlex` is configured to split exactly those characters
+    into their own tokens, but quoting takes priority over that split,
+    so a quoted metacharacter comes back fused into its surrounding word
+    while the same character standalone comes back as its own exact
+    token -- checking token membership is enough to tell the two apart.
+    """
+    lexer = shlex.shlex(
+        command, posix=True, punctuation_chars=_SHELL_METACHARACTER_PUNCTUATION
+    )
+    lexer.whitespace_split = True
+    # Keep "\n" out of whitespace so it surfaces as punctuation instead of
+    # silently acting as an ordinary token separator (see the docstring).
+    lexer.whitespace = " \t\r"
+    try:
+        tokens = list(lexer)
+    except ValueError:
+        return None
+    for index, token in enumerate(tokens):
+        if token in _SHELL_METACHARACTERS:
+            return token
+        if token == "$" and tokens[index + 1 : index + 2] == ["("]:
+            return "$("
+    return None
+
+
+def verify_command_problem(command: str) -> str | None:
+    """Why `command` cannot be run the way this server runs it --
+    directly, via `shlex.split`, with no shell -- or None when it can.
+
+    Duplicated from plugins/claude/hooks/_config.py; used by
+    `evidence.py`'s `build_evidence` before it ever calls
+    `_run_local_check`, so a `.canon/config.json` fault is reported as
+    exactly that -- `green: None` with an explanatory `message`, the
+    same shape already used for "not configured yet" -- rather than as
+    `green: False`, which `ship.py`'s `_evidence_reason` reads as "the
+    configured verification failed."
+    """
+    try:
+        argv = shlex.split(command)
+    except ValueError as exc:
+        return f"could not parse this command: {exc}"
+    if not argv:
+        return "this command is empty"
+    metacharacter = shell_metacharacter(command)
+    if metacharacter is None:
+        return None
+    return (
+        f"this command contains `{metacharacter}`, a shell operator -- "
+        "Canon runs the configured command directly, with no shell, so "
+        "`&&`, `||`, `|`, `;`, a newline, `>`, `<`, a backtick, and `$(` "
+        "are refused rather than silently handed to the first program as "
+        "a literal argument. Wrap the sequence in a recipe or script (a "
+        "Justfile recipe, an npm script, a shell script committed to the "
+        "repo) and name that single command instead."
+    )
 
 
 _VALID_MODES = {"pair", "solo", "async"}

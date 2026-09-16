@@ -312,29 +312,191 @@ class PlanVerifyOverrideTests(unittest.TestCase):
 
 
 class RunVerificationUnitTests(unittest.TestCase):
+    """`_run_verification` returns `(passed, detail, configuration_fault)`.
+    `configuration_fault` is the distinction Step 3/4 add: True for a
+    command that could not even be attempted (unparsable, or its binary
+    is missing), False for one that ran -- whether it passed, failed, or
+    timed out. `main` uses the flag to keep a fault from being reported,
+    or counted, as though it were a red run."""
+
     def test_passes_on_zero_exit(self) -> None:
-        passed, detail = stop._run_verification(Path.cwd(), "true")
+        passed, detail, configuration_fault = stop._run_verification(Path.cwd(), "true")
         self.assertTrue(passed)
         self.assertEqual(detail, "")
+        self.assertFalse(configuration_fault)
 
     def test_fails_on_nonzero_exit_with_output_attached(self) -> None:
-        passed, detail = stop._run_verification(
+        """A genuine failure -- the command ran -- must not be flagged as
+        a configuration fault, or `main` would silently withhold it from
+        the refusal budget the way it does a real config problem."""
+        passed, detail, configuration_fault = stop._run_verification(
             Path.cwd(), "python3 -c \"import sys; print('boom'); sys.exit(1)\""
         )
         self.assertFalse(passed)
         self.assertIn("boom", detail)
+        self.assertFalse(configuration_fault)
 
     def test_fails_on_unparsable_command(self) -> None:
-        passed, detail = stop._run_verification(Path.cwd(), 'unterminated "quote')
+        passed, detail, configuration_fault = stop._run_verification(
+            Path.cwd(), 'unterminated "quote'
+        )
         self.assertFalse(passed)
         self.assertIn("Could not parse", detail)
+        self.assertTrue(configuration_fault)
 
     def test_fails_on_missing_executable(self) -> None:
-        passed, detail = stop._run_verification(
+        """A binary that isn't on `PATH` is a configuration fault, not a
+        failing check -- this is defect (b) from the task: previously
+        `main` could not tell this apart from a genuine red result."""
+        passed, detail, configuration_fault = stop._run_verification(
             Path.cwd(), "canon-nonexistent-command-xyz"
         )
         self.assertFalse(passed)
         self.assertIn("Could not run", detail)
+        self.assertTrue(configuration_fault)
+
+
+class ConfigurationFaultTests(unittest.TestCase):
+    """A `verify` command already on disk that cannot be run as configured
+    -- defect (a) from the task -- must be reported as a
+    `.canon/config.json` problem, not a failing check: never counted
+    against the refusal budget, and surfaced once per session rather than
+    on every `Stop` (the same shape as the first-run question, per the
+    module docstring's second bullet)."""
+
+    def test_compound_command_is_reported_as_a_configuration_problem(self) -> None:
+        with (
+            tempfile.TemporaryDirectory() as root,
+            tempfile.TemporaryDirectory() as scratch,
+        ):
+            config_path = Path(root) / ".canon" / "config.json"
+            config_path.parent.mkdir(parents=True)
+            config_path.write_text(
+                json.dumps({"verify": "ruff check . && pytest"}), encoding="utf-8"
+            )
+
+            result = _invoke_main({"cwd": root, "scratchpad_dir": scratch})
+
+            self.assertIsNotNone(result)
+            assert result is not None
+            self.assertEqual(result["decision"], "block")
+            self.assertIn(".canon/config.json", result["reason"])
+            self.assertIn("&&", result["reason"])
+            # Never described as a failing check.
+            self.assertNotIn("exited", result["reason"])
+
+    def test_compound_command_does_not_touch_the_refusal_counter(self) -> None:
+        with (
+            tempfile.TemporaryDirectory() as root,
+            tempfile.TemporaryDirectory() as scratch,
+        ):
+            config_path = Path(root) / ".canon" / "config.json"
+            config_path.parent.mkdir(parents=True)
+            config_path.write_text(
+                json.dumps({"verify": "ruff check . && pytest"}), encoding="utf-8"
+            )
+
+            _invoke_main({"cwd": root, "scratchpad_dir": scratch})
+
+            counter = Path(scratch) / "canon" / "consecutive_refusals"
+            self.assertFalse(counter.exists())
+
+    def test_compound_command_is_only_reported_once_per_session(self) -> None:
+        with (
+            tempfile.TemporaryDirectory() as root,
+            tempfile.TemporaryDirectory() as scratch,
+        ):
+            config_path = Path(root) / ".canon" / "config.json"
+            config_path.parent.mkdir(parents=True)
+            config_path.write_text(
+                json.dumps({"verify": "ruff check . && pytest"}), encoding="utf-8"
+            )
+            payload = {"cwd": root, "scratchpad_dir": scratch}
+
+            first = _invoke_main(payload)
+            second = _invoke_main(payload)
+
+            self.assertIsNotNone(first)
+            assert first is not None
+            self.assertEqual(first["decision"], "block")
+            self.assertIsNone(second)
+
+    def test_missing_binary_is_reported_as_a_configuration_problem(self) -> None:
+        """Discovered only at execution time, unlike the compound case
+        above -- but it must land in the exact same place: a
+        `.canon/config.json` fault, not a red suite."""
+        with (
+            tempfile.TemporaryDirectory() as root,
+            tempfile.TemporaryDirectory() as scratch,
+        ):
+            config_path = Path(root) / ".canon" / "config.json"
+            config_path.parent.mkdir(parents=True)
+            config_path.write_text(
+                json.dumps({"verify": "canon-nonexistent-command-xyz"}),
+                encoding="utf-8",
+            )
+
+            result = _invoke_main({"cwd": root, "scratchpad_dir": scratch})
+
+            self.assertIsNotNone(result)
+            assert result is not None
+            self.assertEqual(result["decision"], "block")
+            self.assertIn(".canon/config.json", result["reason"])
+            counter = Path(scratch) / "canon" / "consecutive_refusals"
+            self.assertFalse(counter.exists())
+
+    def test_a_compound_plan_header_override_is_also_caught(self) -> None:
+        """`resolve_verify_command` can hand back a plan header's
+        override instead of the config's own value -- the configuration
+        fault check runs on whatever it resolves to, not just the raw
+        config file content."""
+        with (
+            tempfile.TemporaryDirectory() as root_str,
+            tempfile.TemporaryDirectory() as scratch,
+        ):
+            root = Path(root_str)
+            subprocess.run(
+                ["git", "init", "-q"], cwd=root, check=True, capture_output=True
+            )
+            subprocess.run(
+                ["git", "symbolic-ref", "HEAD", "refs/heads/wip"],
+                cwd=root,
+                check=True,
+                capture_output=True,
+            )
+            subprocess.run(
+                [
+                    "git",
+                    "-c",
+                    "user.email=canon@example.com",
+                    "-c",
+                    "user.name=Canon Tests",
+                    "commit",
+                    "--allow-empty",
+                    "-m",
+                    "init",
+                ],
+                cwd=root,
+                check=True,
+                capture_output=True,
+            )
+            config_path = root / ".canon" / "config.json"
+            config_path.parent.mkdir(parents=True)
+            config_path.write_text(json.dumps({"verify": "true"}), encoding="utf-8")
+            plan = root / ".canon" / "plans"
+            plan.mkdir(parents=True)
+            (plan / "wip.md").write_text(
+                '---\nstatus: approved\nverify: "ruff check . && pytest"\n---\n\n'
+                "## Approach\nx\n",
+                encoding="utf-8",
+            )
+
+            result = _invoke_main({"cwd": str(root), "scratchpad_dir": scratch})
+
+            self.assertIsNotNone(result)
+            assert result is not None
+            self.assertEqual(result["decision"], "block")
+            self.assertIn(".canon/config.json", result["reason"])
 
 
 if __name__ == "__main__":

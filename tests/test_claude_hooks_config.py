@@ -219,6 +219,103 @@ class InteractionModeTests(unittest.TestCase):
         self.assertEqual(_config.interaction_mode({"mode": "async"}), "async")
 
 
+class ShellMetacharacterTests(unittest.TestCase):
+    """The compound-command detector `verify_command_problem` relies on.
+
+    Covers every character docs/plan.md §07's refusal is built around,
+    plus the near miss that a naive substring scan gets wrong: the same
+    characters sitting quoted, as ordinary argument content."""
+
+    def test_double_ampersand_is_detected(self) -> None:
+        self.assertEqual(
+            _config.shell_metacharacter("ruff check . && pytest"), "&&"
+        )
+
+    def test_double_pipe_is_detected(self) -> None:
+        self.assertEqual(_config.shell_metacharacter("ruff check . || pytest"), "||")
+
+    def test_single_pipe_is_detected(self) -> None:
+        self.assertEqual(_config.shell_metacharacter("echo a | grep b"), "|")
+
+    def test_semicolon_is_detected(self) -> None:
+        self.assertEqual(_config.shell_metacharacter("echo a; echo b"), ";")
+
+    def test_redirect_out_is_detected(self) -> None:
+        self.assertEqual(_config.shell_metacharacter("echo a > out.txt"), ">")
+
+    def test_redirect_in_is_detected(self) -> None:
+        self.assertEqual(_config.shell_metacharacter("echo a < in.txt"), "<")
+
+    def test_unquoted_backtick_is_detected(self) -> None:
+        self.assertEqual(_config.shell_metacharacter("echo `whoami`"), "`")
+
+    def test_unquoted_command_substitution_is_detected(self) -> None:
+        self.assertEqual(_config.shell_metacharacter("echo $(whoami)"), "$(")
+
+    def test_unquoted_newline_is_detected(self) -> None:
+        self.assertEqual(_config.shell_metacharacter("ruff check .\npytest"), "\n")
+
+    def test_plain_command_has_no_metacharacter(self) -> None:
+        self.assertIsNone(_config.shell_metacharacter("just test"))
+
+    def test_pytest_dash_k_with_and_is_not_a_metacharacter(self) -> None:
+        """The near miss: no operator character appears anywhere in this
+        string, but a word-level scan for "and"/"or" could get confused
+        by the word "and" inside the quotes. It must read clean."""
+        self.assertIsNone(_config.shell_metacharacter('pytest -k "a and b"'))
+
+    def test_quoted_pipe_is_not_a_metacharacter(self) -> None:
+        """The near miss the task exists to get right: a naive substring
+        scan for "|" would flag this, but the pipe is single-quoted
+        argument content, not an operator."""
+        self.assertIsNone(_config.shell_metacharacter("just test --flag='a|b'"))
+
+    def test_double_quoted_ampersands_are_not_a_metacharacter(self) -> None:
+        self.assertIsNone(
+            _config.shell_metacharacter('just check --flags="x && y"')
+        )
+
+    def test_quoted_backtick_is_not_a_metacharacter(self) -> None:
+        self.assertIsNone(_config.shell_metacharacter('echo "`whoami`"'))
+
+    def test_quoted_command_substitution_is_not_a_metacharacter(self) -> None:
+        self.assertIsNone(_config.shell_metacharacter('echo "$(whoami)"'))
+
+    def test_unterminated_quote_is_not_reported_as_a_metacharacter(self) -> None:
+        """A parse failure is a different, separately-handled problem --
+        see `verify_command_problem` -- so this returns None rather than
+        raising."""
+        self.assertIsNone(_config.shell_metacharacter('unterminated "quote'))
+
+
+class VerifyCommandProblemTests(unittest.TestCase):
+    def test_plain_command_has_no_problem(self) -> None:
+        self.assertIsNone(_config.verify_command_problem("pytest"))
+
+    def test_pytest_dash_k_with_and_has_no_problem(self) -> None:
+        self.assertIsNone(_config.verify_command_problem('pytest -k "a and b"'))
+
+    def test_quoted_pipe_has_no_problem(self) -> None:
+        self.assertIsNone(_config.verify_command_problem("just test --flag='a|b'"))
+
+    def test_compound_command_names_the_operator(self) -> None:
+        problem = _config.verify_command_problem("ruff check . && pytest")
+        self.assertIsNotNone(problem)
+        assert problem is not None
+        self.assertIn("&&", problem)
+
+    def test_compound_command_suggests_a_wrapper(self) -> None:
+        problem = _config.verify_command_problem("ruff check . && pytest")
+        assert problem is not None
+        self.assertIn("recipe", problem)
+
+    def test_unterminated_quote_is_a_problem(self) -> None:
+        problem = _config.verify_command_problem('unterminated "quote')
+        self.assertIsNotNone(problem)
+        assert problem is not None
+        self.assertIn("could not parse", problem)
+
+
 class ResolveVerifyCommandTests(unittest.TestCase):
     """§07: "`verify:` in a plan header | Overrides it for that branch"."""
 

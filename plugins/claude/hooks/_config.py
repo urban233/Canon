@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import json
 import re
+import shlex
 from pathlib import Path
 from typing import Any
 
@@ -175,6 +176,126 @@ def resolve_verify_command(
         return None
     verify = config.get("verify")
     return verify.strip() if isinstance(verify, str) and verify.strip() else None
+
+
+_SHELL_METACHARACTER_PUNCTUATION = "();<>|&`$\n"
+_SHELL_METACHARACTERS = frozenset({"&&", "||", "|", ";", ">", "<", "`", "\n", "$("})
+
+
+def shell_metacharacter(command: str) -> str | None:
+    """The first shell metacharacter `command` contains outside of a
+    quoted argument, or None if it contains none.
+
+    Canon runs the configured verify command directly, with no shell --
+    `subprocess.run(shlex.split(command), ...)` in both `stop.py`'s
+    `_run_verification` and canon_mcp's `_run_local_check`. `shlex.split`
+    has no concept of `&&`, `||`, `|`, `;`, a newline, `>`, `<`, a
+    backtick, or `$(` -- it hands each one back as a plain argument
+    rather than raising. `ruff check . && pytest` becomes `['ruff',
+    'check', '.', '&&', 'pytest']`; `ruff` receives `&&` as a path,
+    exits non-zero for a reason that has nothing to do with the
+    repository, and the `Stop` gate reports that as a failing check
+    forever. This function is how `verify_command_problem` below catches
+    that before it ever reaches `subprocess.run`.
+
+    The near miss it has to get right: a metacharacter *inside* a quoted
+    argument. `pytest -k "a and b"` and `just test --flag='a|b'` are
+    both completely ordinary commands and must not be rejected. A
+    substring scan over the raw string cannot tell the two cases apart
+    -- `"a|b"` and `a|b` look identical to `"|" in command`. So rather
+    than re-deriving shlex's own quoting rules by hand, this asks shlex
+    itself, the same library that does the real split at verification
+    time:
+
+    `shlex.shlex` is configured with `punctuation_chars` set to exactly
+    the characters above (plus the parens, so a bare `$` run directly
+    into a `(` merges into one `$(` token the way adjacent punctuation
+    always does in this mode). Quoting still takes priority over
+    punctuation-splitting in this mode -- a quote's contents are
+    consumed as one atomic span before the characters inside it are
+    ever considered for a punctuation split -- so a metacharacter inside
+    `'...'` or `"..."` comes back fused into the surrounding word
+    (`--flag='a|b'` tokenizes to the single token `--flag=a|b`), while
+    the same character standalone tokenizes to its own exact token (`a
+    && b` tokenizes to `['a', '&&', 'b']`). Checking each token for
+    exact membership in `_SHELL_METACHARACTERS` is therefore enough to
+    tell "operator" from "content" -- verified directly against both
+    examples above, not just reasoned about. A newline gets the same
+    treatment but needs one extra step: it is pulled out of `whitespace`
+    and into `punctuation_chars`, because left in `whitespace` it would
+    vanish as an ordinary token separator instead of surfacing as the
+    metacharacter it is when a multi-line recipe body gets pasted in
+    unquoted.
+
+    An unterminated quote makes shlex raise `ValueError` while reading
+    the stream; that is a different, already-handled problem (see
+    `verify_command_problem`, and the identical `ValueError` caught in
+    `_run_verification`/`_run_local_check`), so this returns None rather
+    than raising -- "no metacharacter found" is a true statement even
+    when the command cannot be fully parsed.
+    """
+    lexer = shlex.shlex(
+        command, posix=True, punctuation_chars=_SHELL_METACHARACTER_PUNCTUATION
+    )
+    lexer.whitespace_split = True
+    # Keep "\n" out of whitespace so it surfaces as punctuation instead of
+    # silently acting as an ordinary token separator (see the docstring).
+    lexer.whitespace = " \t\r"
+    try:
+        tokens = list(lexer)
+    except ValueError:
+        return None
+    for index, token in enumerate(tokens):
+        if token in _SHELL_METACHARACTERS:
+            return token
+        # A "$" and a "(" only stay as two tokens when whitespace
+        # separates them (`$ (...)`); contiguous `$(...)` already merges
+        # into the single "$(" token caught by the membership check
+        # above. This is the rare fallback for the spaced-out form.
+        if token == "$" and tokens[index + 1 : index + 2] == ["("]:
+            return "$("
+    return None
+
+
+def verify_command_problem(command: str) -> str | None:
+    """Why `command` cannot be run the way Canon runs it -- directly, via
+    `shlex.split`, with no shell -- or None when it can.
+
+    Two distinct faults, and both are configuration problems rather
+    than anything a red run would mean: shlex cannot parse the string
+    at all (unbalanced quoting), or it parses fine but contains a shell
+    metacharacter -- see `shell_metacharacter` -- that a real shell
+    would act on and that `shlex.split` instead hands to the first
+    program as a literal argument.
+
+    Callers check this *before* ever attempting to run the command:
+    `stop.py`'s `main` and canon_mcp's `evidence.py` both must report a
+    positive result here as a `.canon/config.json` problem, never as a
+    failing check -- see docs/plan.md §07's "wrong-but-plausible is
+    worse than absent," and the reason Canon refuses rather than runs a
+    compound command through a shell in the first place: a partial
+    failure inside a chain is exactly the ambiguous evidence the `Stop`
+    gate exists to eliminate, so "which half was red" must never be a
+    question Canon has to answer.
+    """
+    try:
+        argv = shlex.split(command)
+    except ValueError as exc:
+        return f"could not parse this command: {exc}"
+    if not argv:
+        return "this command is empty"
+    metacharacter = shell_metacharacter(command)
+    if metacharacter is None:
+        return None
+    return (
+        f"this command contains `{metacharacter}`, a shell operator -- "
+        "Canon runs the configured command directly, with no shell, so "
+        "`&&`, `||`, `|`, `;`, a newline, `>`, `<`, a backtick, and `$(` "
+        "are refused rather than silently handed to the first program as "
+        "a literal argument. Wrap the sequence in a recipe or script (a "
+        "Justfile recipe, an npm script, a shell script committed to the "
+        "repo) and name that single command instead."
+    )
 
 
 def suggest_verify_command(root: Path) -> str | None:
