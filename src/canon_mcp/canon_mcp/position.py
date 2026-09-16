@@ -155,9 +155,16 @@ def _next_step(
         plural = "s" if len(names) > 1 else ""
         return f"dispatch the {label} subagent{plural} for PR #{number}"
     if review.get("stale"):
+        # Not "review it all again": the `review` skill asks for the delta
+        # since the commit that reviewer last saw, alongside the full
+        # range, because a fix that breaks something already passed is
+        # invisible when the whole diff is re-read from scratch. These two
+        # instructions have to agree, or the skill and this sentence send
+        # the agent in different directions on the same signal.
         return (
-            f"dispatch the reviewer again for PR #{number} -- HEAD has moved "
-            "since the last verdict"
+            f"re-review PR #{number} -- HEAD has moved since the last "
+            "verdict, so the reviewer needs the delta since the commit it "
+            "last saw as well as the full range"
         )
     decision = verdict.get("decision")
     if decision == "CHANGES REQUIRED":

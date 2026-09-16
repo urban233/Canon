@@ -1,0 +1,5 @@
+schema_version: "1.1"
+name: reviewer-reviews-the-delta-after-a-fix
+tags: [review]
+context:
+  scaffold_script: fixture.sh
