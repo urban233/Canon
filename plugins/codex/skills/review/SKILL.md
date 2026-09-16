@@ -59,10 +59,16 @@ same reviewer.
 A third dispatch for the same change is the signal that the problem is not
 the code. When you have already addressed two `CHANGES REQUIRED` verdicts
 on this branch, **stop and ask the developer** rather than dispatching
-again -- Canon's `SubagentStop` hook says so too when it sees the second
-one. Grinding is the most expensive failure mode there is, and the point
-at which to spend a human's attention is before the third attempt, not
-after the fifth.
+again. Grinding is the most expensive failure mode there is, and the
+point at which to spend a human's attention is before the third attempt,
+not after the fifth.
 
 This is imposed on you, not on the developer: it is not a gate, it blocks
-nothing, and `canon_ship` never reads it.
+nothing, and `canon_ship` never reads it. Nothing counts the rounds for
+you either, deliberately -- a counter in the repository is
+`round-state.json`, and a counter in session state is both unreadable by
+`canon_ship` and lost on the next session anyway. So this is yours to
+hold, from the rounds in this conversation. The honest consequence: after
+a compaction the count is gone, and the rule degrades to judgement.
+`canon_review`'s `verdicts` still tells you the last verdict on this
+branch, which is the one fact that survives.
