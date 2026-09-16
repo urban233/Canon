@@ -278,14 +278,94 @@ class ShellMetacharacterTests(unittest.TestCase):
     def test_quoted_backtick_is_not_a_metacharacter(self) -> None:
         self.assertIsNone(_config.shell_metacharacter('echo "`whoami`"'))
 
-    def test_quoted_command_substitution_is_not_a_metacharacter(self) -> None:
-        self.assertIsNone(_config.shell_metacharacter('echo "$(whoami)"'))
+    def test_a_wholly_quoted_command_substitution_is_rejected_conservatively(
+        self,
+    ) -> None:
+        """The one deliberate over-rejection: `$(` merges from two
+        *different* punctuation characters, so it can't use the
+        "every character is an operator character" rule the rest of
+        this function relies on to tell operator from content. A token
+        that is entirely `"$(...)"`, quoted or not, is treated as
+        unsafe rather than trying to also prove it was quoted -- see
+        the docstring's `$(` paragraph. No real verify command is
+        shaped like this."""
+        self.assertEqual(_config.shell_metacharacter('echo "$(whoami)"'), "$(")
+
+    def test_a_prefixed_quoted_command_substitution_is_not_a_metacharacter(
+        self,
+    ) -> None:
+        """The case the conservative rule above does not need to give
+        up on: a `$(...)` sitting inside a larger quoted argument fuses
+        into a token that does not *start* with `$(`."""
+        self.assertIsNone(_config.shell_metacharacter('just check --flags="$(x)"'))
 
     def test_unterminated_quote_is_not_reported_as_a_metacharacter(self) -> None:
         """A parse failure is a different, separately-handled problem --
         see `verify_command_problem` -- so this returns None rather than
         raising."""
         self.assertIsNone(_config.shell_metacharacter('unterminated "quote'))
+
+    # The blind spots an independent review found in the first version of
+    # this function -- reproduced directly against that version before
+    # being fixed here, so these pin the fix rather than just the intent.
+
+    def test_stderr_redirect_to_stdout_is_detected(self) -> None:
+        """`pytest 2>&1` tokenizes to a merged `>&` token -- not the bare
+        `>` the original exact-membership check looked for -- so it was
+        silently accepted while the near-identical `pytest 2>/dev/null`
+        was correctly rejected. Both must be rejected."""
+        self.assertIsNotNone(_config.shell_metacharacter("pytest 2>&1"))
+
+    def test_backgrounding_with_more_after_it_is_detected(self) -> None:
+        """A lone `&` was not in the old exact-membership set at all --
+        only `&&` was. `ruff check . & pytest` runs `ruff` backgrounded
+        with `&` and `pytest` as literal arguments and `pytest` never
+        runs; `ruff` alone can exit 0, producing a false green on the one
+        gate that must never report one."""
+        self.assertIsNotNone(_config.shell_metacharacter("ruff check . & pytest"))
+
+    def test_trailing_backgrounding_is_detected(self) -> None:
+        self.assertIsNotNone(_config.shell_metacharacter("pytest &"))
+
+    def test_append_redirect_is_detected(self) -> None:
+        """`>>` tokenizes as one merged token, not the bare `>` the old
+        check looked for."""
+        self.assertIsNotNone(_config.shell_metacharacter("pytest >> log"))
+
+    def test_combined_redirect_is_detected(self) -> None:
+        self.assertIsNotNone(_config.shell_metacharacter("pytest &> log"))
+        self.assertIsNotNone(_config.shell_metacharacter("pytest 1>&2"))
+
+    def test_operator_after_a_hash_is_still_detected(self) -> None:
+        """`shlex.shlex` defaults `commenters` to "#", but `shlex.split`
+        -- what actually runs the command -- does not treat `#` as a
+        comment at all. Left at the default, this function would stop
+        reading at the `#` and miss the `&&` that `shlex.split` still
+        hands to the first program as a literal argument."""
+        self.assertIsNotNone(
+            _config.shell_metacharacter("just test # && ruff check .")
+        )
+
+    # Required accepts an independent review pinned explicitly, so a
+    # future tightening of the operator rule can't silently break them.
+
+    def test_process_substitution_is_not_rejected(self) -> None:
+        """`<(` merges `<` with a `(` -- `(` is deliberately not an
+        operator character (see the docstring), so this fails the
+        "every character is an operator character" test the same way a
+        bare `(` does, and is left alone rather than treated like a
+        real `<` redirect."""
+        self.assertIsNone(_config.shell_metacharacter("cmd <(foo)"))
+
+    def test_pytest_dash_m_with_parens_is_not_rejected(self) -> None:
+        self.assertIsNone(
+            _config.shell_metacharacter('pytest -m "not (slow or net)"')
+        )
+
+    def test_bazel_test_output_errors_is_not_rejected(self) -> None:
+        self.assertIsNone(
+            _config.shell_metacharacter("bazel test //... --test_output=errors")
+        )
 
 
 class VerifyCommandProblemTests(unittest.TestCase):
@@ -314,6 +394,59 @@ class VerifyCommandProblemTests(unittest.TestCase):
         self.assertIsNotNone(problem)
         assert problem is not None
         self.assertIn("could not parse", problem)
+
+
+class VerifyCommandSourceTests(unittest.TestCase):
+    """A caller reporting a problem with the resolved command must name
+    the file a human should actually go edit -- see
+    `stop.py`'s `_handle_configuration_fault` and
+    `evidence.py`'s `build_evidence`, both of which name this instead of
+    hard-coding `.canon/config.json`."""
+
+    def test_defaults_to_the_config_file_with_no_plan(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            self.assertEqual(
+                _config.verify_command_source(
+                    Path(tmp), "feature/widget", {"verify": "just test"}
+                ),
+                ".canon/config.json",
+            )
+
+    def test_defaults_to_the_config_file_with_no_branch(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            self.assertEqual(
+                _config.verify_command_source(Path(tmp), None, {"verify": "x"}),
+                ".canon/config.json",
+            )
+
+    def test_names_the_plan_file_when_the_header_overrides(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            plan = root / ".canon" / "plans"
+            plan.mkdir(parents=True)
+            (plan / "wip.md").write_text(
+                '---\nstatus: approved\nverify: "ruff check . && pytest"\n---\n\n'
+                "## Approach\nx\n",
+                encoding="utf-8",
+            )
+            self.assertEqual(
+                _config.verify_command_source(root, "wip", {"verify": "just test"}),
+                ".canon/plans/wip.md",
+            )
+
+    def test_a_blank_header_falls_back_to_the_config_file(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            plan = root / ".canon" / "plans"
+            plan.mkdir(parents=True)
+            (plan / "wip.md").write_text(
+                '---\nstatus: approved\nverify: ""\n---\n\n## Approach\nx\n',
+                encoding="utf-8",
+            )
+            self.assertEqual(
+                _config.verify_command_source(root, "wip", {"verify": "just test"}),
+                ".canon/config.json",
+            )
 
 
 class ResolveVerifyCommandTests(unittest.TestCase):

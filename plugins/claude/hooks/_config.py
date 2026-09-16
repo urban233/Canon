@@ -178,8 +178,29 @@ def resolve_verify_command(
     return verify.strip() if isinstance(verify, str) and verify.strip() else None
 
 
+def verify_command_source(
+    root: Path, branch: str | None, config: dict[str, Any] | None
+) -> str:
+    """Where the value `resolve_verify_command` returns actually came
+    from: the branch's plan header if it named one, else
+    `.canon/config.json`.
+
+    A caller reporting a problem with the resolved command (see
+    `verify_command_problem` and `stop.py`'s `_handle_configuration_fault`)
+    must name the file a human should actually go fix -- naming
+    `.canon/config.json` unconditionally would send them to edit the
+    wrong file for a command that came from a plan header instead.
+    `config` is accepted for symmetry with `resolve_verify_command` and
+    because a config-derived answer may grow a second source later; today
+    the plan header is the only thing that can outrank it.
+    """
+    if plan_verify_command(root, branch):
+        return f"{_PLANS_DIR_RELATIVE}/{branch}.md"
+    return _CONFIG_PATH_RELATIVE
+
+
 _SHELL_METACHARACTER_PUNCTUATION = "();<>|&`$\n"
-_SHELL_METACHARACTERS = frozenset({"&&", "||", "|", ";", ">", "<", "`", "\n", "$("})
+_SHELL_METACHARACTER_CHARS = frozenset("&;<>|`\n")
 
 
 def shell_metacharacter(command: str) -> str | None:
@@ -210,22 +231,66 @@ def shell_metacharacter(command: str) -> str | None:
     `shlex.shlex` is configured with `punctuation_chars` set to exactly
     the characters above (plus the parens, so a bare `$` run directly
     into a `(` merges into one `$(` token the way adjacent punctuation
-    always does in this mode). Quoting still takes priority over
-    punctuation-splitting in this mode -- a quote's contents are
-    consumed as one atomic span before the characters inside it are
-    ever considered for a punctuation split -- so a metacharacter inside
-    `'...'` or `"..."` comes back fused into the surrounding word
-    (`--flag='a|b'` tokenizes to the single token `--flag=a|b`), while
-    the same character standalone tokenizes to its own exact token (`a
-    && b` tokenizes to `['a', '&&', 'b']`). Checking each token for
-    exact membership in `_SHELL_METACHARACTERS` is therefore enough to
-    tell "operator" from "content" -- verified directly against both
-    examples above, not just reasoned about. A newline gets the same
-    treatment but needs one extra step: it is pulled out of `whitespace`
-    and into `punctuation_chars`, because left in `whitespace` it would
-    vanish as an ordinary token separator instead of surfacing as the
-    metacharacter it is when a multi-line recipe body gets pasted in
-    unquoted.
+    always does in this mode) and with `commenters` cleared -- more on
+    both below. Quoting still takes priority over punctuation-splitting
+    in this mode -- a quote's contents are consumed as one atomic span
+    before the characters inside it are ever considered for a
+    punctuation split -- so a metacharacter inside `'...'` or `"..."`
+    comes back fused into the surrounding word (`--flag='a|b'` tokenizes
+    to the single token `--flag=a|b`), while the same character
+    standalone tokenizes to its own exact token or a token built purely
+    out of operator characters (`a && b` tokenizes to `['a', '&&',
+    'b']`; `a &> b` tokenizes to `['a', '&>', 'b']`).
+
+    A token counts as an operator when *every* character in it is one of
+    `_SHELL_METACHARACTER_CHARS` -- deliberately "all characters," not
+    "contains a character": `--flag='a|b'` *contains* `|` but is not
+    *made of* only operator characters, so it reads as content, exactly
+    the distinction the near miss above needs. This single rule is what
+    catches every operator shlex's punctuation-merging can produce from
+    these characters, not just the two-character ones this function used
+    to special-case: a lone `&` (background), `>>` (append), `&>` and
+    `1>&2`-style merges (combined redirects), a lone `;`, and so on --
+    confirmed directly against `pytest 2>&1`, `ruff check . & pytest`,
+    `pytest &`, `pytest >> log`, and `pytest &> log`, none of which the
+    exact-membership version this replaced would catch.
+
+    `commenters` defaults to `"#"` in `shlex.shlex` but to `""` in
+    `shlex.split` -- confirmed directly, and easy to miss because the
+    two normally agree. Left at the default here, this function would
+    stop reading at a `#` and never see an operator sitting after one,
+    while `shlex.split` -- what actually runs the command -- treats `#`
+    as an ordinary character and passes everything after it straight
+    through as more arguments. `just test # && ruff check .` is exactly
+    that: read with the default `commenters`, this function sees only
+    `just test` and reports no problem, while `_run_verification` still
+    receives `&&` as a literal argument. Clearing `commenters` makes
+    this function see what the real split actually does.
+
+    `$(` gets separate handling because it is the one operator made of
+    two *different* punctuation characters that only merge by sitting
+    next to each other, so the "every character is an operator
+    character" rule above does not cover it -- `(` is deliberately left
+    out of `_SHELL_METACHARACTER_CHARS`, on purpose, so that `(` and `)`
+    stay inert everywhere else. That is what keeps `<(` -- process
+    substitution syntax a real shell would treat specially, but this
+    function does not need to reject, since `shlex.split` just hands it
+    to the first program as a literal, malformed-looking argument rather
+    than silently doing something else -- from being caught by the same
+    rule that catches a bare `<`: the merged token `<(` contains a `(`,
+    so it fails "every character is an operator character," the same
+    way `cmd (a)`'s bare `(` does. `$(` does not get that protection,
+    because unlike `<(` it is a real, common way to smuggle a
+    substitution into an argument `shlex.split` will not perform, so a
+    token starting with `$(` is treated as unsafe even in the one case
+    this is conservative about: a whole argument that is quoted and
+    happens to look like a substitution (`"$(x)"` alone, with nothing
+    else in it) is rejected too, rather than trying to also prove it was
+    quoted. That is a deliberate trade for a construct no real verify
+    command is shaped like, not an oversight -- contrast a prefixed,
+    genuinely-quoted use such as `--flags="$(x)"`, which still reads
+    clean, because that token is `--flags=$(x)` and does not start with
+    `$(`.
 
     An unterminated quote makes shlex raise `ValueError` while reading
     the stream; that is a different, already-handled problem (see
@@ -241,17 +306,24 @@ def shell_metacharacter(command: str) -> str | None:
     # Keep "\n" out of whitespace so it surfaces as punctuation instead of
     # silently acting as an ordinary token separator (see the docstring).
     lexer.whitespace = " \t\r"
+    # Match what `shlex.split` actually does at verification time -- see
+    # the docstring's "commenters" paragraph.
+    lexer.commenters = ""
     try:
         tokens = list(lexer)
     except ValueError:
         return None
     for index, token in enumerate(tokens):
-        if token in _SHELL_METACHARACTERS:
+        if token and all(
+            character in _SHELL_METACHARACTER_CHARS for character in token
+        ):
             return token
+        if token.startswith("$("):
+            return "$("
         # A "$" and a "(" only stay as two tokens when whitespace
-        # separates them (`$ (...)`); contiguous `$(...)` already merges
-        # into the single "$(" token caught by the membership check
-        # above. This is the rare fallback for the spaced-out form.
+        # separates them (`$ (...)`); contiguous `$(...)` already starts
+        # a token with "$(" and is caught above. This is the rare
+        # fallback for the spaced-out form.
         if token == "$" and tokens[index + 1 : index + 2] == ["("]:
             return "$("
     return None

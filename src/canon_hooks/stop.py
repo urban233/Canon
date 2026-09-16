@@ -18,22 +18,24 @@ no Canon"). So this hook does one of three things on every `Stop` event:
 - A `verify` command is configured, but cannot actually be run as
   written -- `_config.verify_command_problem` says why, most often
   because it is compound (`ruff check . && pytest`) and Canon runs it
-  with no shell. This is a `.canon/config.json` fault, not a red
-  result: it says nothing about whether the repository's tests pass, so
-  it must never be reported as one, never counted against the
+  with no shell. This is a configuration fault, not a red result: it
+  says nothing about whether the repository's tests pass, so it must
+  never be reported as one, never counted against the
   consecutive-refusal budget below, and never left for the developer to
   discover only by noticing the same error every single turn. It gets
   the identical treatment as the first-run question -- block once per
-  session with a reason that names the file, then allow -- because an
-  unrunnable command *is* "no signal" under §07, just discovered a turn
-  later than a missing one.
+  session with a reason that names the actual file to fix
+  (`_config.verify_command_source`: `.canon/config.json`, or the plan
+  header's file when that is what resolved to this command), then
+  allow -- because an unrunnable command *is* "no signal" under §07,
+  just discovered a turn later than a missing one.
 - A `verify` command is configured and runs: block on a red result,
   attaching the failure so the claim "tests pass" is something the
   harness checked rather than something the agent asserted. Here too a
-  command that could not even be executed -- the binary named in
-  `.canon/config.json` is not on `PATH` -- is a configuration fault
-  handled the way above, not a red result; only a command that ran and
-  exited non-zero (or timed out) counts against the refusal budget.
+  command that could not even be executed -- its binary is not on
+  `PATH` -- is a configuration fault handled the way above, not a red
+  result; only a command that ran and exited non-zero (or timed out)
+  counts against the refusal budget.
 
 The one state this hook is allowed to remember, per `_common.py`'s module
 docstring and `AGENTS.md`: two same-session markers (so the first-run
@@ -185,23 +187,28 @@ def _first_run_reason(root: Path) -> str:
         "real answer is a sequence, the fix is a recipe or script that "
         "wraps it -- a Justfile recipe, an npm script, a shell script "
         "committed to the repo -- with that single command named here "
-        "instead. Canon does not write that wrapper itself: editing this "
-        "repository's build configuration is not Canon's job, the same "
-        "line it holds on `nbstripout` and on branch protection."
+        "instead. Propose that wrapper to the developer -- do not write "
+        "it yourself: editing this repository's build configuration is "
+        "not Canon's job, the same line it holds on `nbstripout` and on "
+        "branch protection."
     )
 
 
-def _configuration_fault_reason(command: str, detail: str) -> str:
+def _configuration_fault_reason(command: str, source: str, detail: str) -> str:
     """The message for a `verify` command that cannot be run as
     configured -- see the module docstring's second bullet. Named after
-    `.canon/config.json` explicitly, because the whole point is that this
-    must never be mistaken for a failing check: it says nothing about
-    whether the repository's own tests pass."""
+    `source` -- `.canon/config.json`, or the plan header's file when
+    that is what actually resolved to this command, per
+    `_config.verify_command_source` -- explicitly, because the whole
+    point is that this must never be mistaken for a failing check: it
+    says nothing about whether the repository's own tests pass, and
+    naming the wrong file would send the developer to fix the wrong
+    place."""
     return (
-        f"The verify command in .canon/config.json (`{command}`) cannot be "
+        f"The verify command in {source} (`{command}`) cannot be "
         f"run as configured: {detail} This is a configuration problem, not "
-        "a failing check -- relay it to the developer so they can fix "
-        ".canon/config.json. Canon will not block on this again this "
+        f"a failing check -- relay it to the developer so they can fix "
+        f"{source}. Canon will not block on this again this "
         "session, but it also cannot verify anything until it's fixed."
     )
 
@@ -262,6 +269,7 @@ def _handle_configuration_fault(
     state_dir: Path | None,
     stop_hook_active: bool,
     command: str,
+    source: str,
     detail: str,
 ) -> None:
     """Report `command` as unrunnable and end the hook -- either the
@@ -270,7 +278,7 @@ def _handle_configuration_fault(
     this is deliberately the same shape as the first-run question, not
     the refusal-counter path, because an unrunnable command is "no
     signal" under §07 just the same as a missing one."""
-    reason = _configuration_fault_reason(command, detail)
+    reason = _configuration_fault_reason(command, source, detail)
     if _has_been_prompted(
         state_dir, stop_hook_active, marker_name=_CONFIG_FAULT_MARKER_NAME
     ):
@@ -302,19 +310,23 @@ def main() -> None:
         _common.block(_first_run_reason(root))
         return
 
-    command = _config.resolve_verify_command(root, _common.current_branch(root), config)
+    branch = _common.current_branch(root)
+    command = _config.resolve_verify_command(root, branch, config)
     if command is None:  # pragma: no cover - has_verification_signal implies one
         _common.allow()
         return
 
     # A command already on disk that cannot be run as configured (most
-    # often: compound) is a `.canon/config.json` fault, caught before
+    # often: compound) is a configuration fault, caught before
     # `subprocess.run` ever sees it -- never reported as a failing check.
     # See docs/plan.md §07 and `_config.verify_command_problem`'s
     # docstring for why this must not read like a red suite.
     problem = _config.verify_command_problem(command)
     if problem is not None:
-        _handle_configuration_fault(root, state_dir, stop_hook_active, command, problem)
+        source = _config.verify_command_source(root, branch, config)
+        _handle_configuration_fault(
+            root, state_dir, stop_hook_active, command, source, problem
+        )
         return
 
     passed, detail, configuration_fault = _run_verification(root, command)
@@ -330,7 +342,10 @@ def main() -> None:
         # above and for the same reason: this is not evidence about the
         # repository's own tests, so it must not burn the refusal
         # budget or read like one did.
-        _handle_configuration_fault(root, state_dir, stop_hook_active, command, detail)
+        source = _config.verify_command_source(root, branch, config)
+        _handle_configuration_fault(
+            root, state_dir, stop_hook_active, command, source, detail
+        )
         return
 
     refusals = _read_refusal_count(state_dir) + 1

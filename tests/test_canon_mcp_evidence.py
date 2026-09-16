@@ -184,6 +184,39 @@ class BuildEvidenceTests(unittest.TestCase):
         self.assertIsNone(result["green"])
         self.assertIn(".canon/config.json", result["message"])
 
+    def test_a_compound_plan_header_override_names_the_plan_file(self) -> None:
+        """The configuration fault must name the file that actually
+        resolved to this command. Here that's the plan header, not
+        `.canon/config.json` -- which names a perfectly runnable "true"
+        -- so sending a human to edit `.canon/config.json` would point
+        them at the wrong file. Mirrors
+        tests/test_claude_hooks_stop.py's
+        `test_a_compound_plan_header_override_is_also_caught`."""
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            plan = root / ".canon" / "plans"
+            plan.mkdir(parents=True)
+            (plan / "wip.md").write_text(
+                '---\nstatus: approved\nverify: "ruff check . && pytest"\n---\n\n'
+                "## Approach\nx\n",
+                encoding="utf-8",
+            )
+            with (
+                mock.patch(
+                    "canon_mcp.evidence.full_head_sha", return_value="abc123full"
+                ),
+                mock.patch("canon_mcp.evidence.is_pushed", return_value=False),
+                mock.patch("canon_mcp.evidence.current_branch", return_value="wip"),
+                mock.patch(
+                    "canon_mcp.evidence.load_config",
+                    return_value={"verify": "true"},
+                ),
+            ):
+                result = evidence.build_evidence(root)
+        self.assertIsNone(result["green"])
+        self.assertIn(".canon/plans/wip.md", result["message"])
+        self.assertNotIn(".canon/config.json", result["message"])
+
 
 if __name__ == "__main__":
     unittest.main()

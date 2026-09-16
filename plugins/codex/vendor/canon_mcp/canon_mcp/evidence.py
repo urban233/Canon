@@ -33,6 +33,7 @@ from ._config import (
     load_config,
     resolve_verify_command,
     verify_command_problem,
+    verify_command_source,
 )
 from ._gh import ci_runs_for_commit
 from ._git import current_branch, full_head_sha, is_pushed
@@ -127,7 +128,8 @@ def build_evidence(root: Path) -> dict[str, Any]:
             "green": None,
             "message": "not pushed, and no verify command configured yet",
         }
-    command = resolve_verify_command(root, current_branch(root), config)
+    branch = current_branch(root)
+    command = resolve_verify_command(root, branch, config)
     if command is None:  # pragma: no cover - has_verification_signal implies one
         return {
             "head": sha,
@@ -138,18 +140,22 @@ def build_evidence(root: Path) -> dict[str, Any]:
         }
 
     # A command already on disk that cannot be run as configured (most
-    # often: compound) is a `.canon/config.json` fault, caught before
+    # often: compound) is a configuration fault, caught before
     # `_run_local_check` ever calls `subprocess.run` -- reported the same
-    # way as "not configured yet" rather than as a failed check.
+    # way as "not configured yet" rather than as a failed check. Named
+    # after `verify_command_source`, not hard-coded to
+    # `.canon/config.json`, since the command may have come from a plan
+    # header instead -- naming the wrong file sends a human to edit it.
     problem = verify_command_problem(command)
     if problem is not None:
+        command_source = verify_command_source(root, branch, config)
         return {
             "head": sha,
             "pushed": False,
             "source": None,
             "green": None,
             "message": (
-                f"the verify command in .canon/config.json (`{command}`) "
+                f"the verify command in {command_source} (`{command}`) "
                 f"cannot be run as configured: {problem}"
             ),
         }
@@ -160,13 +166,14 @@ def build_evidence(root: Path) -> dict[str, Any]:
         # binary is not on `PATH`. Same treatment as the pre-check
         # above, for the same reason: not evidence about the
         # repository's own tests.
+        command_source = verify_command_source(root, branch, config)
         return {
             "head": sha,
             "pushed": False,
             "source": None,
             "green": None,
             "message": (
-                f"the verify command in .canon/config.json (`{command}`) "
+                f"the verify command in {command_source} (`{command}`) "
                 f"cannot be run as configured: {detail}"
             ),
         }

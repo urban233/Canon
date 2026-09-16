@@ -84,8 +84,30 @@ def resolve_verify_command(
     return verify.strip() if isinstance(verify, str) and verify.strip() else None
 
 
+def verify_command_source(
+    root: Path, branch: str | None, config: dict[str, Any] | None
+) -> str:
+    """Where the value `resolve_verify_command` returns actually came
+    from: the branch's plan header if it named one, else
+    `.canon/config.json`.
+
+    Duplicated from plugins/claude/hooks/_config.py. `evidence.py`'s
+    `build_evidence` uses this to name the file a human should actually
+    go fix when reporting a configuration fault -- naming
+    `.canon/config.json` unconditionally would send them to edit the
+    wrong file for a command that came from a plan header instead.
+    """
+    if branch:
+        plan = read_plan_file(root, f"{_PLANS_DIR_RELATIVE}/{branch}.md")
+        if plan is not None:
+            override = str(plan["header"].get("verify", "")).strip()
+            if override:
+                return f"{_PLANS_DIR_RELATIVE}/{branch}.md"
+    return _CONFIG_PATH_RELATIVE
+
+
 _SHELL_METACHARACTER_PUNCTUATION = "();<>|&`$\n"
-_SHELL_METACHARACTERS = frozenset({"&&", "||", "|", ";", ">", "<", "`", "\n", "$("})
+_SHELL_METACHARACTER_CHARS = frozenset("&;<>|`\n")
 
 
 def shell_metacharacter(command: str) -> str | None:
@@ -93,16 +115,17 @@ def shell_metacharacter(command: str) -> str | None:
     quoted argument, or None if it contains none.
 
     Duplicated from plugins/claude/hooks/_config.py -- see that copy's
-    docstring for the full reasoning (why `shlex.split` alone silently
+    docstring for the full reasoning: why `shlex.split` alone silently
     mishandles `&&`, `||`, `|`, `;`, a newline, `>`, `<`, a backtick,
-    and `$(`, and how `punctuation_chars` is used to tell an operator
-    from the identical character sitting quoted inside an argument like
-    `pytest -k "a and b"` or `just test --flag='a|b'`). Summary only,
-    here: `shlex.shlex` is configured to split exactly those characters
-    into their own tokens, but quoting takes priority over that split,
-    so a quoted metacharacter comes back fused into its surrounding word
-    while the same character standalone comes back as its own exact
-    token -- checking token membership is enough to tell the two apart.
+    and `$(`; how "every character in a token is an operator character"
+    (not "contains one") is what tells an operator from the identical
+    character sitting quoted inside an argument like `pytest -k "a and
+    b"` or `just test --flag='a|b'`, and what it takes to also catch a
+    lone `&`, `>>`, `&>`-style combined redirects, and an operator
+    sitting after a `#` (which `shlex.shlex` treats as a comment by
+    default, but `shlex.split` -- what actually runs the command --
+    does not); and why `$(` needs its own `startswith` check, including
+    the one case that check is conservative about.
     """
     lexer = shlex.shlex(
         command, posix=True, punctuation_chars=_SHELL_METACHARACTER_PUNCTUATION
@@ -111,13 +134,24 @@ def shell_metacharacter(command: str) -> str | None:
     # Keep "\n" out of whitespace so it surfaces as punctuation instead of
     # silently acting as an ordinary token separator (see the docstring).
     lexer.whitespace = " \t\r"
+    # Match what `shlex.split` actually does at verification time -- see
+    # the docstring's "commenters" paragraph.
+    lexer.commenters = ""
     try:
         tokens = list(lexer)
     except ValueError:
         return None
     for index, token in enumerate(tokens):
-        if token in _SHELL_METACHARACTERS:
+        if token and all(
+            character in _SHELL_METACHARACTER_CHARS for character in token
+        ):
             return token
+        if token.startswith("$("):
+            return "$("
+        # A "$" and a "(" only stay as two tokens when whitespace
+        # separates them (`$ (...)`); contiguous `$(...)` already starts
+        # a token with "$(" and is caught above. This is the rare
+        # fallback for the spaced-out form.
         if token == "$" and tokens[index + 1 : index + 2] == ["("]:
             return "$("
     return None

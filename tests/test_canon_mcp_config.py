@@ -15,7 +15,9 @@ already exercised indirectly, via mocking, in
 
 from __future__ import annotations
 
+import tempfile
 import unittest
+from pathlib import Path
 
 from canon_mcp import _config
 
@@ -68,8 +70,63 @@ class ShellMetacharacterTests(unittest.TestCase):
     def test_quoted_backtick_is_not_a_metacharacter(self) -> None:
         self.assertIsNone(_config.shell_metacharacter('echo "`whoami`"'))
 
+    def test_a_wholly_quoted_command_substitution_is_rejected_conservatively(
+        self,
+    ) -> None:
+        """See plugins/claude/hooks/_config.py's identical test for the
+        full reasoning: `$(` can't use the "every character is an
+        operator character" rule, so a token that is entirely
+        `"$(...)"` is treated as unsafe even when quoted."""
+        self.assertEqual(_config.shell_metacharacter('echo "$(whoami)"'), "$(")
+
+    def test_a_prefixed_quoted_command_substitution_is_not_a_metacharacter(
+        self,
+    ) -> None:
+        self.assertIsNone(_config.shell_metacharacter('just check --flags="$(x)"'))
+
     def test_unterminated_quote_is_not_reported_as_a_metacharacter(self) -> None:
         self.assertIsNone(_config.shell_metacharacter('unterminated "quote'))
+
+    # The blind spots an independent review found in the first version of
+    # this function -- see plugins/claude/hooks/_config.py's identical
+    # tests for the full reasoning behind each one.
+
+    def test_stderr_redirect_to_stdout_is_detected(self) -> None:
+        self.assertIsNotNone(_config.shell_metacharacter("pytest 2>&1"))
+
+    def test_backgrounding_with_more_after_it_is_detected(self) -> None:
+        self.assertIsNotNone(_config.shell_metacharacter("ruff check . & pytest"))
+
+    def test_trailing_backgrounding_is_detected(self) -> None:
+        self.assertIsNotNone(_config.shell_metacharacter("pytest &"))
+
+    def test_append_redirect_is_detected(self) -> None:
+        self.assertIsNotNone(_config.shell_metacharacter("pytest >> log"))
+
+    def test_combined_redirect_is_detected(self) -> None:
+        self.assertIsNotNone(_config.shell_metacharacter("pytest &> log"))
+        self.assertIsNotNone(_config.shell_metacharacter("pytest 1>&2"))
+
+    def test_operator_after_a_hash_is_still_detected(self) -> None:
+        self.assertIsNotNone(
+            _config.shell_metacharacter("just test # && ruff check .")
+        )
+
+    # Required accepts pinned explicitly so a future tightening of the
+    # operator rule can't silently break them.
+
+    def test_process_substitution_is_not_rejected(self) -> None:
+        self.assertIsNone(_config.shell_metacharacter("cmd <(foo)"))
+
+    def test_pytest_dash_m_with_parens_is_not_rejected(self) -> None:
+        self.assertIsNone(
+            _config.shell_metacharacter('pytest -m "not (slow or net)"')
+        )
+
+    def test_bazel_test_output_errors_is_not_rejected(self) -> None:
+        self.assertIsNone(
+            _config.shell_metacharacter("bazel test //... --test_output=errors")
+        )
 
 
 class VerifyCommandProblemTests(unittest.TestCase):
@@ -93,6 +150,57 @@ class VerifyCommandProblemTests(unittest.TestCase):
         self.assertIsNotNone(problem)
         assert problem is not None
         self.assertIn("could not parse", problem)
+
+
+class VerifyCommandSourceTests(unittest.TestCase):
+    """See plugins/claude/hooks/_config.py's identical tests: a caller
+    reporting a problem with the resolved command must name the file a
+    human should actually go edit."""
+
+    def test_defaults_to_the_config_file_with_no_plan(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            self.assertEqual(
+                _config.verify_command_source(
+                    Path(tmp), "feature/widget", {"verify": "just test"}
+                ),
+                ".canon/config.json",
+            )
+
+    def test_defaults_to_the_config_file_with_no_branch(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            self.assertEqual(
+                _config.verify_command_source(Path(tmp), None, {"verify": "x"}),
+                ".canon/config.json",
+            )
+
+    def test_names_the_plan_file_when_the_header_overrides(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            plan = root / ".canon" / "plans"
+            plan.mkdir(parents=True)
+            (plan / "wip.md").write_text(
+                '---\nstatus: approved\nverify: "ruff check . && pytest"\n---\n\n'
+                "## Approach\nx\n",
+                encoding="utf-8",
+            )
+            self.assertEqual(
+                _config.verify_command_source(root, "wip", {"verify": "just test"}),
+                ".canon/plans/wip.md",
+            )
+
+    def test_a_blank_header_falls_back_to_the_config_file(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            plan = root / ".canon" / "plans"
+            plan.mkdir(parents=True)
+            (plan / "wip.md").write_text(
+                '---\nstatus: approved\nverify: ""\n---\n\n## Approach\nx\n',
+                encoding="utf-8",
+            )
+            self.assertEqual(
+                _config.verify_command_source(root, "wip", {"verify": "just test"}),
+                ".canon/config.json",
+            )
 
 
 class InteractionModeTests(unittest.TestCase):

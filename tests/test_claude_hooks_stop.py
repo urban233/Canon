@@ -67,6 +67,21 @@ class FirstRunTests(unittest.TestCase):
             self.assertEqual(result["decision"], "block")
             self.assertIn("Nothing could be inferred", result["reason"])
 
+    def test_tells_the_agent_not_to_write_the_wrapper_itself(self) -> None:
+        """An agent reading `Canon does not write that wrapper itself:
+        editing this repository's build configuration is not Canon's
+        job` in the third person can read that as a statement about the
+        hook machinery, not an instruction to itself, and go write the
+        Justfile recipe anyway -- exactly what the eval grader in
+        plugins/claude/evals/verify-setup-refuses-a-compound-command/
+        fails the run for doing. Addressed directly, second person,
+        matching session_start.py's "Recommend it if it comes up --
+        never install it" on the identical recommend-don't-write line
+        for nbstripout."""
+        with tempfile.TemporaryDirectory() as root:
+            reason = stop._first_run_reason(Path(root))
+        self.assertIn("do not write it yourself", reason)
+
     def test_only_blocks_once_per_session(self) -> None:
         with (
             tempfile.TemporaryDirectory() as root,
@@ -496,7 +511,93 @@ class ConfigurationFaultTests(unittest.TestCase):
             self.assertIsNotNone(result)
             assert result is not None
             self.assertEqual(result["decision"], "block")
-            self.assertIn(".canon/config.json", result["reason"])
+            # Names the file that actually resolved to this command -- the
+            # plan header, not .canon/config.json, which here names a
+            # perfectly runnable "true". Sending the developer to edit
+            # .canon/config.json would point them at the wrong file.
+            self.assertIn(".canon/plans/wip.md", result["reason"])
+            self.assertNotIn(".canon/config.json", result["reason"])
+
+    def test_state_dir_none_still_reports_a_configuration_fault(self) -> None:
+        """No `scratchpad_dir` and no `session_id` -- `state_dir` returns
+        None. The configuration-fault path must degrade the same way the
+        first-run question does: block once (`stop_hook_active` stands in
+        for the marker), then allow, never crash trying to touch a state
+        directory that doesn't exist."""
+        with tempfile.TemporaryDirectory() as root:
+            config_path = Path(root) / ".canon" / "config.json"
+            config_path.parent.mkdir(parents=True)
+            config_path.write_text(
+                json.dumps({"verify": "ruff check . && pytest"}), encoding="utf-8"
+            )
+
+            first = _invoke_main({"cwd": root})
+            second = _invoke_main({"cwd": root, "stop_hook_active": True})
+
+            self.assertIsNotNone(first)
+            assert first is not None
+            self.assertEqual(first["decision"], "block")
+            self.assertIn(".canon/config.json", first["reason"])
+            self.assertIsNone(second)
+
+
+class MarkerIndependenceTests(unittest.TestCase):
+    """The first-run marker and the configuration-fault marker are
+    deliberately separate files (see `_has_been_prompted`'s docstring),
+    so a session already told "no command configured" still gets told,
+    once, "the command you configured cannot run" if the developer's
+    very next answer turns out to be unrunnable -- and the reverse."""
+
+    def test_a_configuration_fault_still_blocks_after_the_first_run_marker(
+        self,
+    ) -> None:
+        """Simulates the realistic sequence: first `Stop` asks the
+        first-run question (no config yet); the developer answers with a
+        compound command; the next `Stop` must still surface *that*
+        problem, not silently allow because *a* marker already exists."""
+        with (
+            tempfile.TemporaryDirectory() as root,
+            tempfile.TemporaryDirectory() as scratch,
+        ):
+            payload = {"cwd": root, "scratchpad_dir": scratch}
+            first = _invoke_main(payload)
+            self.assertIsNotNone(first)
+            assert first is not None
+            self.assertEqual(first["decision"], "block")
+
+            config_path = Path(root) / ".canon" / "config.json"
+            config_path.parent.mkdir(parents=True)
+            config_path.write_text(
+                json.dumps({"verify": "ruff check . && pytest"}), encoding="utf-8"
+            )
+
+            second = _invoke_main(payload)
+            self.assertIsNotNone(second)
+            assert second is not None
+            self.assertEqual(second["decision"], "block")
+            self.assertIn(".canon/config.json", second["reason"])
+            self.assertIn("&&", second["reason"])
+
+    def test_the_first_run_marker_is_untouched_by_a_configuration_fault(
+        self,
+    ) -> None:
+        """The inverse: the configuration-fault marker being set must not
+        be mistaken for the first-run marker by any later session state."""
+        with (
+            tempfile.TemporaryDirectory() as root,
+            tempfile.TemporaryDirectory() as scratch,
+        ):
+            config_path = Path(root) / ".canon" / "config.json"
+            config_path.parent.mkdir(parents=True)
+            config_path.write_text(
+                json.dumps({"verify": "ruff check . && pytest"}), encoding="utf-8"
+            )
+
+            _invoke_main({"cwd": root, "scratchpad_dir": scratch})
+
+            state_dir = Path(scratch) / "canon"
+            self.assertTrue((state_dir / "verify_config_fault_prompted").exists())
+            self.assertFalse((state_dir / "verify_prompted").exists())
 
 
 if __name__ == "__main__":
