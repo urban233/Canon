@@ -27,3 +27,10 @@ plugins/*/evals/results/
 # Editors
 .vscode/
 .idea/
+
+# Agent worktrees live here (see .bazelignore, which has to exclude the
+# same directory for a different reason). `.claude/settings.json` is a
+# committable file -- a project-scoped plugin install writes it and a team
+# is meant to check it in -- so this ignores the worktrees only, never the
+# directory itself.
+.claude/worktrees/

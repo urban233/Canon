@@ -1,0 +1,8 @@
+# Agent worktrees. A Claude Code agent given an isolated worktree gets one
+# under .claude/worktrees/, inside this repository -- and a worktree has
+# its own bazel-* convenience symlinks pointing into Bazel's external
+# tree. `bazel build //...` follows them and fails loading a package it
+# has no business seeing, so a contributor running agents in worktrees
+# cannot build at all until this directory is ignored. Found exactly that
+# way.
+.claude
