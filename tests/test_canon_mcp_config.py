@@ -172,9 +172,7 @@ class VerifyCommandProblemTests(unittest.TestCase):
         self._assert_named_operator_appears_in_the_explanation("pytest 2>&1")
 
     def test_lone_ampersand_operator_appears_in_the_explanation(self) -> None:
-        self._assert_named_operator_appears_in_the_explanation(
-            "ruff check . & pytest"
-        )
+        self._assert_named_operator_appears_in_the_explanation("ruff check . & pytest")
 
     def test_append_redirect_operator_appears_in_the_explanation(self) -> None:
         self._assert_named_operator_appears_in_the_explanation("pytest >> log")
