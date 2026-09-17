@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import io
 import json
+import re
 import subprocess
 import sys
 import tempfile
@@ -542,7 +543,15 @@ class TrailerQuoteParityTests(unittest.TestCase):
     byte-identical before and after the fix -- kept as pins against a
     future change, but by themselves they exercise nothing that a
     no-op rewrite wouldn't also satisfy; the two with a quote character
-    inside the trailer are what actually exercises this property."""
+    inside the trailer are what actually exercises this property.
+
+    This property is necessary but not sufficient for the rewritten
+    command to still parse: repair round 2 found a case where the
+    subsequence was provably intact and the command was still broken
+    (a glued-on quote character defeated a heredoc terminator, which
+    depends on line position, not on quote characters at all). See
+    `HeredocTerminatorTests` below for that case, which this class
+    cannot catch by construction."""
 
     _COMMANDS = [
         # Double-quoted, trailer is the last line. No quote inside the
@@ -602,6 +611,92 @@ class TrailerQuoteParityTests(unittest.TestCase):
                     git_guard._QUOTE_CHAR.findall(command),
                     git_guard._QUOTE_CHAR.findall(stripped),
                 )
+
+
+class HeredocTerminatorTests(unittest.TestCase):
+    """Repair round 2, finding B1. A heredoc terminator (`EOF` in this
+    repo's own commit style) has to be alone on its line to close the
+    heredoc -- that is a property of a line's *position*, not of which
+    quote characters it contains, so no quote-parity or quote-subsequence
+    assertion can see a rewrite that breaks it. Round 1's fix kept a
+    trailer's own quote character but glued it onto the *front* of the
+    following line -- if that following line was a heredoc terminator,
+    the result was `'EOF` instead of `EOF`, which never matches the
+    terminator and leaves the heredoc, and the whole command, unclosed.
+    The subsequence was provably still intact; the command still didn't
+    parse.
+
+    These tests assert on the rewritten command's *shape* -- that the
+    terminator line is exactly `EOF`, alone -- rather than shelling out
+    to `bash -n`, deliberately, even though `bash -n` is what actually
+    answers "does this parse" and is how this defect was first
+    confirmed. Doing that as an automated, CI-gated test turned out to
+    depend on which `bash` happens to be first on `PATH`: this repo's
+    interactive shell resolves a modern one (5.x), but Bazel's sandboxed
+    test run resolves macOS's ancient system `/bin/bash` (3.2), which
+    has its own, unrelated defect -- it can mis-lex a `<<'quoted'`
+    heredoc whenever the heredoc body contains an *odd* total count of
+    `'` or `"`, regardless of where that character sits, because its
+    single-pass lexer still tracks quote balance through heredoc bodies
+    that should be opaque to it. A trailer with exactly one quote
+    character (an ordinary apostrophe in a name) always produces an odd
+    count, so this fix's output -- correct under the invariants it's
+    required to hold -- still fails `bash -n` on that one shell. That is
+    a real, separate finding, reported rather than chased in this round:
+    see git_guard.py's own note by `_TRAILER_LINE` and the round's
+    handback for the evidence. A shape assertion tests the actual
+    contract this fix controls (the terminator's position) without
+    being hostage to which bash binary happens to be resolved when the
+    suite runs."""
+
+    def _assert_terminator_alone(self, command: str, terminator: str) -> None:
+        self.assertRegex(
+            command,
+            rf"(?m)^{re.escape(terminator)}$",
+            msg=f"heredoc terminator {terminator!r} is not alone on its own "
+            f"line in:\n{command}",
+        )
+
+    def test_heredoc_with_an_apostrophe_in_the_trailer_still_closes(self) -> None:
+        command = (
+            "git commit -m \"$(cat <<'EOF'\n"
+            "feat: thing\n\n"
+            "Co-Authored-By: Mary O'Neill <mary@example.com>\n"
+            'EOF\n)"'
+        )
+        stripped = git_guard._strip_attribution(command)
+        self.assertIsNotNone(stripped)
+        assert stripped is not None
+        self.assertNotIn("Co-Authored-By", stripped)
+        self._assert_terminator_alone(stripped, "EOF")
+
+    def test_heredoc_with_a_double_quote_in_the_trailer_still_closes(self) -> None:
+        command = (
+            "git commit -m \"$(cat <<'EOF'\n"
+            "feat: thing\n\n"
+            'Co-Authored-By: "Ada" Lovelace <ada@example.com>\n'
+            'EOF\n)"'
+        )
+        stripped = git_guard._strip_attribution(command)
+        self.assertIsNotNone(stripped)
+        assert stripped is not None
+        self.assertNotIn("Co-Authored-By", stripped)
+        self._assert_terminator_alone(stripped, "EOF")
+
+    def test_quote_free_heredoc_is_still_byte_identical(self) -> None:
+        """The `quotes and` guard in `_rewrite` is load-bearing: without
+        it, a quote-free trailer would also gain a spurious blank line
+        where the trailer used to be. Pinned here as its own test
+        because `test_strips_a_co_authored_by_trailer` only checks
+        substrings, not the exact text."""
+        command = (
+            "git commit -m \"$(cat <<'EOF'\n"
+            "feat: thing\n\n"
+            "Co-Authored-By: Claude Sonnet 5 <noreply@anthropic.com>\n"
+            'EOF\n)"'
+        )
+        expected = "git commit -m \"$(cat <<'EOF'\nfeat: thing\n\nEOF\n)\""
+        self.assertEqual(git_guard._strip_attribution(command), expected)
 
 
 class MiscTests(unittest.TestCase):

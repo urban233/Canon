@@ -250,27 +250,66 @@ def _strip_attribution(command: str) -> str | None:
 
     The fix instead keeps the pattern matching the whole line, and
     rewrites each match to contain only the quote characters that line
-    contained, in their original order -- dropping every other
-    character, including the literal `Co-Authored-By:` label. Because
-    characters outside the match are left untouched, and the
-    characters kept inside it are exactly its quote-character
-    subsequence in order, the sequence of `"` and `'` characters read
-    across the *whole* command is identical before and after, not
-    merely equal in count -- so no character can appear to cross from
-    inside a quoted region to outside it, or vice versa, and no
-    fragment of the trailer's own text can survive. This holds without
-    this hook parsing the shell's quoting rules at all: a shell-aware
-    rewrite would be the more thorough fix, but it turns a hook that
-    runs before every `Bash` call into a shell parser, for a problem
-    this line-local, quote-preserving rewrite already solves.
+    contained, in their original order, plus the line's own trailing
+    newline if it had one and kept at least one quote character --
+    dropping every other character, including the literal
+    `Co-Authored-By:` label. Because characters outside the match are
+    left untouched, and the characters kept inside it are exactly its
+    quote-character subsequence in order, the sequence of `"` and `'`
+    characters read across the *whole* command is identical before and
+    after, not merely equal in count -- so no character can appear to
+    cross from inside a quoted region to outside it, or vice versa, and
+    no fragment of the trailer's own text can survive. This holds
+    without this hook parsing the shell's quoting rules at all: a
+    shell-aware rewrite would be the more thorough fix, but it turns a
+    hook that runs before every `Bash` call into a shell parser, for a
+    problem this line-local, quote-preserving rewrite mostly solves.
+
+    Mostly, not entirely: quote-subsequence invariance is not sufficient
+    for the command to still parse. A heredoc's terminator (`EOF` above)
+    has to be alone on its line to close the heredoc, and that is a
+    property of a line's *position*, not of quote characters -- no
+    quote-preserving rewrite can see it. A trailer whose own text
+    contains a quote character, immediately followed by a heredoc
+    terminator line, used to glue a stray quote onto the front of that
+    terminator (`'EOF` instead of `EOF`), which stops the terminator
+    from matching and leaves the heredoc -- and the command -- unclosed.
+    That is exactly the class of defect issue #58 is about, on the one
+    form this repo's own commit style actually uses. Fixed by keeping
+    the trailer line's own trailing newline in the replacement whenever
+    a quote character survives, so a kept quote lands at the end of the
+    line it came from rather than the start of the next one; a
+    quote-free trailer still collapses to nothing, exactly as it did
+    before this fix, so it can't leave a spurious blank line behind.
 
     A match always includes that literal `Co-Authored-By:` label, which
     contains no quote character, so every match is strictly longer than
     its replacement and this function can never rewrite a match back
-    into the text it started as -- it never newly returns None."""
-    stripped = _TRAILER_LINE.sub(
-        lambda m: "".join(_QUOTE_CHAR.findall(m.group())), command
-    )
+    into the text it started as -- it never newly returns None.
+
+    Known residual gap, found while fixing the terminator-gluing defect
+    above and deliberately not chased further: macOS's system `/bin/
+    bash` (3.2, still the default on an unmodified Mac) mis-lexes a
+    `<<'quoted'` heredoc whenever its body contains an *odd* total count
+    of `'` or of `"`, anywhere in the body, regardless of position --
+    its single-pass lexer keeps tracking quote balance through what
+    should be an opaque heredoc. A trailer with exactly one quote
+    character (an ordinary apostrophe in a name) always leaves an odd
+    count once the rest of the trailer's text is removed, so this fix's
+    output, correct under both invariants above and confirmed against a
+    modern bash (5.x), can still fail to parse under that one shell.
+    Closing that gap without breaking the subsequence invariant would
+    mean knowing which surviving quote characters are structurally
+    load-bearing and which are incidental prose -- exactly the
+    shell-parsing judgement this hook is built to avoid making. Left as
+    a reported, not fixed, finding."""
+
+    def _rewrite(match: re.Match[str]) -> str:
+        line = match.group()
+        quotes = "".join(_QUOTE_CHAR.findall(line))
+        return quotes + "\n" if quotes and line.endswith("\n") else quotes
+
+    stripped = _TRAILER_LINE.sub(_rewrite, command)
     return stripped if stripped != command else None
 
 
