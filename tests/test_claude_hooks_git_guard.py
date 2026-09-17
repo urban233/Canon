@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import io
 import json
+import re
 import subprocess
 import sys
 import tempfile
@@ -412,6 +413,291 @@ class AttributionStrippingTests(unittest.TestCase):
             self.assertEqual(hook_output["permissionDecision"], "allow")
             self.assertNotIn("Co-Authored-By", hook_output["updatedInput"]["command"])
             self.assertIn("fix: thing", hook_output["updatedInput"]["command"])
+
+    def test_trailer_as_last_line_of_double_quoted_message(self) -> None:
+        """Issue #58: when the trailer is the last line inside a
+        double-quoted `-m` message, the closing quote sits on the same
+        regex line as the trailer. The old pattern's `.*` ran to the
+        end of that line and took the quote with it, leaving an
+        unbalanced command behind."""
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            _init_repo(root)
+            command = (
+                'git commit -m "feat: thing\n\n'
+                'Co-Authored-By: Claude Sonnet 5 <noreply@anthropic.com>"'
+            )
+            output = _invoke_main(_payload(root, command))
+            payload = json.loads(output)
+            hook_output = payload["hookSpecificOutput"]
+            updated = hook_output["updatedInput"]["command"]
+            self.assertEqual(hook_output["permissionDecision"], "allow")
+            self.assertNotIn("Co-Authored-By", updated)
+            self.assertEqual(updated.count('"'), command.count('"'))
+            self.assertTrue(updated.endswith('"'))
+
+    def test_trailer_as_last_line_of_single_quoted_message(self) -> None:
+        """Same defect, single-quoted form."""
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            _init_repo(root)
+            command = (
+                "git commit -m 'feat: thing\n\n"
+                "Co-Authored-By: Claude Sonnet 5 <noreply@anthropic.com>'"
+            )
+            output = _invoke_main(_payload(root, command))
+            payload = json.loads(output)
+            hook_output = payload["hookSpecificOutput"]
+            updated = hook_output["updatedInput"]["command"]
+            self.assertEqual(hook_output["permissionDecision"], "allow")
+            self.assertNotIn("Co-Authored-By", updated)
+            self.assertEqual(updated.count("'"), command.count("'"))
+            self.assertTrue(updated.endswith("'"))
+
+    def test_trailer_followed_by_further_message_text(self) -> None:
+        """A trailer that is not the last line must still be stripped
+        cleanly, leaving the text after it intact."""
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            _init_repo(root)
+            command = (
+                'git commit -m "feat: thing\n\n'
+                "Co-Authored-By: Claude Sonnet 5 <noreply@anthropic.com>\n"
+                'See-also: something else"'
+            )
+            output = _invoke_main(_payload(root, command))
+            payload = json.loads(output)
+            hook_output = payload["hookSpecificOutput"]
+            updated = hook_output["updatedInput"]["command"]
+            self.assertEqual(hook_output["permissionDecision"], "allow")
+            self.assertNotIn("Co-Authored-By", updated)
+            self.assertIn("See-also: something else", updated)
+            self.assertEqual(updated.count('"'), command.count('"'))
+
+    def test_trailer_with_an_apostrophe_in_the_name_is_fully_removed(self) -> None:
+        """Repair round 1, finding 1: a trailer whose own text contains
+        a quote character (an ordinary thing for a human co-author's
+        name to have -- `_TRAILER_LINE` matches any `Co-Authored-By:`
+        trailer, not only Claude's) must not leave any readable
+        fragment of that text behind. Deleting the whole matched line
+        outright would also delete the closing quote sharing it; the
+        fix instead keeps only the quote characters the match
+        contained, so nothing of "O'Neill" survives -- just the bare
+        apostrophe that was part of the command's own quoting."""
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            _init_repo(root)
+            command = (
+                'git commit -m "feat: thing\n\n'
+                "Co-Authored-By: Mary O'Neill <mary@example.com>\""
+            )
+            output = _invoke_main(_payload(root, command))
+            payload = json.loads(output)
+            hook_output = payload["hookSpecificOutput"]
+            updated = hook_output["updatedInput"]["command"]
+            self.assertEqual(hook_output["permissionDecision"], "allow")
+            self.assertNotIn("Co-Authored-By", updated)
+            self.assertNotIn("O'Neill", updated)
+            self.assertNotIn("mary@example.com", updated)
+            self.assertEqual(
+                git_guard._QUOTE_CHAR.findall(command),
+                git_guard._QUOTE_CHAR.findall(updated),
+            )
+
+    def test_trailer_with_a_double_quote_in_the_name_is_fully_removed(self) -> None:
+        """Same defect, with the trailer's own quote character matching
+        the type used to enclose the `-m` message rather than the
+        other type."""
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            _init_repo(root)
+            command = (
+                "git commit -m 'feat: thing\n\n"
+                'Co-Authored-By: "Ada" Lovelace <ada@example.com>\''
+            )
+            output = _invoke_main(_payload(root, command))
+            payload = json.loads(output)
+            hook_output = payload["hookSpecificOutput"]
+            updated = hook_output["updatedInput"]["command"]
+            self.assertEqual(hook_output["permissionDecision"], "allow")
+            self.assertNotIn("Co-Authored-By", updated)
+            self.assertNotIn("Ada", updated)
+            self.assertNotIn("Lovelace", updated)
+            self.assertNotIn("ada@example.com", updated)
+            self.assertEqual(
+                git_guard._QUOTE_CHAR.findall(command),
+                git_guard._QUOTE_CHAR.findall(updated),
+            )
+
+
+class TrailerQuoteParityTests(unittest.TestCase):
+    """`_strip_attribution` must never change the *subsequence* of quote
+    characters in the command it rewrites -- see its docstring in
+    git_guard.py, and issue #58, for why. That is stronger than equal
+    counts: it means no `"` or `'` can appear to move from inside a
+    quoted region to outside it (or vice versa), which is what rules
+    out the fix injecting anything. This is the property the fix has to
+    hold; the specific cases in `AttributionStrippingTests` are
+    examples of it, not a substitute for it. Three of the commands
+    below contain no quote character inside the trailer text and are
+    byte-identical before and after the fix -- kept as pins against a
+    future change, but by themselves they exercise nothing that a
+    no-op rewrite wouldn't also satisfy; the two with a quote character
+    inside the trailer are what actually exercises this property.
+
+    This property is necessary but not sufficient for the rewritten
+    command to still parse: repair round 2 found a case where the
+    subsequence was provably intact and the command was still broken
+    (a glued-on quote character defeated a heredoc terminator, which
+    depends on line position, not on quote characters at all). See
+    `HeredocTerminatorTests` below for that case, which this class
+    cannot catch by construction."""
+
+    _COMMANDS = [
+        # Double-quoted, trailer is the last line. No quote inside the
+        # trailer text: a pin, not a stress case.
+        (
+            'git commit -m "feat: thing\n\n'
+            'Co-Authored-By: Claude Sonnet 5 <noreply@anthropic.com>"'
+        ),
+        # Single-quoted, trailer is the last line. Same pin, other
+        # quote type.
+        (
+            "git commit -m 'feat: thing\n\n"
+            "Co-Authored-By: Claude Sonnet 5 <noreply@anthropic.com>'"
+        ),
+        # Trailer followed by further message text. Also a pin.
+        (
+            'git commit -m "feat: thing\n\n'
+            "Co-Authored-By: Claude Sonnet 5 <noreply@anthropic.com>\n"
+            'See-also: something else"'
+        ),
+        # The heredoc form, which must keep working exactly as it does
+        # today -- it proves nothing about the fix on its own, but the
+        # invariant must hold for it too. Also a pin.
+        (
+            "git commit -m \"$(cat <<'EOF'\n"
+            "feat: thing\n\n"
+            "Co-Authored-By: Claude Sonnet 5 <noreply@anthropic.com>\n"
+            'EOF\n)"'
+        ),
+        # bash -c wrapping a single-quoted commit message. Also a pin.
+        (
+            "bash -c \"git commit -m 'fix: thing\n\n"
+            "Co-Authored-By: Claude Sonnet 5 <noreply@anthropic.com>\n"
+            "done'\""
+        ),
+        # An apostrophe inside the trailer's own name, double-quoted
+        # message -- the actual stress case for finding 1.
+        (
+            'git commit -m "feat: thing\n\n'
+            "Co-Authored-By: Mary O'Neill <mary@example.com>\""
+        ),
+        # A double quote inside the trailer's own name, single-quoted
+        # message -- same stress case, other quote type.
+        (
+            "git commit -m 'feat: thing\n\n"
+            'Co-Authored-By: "Ada" Lovelace <ada@example.com>\''
+        ),
+    ]
+
+    def test_quote_subsequence_is_unchanged_for_every_rewritten_command(self) -> None:
+        for command in self._COMMANDS:
+            with self.subTest(command=command):
+                stripped = git_guard._strip_attribution(command)
+                self.assertIsNotNone(stripped)
+                assert stripped is not None
+                self.assertEqual(
+                    git_guard._QUOTE_CHAR.findall(command),
+                    git_guard._QUOTE_CHAR.findall(stripped),
+                )
+
+
+class HeredocTerminatorTests(unittest.TestCase):
+    """Repair round 2, finding B1. A heredoc terminator (`EOF` in this
+    repo's own commit style) has to be alone on its line to close the
+    heredoc -- that is a property of a line's *position*, not of which
+    quote characters it contains, so no quote-parity or quote-subsequence
+    assertion can see a rewrite that breaks it. Round 1's fix kept a
+    trailer's own quote character but glued it onto the *front* of the
+    following line -- if that following line was a heredoc terminator,
+    the result was `'EOF` instead of `EOF`, which never matches the
+    terminator and leaves the heredoc, and the whole command, unclosed.
+    The subsequence was provably still intact; the command still didn't
+    parse.
+
+    These tests assert on the rewritten command's *shape* -- that the
+    terminator line is exactly `EOF`, alone -- rather than shelling out
+    to `bash -n`, deliberately, even though `bash -n` is what actually
+    answers "does this parse" and is how this defect was first
+    confirmed. Doing that as an automated, CI-gated test turned out to
+    depend on which `bash` happens to be first on `PATH`: this repo's
+    interactive shell resolves a modern one (5.x), but Bazel's sandboxed
+    test run resolves macOS's ancient system `/bin/bash` (3.2), which
+    has its own, unrelated defect -- it can mis-lex a `<<'quoted'`
+    heredoc whenever the heredoc body is not quote-*balanced* when read
+    as ordinary shell text, because its single-pass lexer still tracks
+    quote balance through heredoc bodies that should be opaque to it. A
+    trailer carrying a single apostrophe in a name is the common way to
+    get there, so this fix's output -- correct under the invariants it's
+    required to hold -- still fails `bash -n` on that one shell. The
+    unrewritten command fails there too: the rewrite preserves the quote
+    subsequence, which is what that shell keys on, so it cannot flip the
+    verdict either way. That is a real, separate finding, reported
+    rather than chased: see `_strip_attribution`'s own docstring in
+    git_guard.py for the full note. A shape assertion tests the actual
+    contract this fix controls (the terminator's position) without
+    being hostage to which bash binary happens to be resolved when the
+    suite runs."""
+
+    def _assert_terminator_alone(self, command: str, terminator: str) -> None:
+        self.assertRegex(
+            command,
+            rf"(?m)^{re.escape(terminator)}$",
+            msg=f"heredoc terminator {terminator!r} is not alone on its own "
+            f"line in:\n{command}",
+        )
+
+    def test_heredoc_with_an_apostrophe_in_the_trailer_still_closes(self) -> None:
+        command = (
+            "git commit -m \"$(cat <<'EOF'\n"
+            "feat: thing\n\n"
+            "Co-Authored-By: Mary O'Neill <mary@example.com>\n"
+            'EOF\n)"'
+        )
+        stripped = git_guard._strip_attribution(command)
+        self.assertIsNotNone(stripped)
+        assert stripped is not None
+        self.assertNotIn("Co-Authored-By", stripped)
+        self._assert_terminator_alone(stripped, "EOF")
+
+    def test_heredoc_with_a_double_quote_in_the_trailer_still_closes(self) -> None:
+        command = (
+            "git commit -m \"$(cat <<'EOF'\n"
+            "feat: thing\n\n"
+            'Co-Authored-By: "Ada" Lovelace <ada@example.com>\n'
+            'EOF\n)"'
+        )
+        stripped = git_guard._strip_attribution(command)
+        self.assertIsNotNone(stripped)
+        assert stripped is not None
+        self.assertNotIn("Co-Authored-By", stripped)
+        self._assert_terminator_alone(stripped, "EOF")
+
+    def test_quote_free_heredoc_is_still_byte_identical(self) -> None:
+        """The `quotes and` guard in `_rewrite` is load-bearing: without
+        it, a quote-free trailer would also gain a spurious blank line
+        where the trailer used to be. Pinned here as its own test
+        because `test_strips_a_co_authored_by_trailer` only checks
+        substrings, not the exact text."""
+        command = (
+            "git commit -m \"$(cat <<'EOF'\n"
+            "feat: thing\n\n"
+            "Co-Authored-By: Claude Sonnet 5 <noreply@anthropic.com>\n"
+            'EOF\n)"'
+        )
+        expected = "git commit -m \"$(cat <<'EOF'\nfeat: thing\n\nEOF\n)\""
+        self.assertEqual(git_guard._strip_attribution(command), expected)
 
 
 class MiscTests(unittest.TestCase):

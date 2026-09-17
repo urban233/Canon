@@ -181,7 +181,17 @@ _DESTRUCTIVE_PATTERNS = [
 ]
 
 _COMMIT_PATTERN = re.compile(r"\bgit\s+commit\b", re.IGNORECASE)
+# `.*` deliberately still runs to the end of the line, exactly as it did
+# before issue #58 -- `_strip_attribution` below is what changed to fix
+# that issue, not this pattern. See its docstring for why matching the
+# whole line and then filtering the match down to quote characters,
+# rather than narrowing what this pattern matches in the first place,
+# is the fix.
 _TRAILER_LINE = re.compile(r"^[ \t]*Co-Authored-By:.*\n?", re.IGNORECASE | re.MULTILINE)
+# Used by `_strip_attribution` to keep only the quote characters a
+# matched trailer line contained, in order -- see that function's
+# docstring.
+_QUOTE_CHAR = re.compile(r"[\"']")
 
 _QUOTED_SPAN = re.compile(r"'[^']*'|\"[^\"]*\"")
 
@@ -222,8 +232,94 @@ def _matched_destructive_operation(command: str) -> str | None:
 
 def _strip_attribution(command: str) -> str | None:
     """The command with every `Co-Authored-By:` trailer line removed, or
-    None if there was nothing to strip."""
-    stripped = _TRAILER_LINE.sub("", command)
+    None if there was nothing to strip.
+
+    Issue #58: `_TRAILER_LINE`'s `.*` runs to the end of the line, so a
+    trailer that happens to be the last line inside a quoted `-m`
+    message shares that line with the closing quote. Deleting the whole
+    matched line outright -- this function's first fix -- deletes that
+    quote along with it, handing back an unbalanced command through
+    `updatedInput`. Narrowing the pattern to stop at any quote
+    character fixes that, but trades it for a quieter defect: a trailer
+    whose own text contains a `'` or a `"` (an ordinary thing for a
+    human co-author's name to have, e.g. "Mary O'Neill", and this
+    pattern matches any `Co-Authored-By:` trailer, not only Claude's)
+    is then only partially removed, leaving a readable fragment of the
+    trailer in the command while `log_decision` still reports a clean
+    strip.
+
+    The fix instead keeps the pattern matching the whole line, and
+    rewrites each match to contain only the quote characters that line
+    contained, in their original order, plus the line's own trailing
+    newline if it had one and kept at least one quote character --
+    dropping every other character, including the literal
+    `Co-Authored-By:` label. Because characters outside the match are
+    left untouched, and the characters kept inside it are exactly its
+    quote-character subsequence in order, the sequence of `"` and `'`
+    characters read across the *whole* command is identical before and
+    after, not merely equal in count -- so no character can appear to
+    cross from inside a quoted region to outside it, or vice versa, and
+    no fragment of the trailer's own text can survive. This holds
+    without this hook parsing the shell's quoting rules at all: a
+    shell-aware rewrite would be the more thorough fix, but it turns a
+    hook that runs before every `Bash` call into a shell parser, for a
+    problem this line-local, quote-preserving rewrite mostly solves.
+
+    Mostly, not entirely: quote-subsequence invariance is not sufficient
+    for the command to still parse. A heredoc's terminator (`EOF` above)
+    has to be alone on its line to close the heredoc, and that is a
+    property of a line's *position*, not of quote characters -- no
+    quote-preserving rewrite can see it. A trailer whose own text
+    contains a quote character, immediately followed by a heredoc
+    terminator line, used to glue a stray quote onto the front of that
+    terminator (`'EOF` instead of `EOF`), which stops the terminator
+    from matching and leaves the heredoc -- and the command -- unclosed.
+    That is exactly the class of defect issue #58 is about, on the one
+    form this repo's own commit style actually uses. Fixed by keeping
+    the trailer line's own trailing newline in the replacement whenever
+    a quote character survives, so a kept quote lands at the end of the
+    line it came from rather than the start of the next one; a
+    quote-free trailer still collapses to nothing, exactly as it did
+    before this fix, so it can't leave a spurious blank line behind.
+
+    A match always includes that literal `Co-Authored-By:` label, which
+    contains no quote character, so every match is strictly longer than
+    its replacement and this function can never rewrite a match back
+    into the text it started as -- it never newly returns None.
+
+    Known residual gap, found while fixing the terminator-gluing defect
+    above and deliberately not chased further: macOS's system
+    `/bin/bash` (3.2, still the default on an unmodified Mac) mis-lexes
+    a `<<'quoted'` heredoc whenever its body is not quote-*balanced*
+    when read as ordinary shell text -- its single-pass lexer keeps
+    tracking quote balance through what should be an opaque heredoc. A
+    single apostrophe in a name is the common way to get there. Balance,
+    not a count, is the rule: a body of `'"'` is odd-counted and parses
+    fine, because the `"` nests inside the `'...'` pair, while `a'b"c`
+    is even-counted and fails, because the `'` opens and never closes.
+
+    This hook cannot cause that failure, and does not worsen it. The
+    rewrite leaves the command's quote subsequence identical, and bash
+    3.2's verdict is a function of exactly that structure, so the
+    verdict is the same before and after -- measured, not argued: seven
+    co-author names across three command forms and three shells, input
+    versus output, produced zero cases where a command that parsed
+    before failed after. Every bash-3.2 failure is already present in
+    the unrewritten command. It is also unreachable through Claude
+    Code, whose `Bash` tool runs the user's `$SHELL`.
+
+    Closing the gap anyway -- rewriting so the output parses under a
+    shell the input already failed under -- would mean knowing which
+    surviving quote characters are structurally load-bearing and which
+    are incidental prose, exactly the shell-parsing judgement this hook
+    is built to avoid making. Left as a reported, not fixed, finding."""
+
+    def _rewrite(match: re.Match[str]) -> str:
+        line = match.group()
+        quotes = "".join(_QUOTE_CHAR.findall(line))
+        return quotes + "\n" if quotes and line.endswith("\n") else quotes
+
+    stripped = _TRAILER_LINE.sub(_rewrite, command)
     return stripped if stripped != command else None
 
 
