@@ -411,3 +411,130 @@ directories. `just sync-check` fails if either vendored copy drifts from
   on top of Codex itself will do) — this is a short, cheap, one-time check,
   not a recurring cost, and the defensive coding above means shipping without
   it first is safe, just not yet fully verified.
+
+## Part 4: `plugins/codex/plugin.json` vs. `plugins/codex/.codex-plugin/plugin.json` — settled empirically
+
+The release-packaging branch found `plugins/codex/plugin.json` (at the
+plugin's root) and `plugins/codex/.codex-plugin/plugin.json` byte-identical,
+with no record of which one `codex plugin add` actually reads. This was
+settled by mutating each copy in turn against a real `codex plugin add
+codex@canon` from this checkout (marketplace added via `codex plugin
+marketplace add .`), not inferred from the docs or from Claude Code's
+`.claude-plugin`/`.claude-plugin` convention:
+
+- **Either file alone is sufficient.** With only `.codex-plugin/plugin.json`
+  present (root renamed away), install succeeded and the installed cache
+  carried just that file. With only the root `plugin.json` present
+  (`.codex-plugin/plugin.json` renamed away instead), install also
+  succeeded, cache carrying just the root file. Neither location is
+  required by itself.
+- **When both are present, the root `plugin.json` is the one Codex
+  actually validates and uses; `.codex-plugin/plugin.json` is ignored.**
+  Confirmed by giving the two copies different `name` fields and watching
+  which one Codex checks against the marketplace entry's name (the same
+  check `docs/codex-hook-surface.md` Part 2 already documented as strict
+  under Codex, unlike Claude Code): with the root copy's `name` matching
+  the marketplace entry (`codex`) and `.codex-plugin/plugin.json`'s `name`
+  deliberately mismatched, `codex plugin add codex@canon` **succeeded**
+  — proving the mismatched `.codex-plugin` copy was never read. Flipping
+  it — root mismatched, `.codex-plugin/plugin.json` matching — made the
+  same command **fail** with `plugin.json name "..." does not match
+  marketplace plugin name "codex"`, naming the root file's value in the
+  error. This is decisive: when both exist, Codex reads the root file and
+  the `.codex-plugin` copy is inert, not merely untested.
+
+**Resolution:** `plugins/codex/.codex-plugin/plugin.json` was deleted;
+`plugins/codex/plugin.json` (root) is the sole, load-bearing manifest for
+this plugin. This is specific to `plugins/codex`'s own layout, where a
+root-level `plugin.json` already existed before `.codex-plugin/` was ever
+added (see Part 2's install history above) — it does not contradict the
+convention every real OpenAI-shipped skills-only plugin on this machine
+uses (`.codex-plugin/plugin.json` only, no root copy at all, confirmed
+against `~/.codex/plugins/cache/openai-curated-remote/plugin-management`
+and `openai-bundled/visualize`), which is why `plugins/canon-companion`'s
+new Codex manifest (added by this same branch) is placed at
+`.codex-plugin/plugin.json` with no root copy, matching that convention
+exactly rather than mirroring `plugins/codex`'s now-resolved duplicate.
+
+**The alternative this evidence also supports, and why it wasn't taken:**
+"either file alone is sufficient" cuts both ways — it would have been just
+as defensible to move `plugins/codex`'s manifest *into* `.codex-plugin/`
+instead, making every plugin in this repo use one convention
+(`.codex-plugin/plugin.json` only, matching every real OpenAI-shipped
+plugin). That was not done here because `plugins/codex/plugin.json` at
+root is the copy every other file in this plugin — `docs/codex-hook-surface.md`
+Part 2's install history, this repo's own muscle memory for where to look
+— already points at, and moving it buys convention-uniformity at the cost
+of a rename that touches nothing functionally broken. Recorded here as a
+live option, not a closed question: whoever finds a second reason to
+prefer the OpenAI-wide convention should not have to redo this
+investigation to justify moving it.
+
+## Part 5: does canon-companion's `skills` key actually matter for skill discovery?
+
+The release-packaging branch's `sync-manifests` generator adds `"skills":
+"./skills/"` to canon-companion's Codex manifest, calling it "the key
+every OpenAI-shipped skills plugin declares" — a description, not a claim
+that Codex requires it. That distinction was checked empirically, using
+`codex debug prompt-input` (a genuinely free, local, no-model-call command
+that renders the exact prompt input a session would send, including the
+full skills list Codex discovered) rather than by running a real session:
+
+- With canon-companion installed (its manifest **carrying** the `skills`
+  key), `codex debug prompt-input` listed
+  `canon-companion:audit-google-python-style` in the model-visible skills
+  list, at its real installed-cache path.
+- With canon-companion removed and `codex@canon` installed instead —
+  `plugins/codex/plugin.json` ships seven skills and has **no `skills`
+  key at all** — all seven (`codex:decide`, `codex:frame`, `codex:plan`,
+  `codex:review`, `codex:review-change`, `codex:ship`,
+  `codex:testing-craft`) were listed too, identically discoverable.
+
+**Conclusion: the `skills` key is not required for discovery when skills
+live at the default `./skills/` path**, which every plugin in this repo
+does. `plugins/codex` is not shipping seven undiscoverable skills at
+0.1.0 — that specific release risk is ruled out by this test, not merely
+assumed safe. What the key is actually *for* (an explicit override for a
+non-default skills path, forward-compatibility, or purely documentary)
+remains unconfirmed; this session did not find anything in the CLI's own
+help output or behavior that pinned down its purpose beyond "every real
+example declares it." canon-companion's manifest keeps declaring it
+regardless, matching every other real installed example on this machine —
+harmless if inert, and one less way this plugin's manifest looks
+different from a normal one.
+
+Same install/removal discipline as elsewhere in this doc: `~/.codex/config.toml`
+was checksummed before either install, and confirmed byte-identical to
+that checksum after both plugins and the `canon` marketplace were removed
+again.
+
+## Part 6: `codex plugin add canon-companion@canon` — the plan's `## Done` criterion, confirmed
+
+Everything above in Part 4 confirmed the `plugins/codex` manifest
+question; this is the separate, and newer, claim: that canon-companion —
+previously Claude-only by omission — actually installs on Codex. Run for
+real from this checkout (`codex plugin marketplace add .` then `codex
+plugin add canon-companion@canon`):
+
+- The command reported success (`Added plugin canon-companion from
+  marketplace canon`) and installed to
+  `~/.codex/plugins/cache/canon/canon-companion/0.0.1/`.
+- The installed cache directory carried the generated
+  `.codex-plugin/plugin.json` (read correctly — see Part 5's discovery
+  test, which used this exact installed copy) alongside the untouched
+  `.claude-plugin/plugin.json`, `skills/audit-google-python-style/SKILL.md`,
+  and the plugin's other files (BUILD.bazel, evals/, references/,
+  scripts/) copied verbatim.
+- `codex plugin list` reported `canon-companion@canon` as `installed,
+  enabled`.
+- Part 5's `codex debug prompt-input` run against this exact installed
+  copy is what confirmed the skill is in the model-visible skills list,
+  not just present as a file in the cache.
+
+**What this does not confirm:** no live, real `codex exec`/interactive
+session was run asking the model to actually invoke
+`$audit-google-python-style`. The cache contents, the enabled status, and
+the model-visible skills list are all confirmed directly against the real
+CLI; whether a session in practice picks the skill and completes the
+workflow correctly was not exercised, and is a smaller, cheaper gap than
+"does it install at all" was before this branch.

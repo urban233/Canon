@@ -141,6 +141,15 @@ codex plugin marketplace add urban233/Canon
 codex plugin add codex@canon
 ```
 
+Custom MCP servers connect to Codex intermittently right now -- a
+Codex-side bug, not something wrong with this plugin -- so `canon_position`,
+`canon_plan`, `canon_review`, `canon_evidence`, and `canon_ship` may be
+missing from a session entirely, or hang on first use; start a fresh
+session if that happens, rather than retrying the call in the one where
+the tools never showed up. Every hook, skill, and reviewer subagent works
+independently of it. See `plugins/codex/README.md`'s "MCP connectivity is
+intermittent" section for what was actually confirmed.
+
 This is the only install scope Codex's plugin manager has -- unlike
 Claude Code, there is no `--scope project` flag, and `codex plugin add`
 always writes into your own global `~/.codex/config.toml`, regardless of
@@ -171,10 +180,16 @@ about this port from the Claude plugin are in
 
 `canon-companion` is a separate, opt-in plugin for code-quality skills that
 should not load with Canon's workflow core. Install it from the same
-marketplace only when needed:
+marketplace only when needed -- Claude Code:
 
 ```
 /plugin install canon-companion@canon
+```
+
+or Codex:
+
+```sh
+codex plugin add canon-companion@canon
 ```
 
 Its first skill, `$audit-google-python-style`, performs a read-only audit and
