@@ -181,7 +181,18 @@ _DESTRUCTIVE_PATTERNS = [
 ]
 
 _COMMIT_PATTERN = re.compile(r"\bgit\s+commit\b", re.IGNORECASE)
-_TRAILER_LINE = re.compile(r"^[ \t]*Co-Authored-By:.*\n?", re.IGNORECASE | re.MULTILINE)
+# `[^"'\n]*`, not `.*` -- issue #58. The old `.*` ran to the end of the
+# line, so when the trailer was the last line inside a quoted `-m`
+# message the closing quote sat on that same line and was removed along
+# with it, leaving an unbalanced command in `updatedInput`. Excluding
+# both quote characters from the match means the substitution can never
+# delete one, whatever the surrounding quoting looks like: the rewrite
+# is guaranteed to preserve the count of `"` and of `'` in the command,
+# without this hook having to understand the quoting itself (see the
+# module docstring's stance against shell-aware parsing here).
+_TRAILER_LINE = re.compile(
+    r"^[ \t]*Co-Authored-By:[^\"'\n]*\n?", re.IGNORECASE | re.MULTILINE
+)
 
 _QUOTED_SPAN = re.compile(r"'[^']*'|\"[^\"]*\"")
 
