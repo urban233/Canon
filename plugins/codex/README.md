@@ -94,6 +94,12 @@ marketplace's manifest actually needs to be, not `.claude-plugin/`'s
 `.codex-plugin/` analogue, which this port tried first and which Codex
 rejects outright.)
 
+[`canon-companion`](../canon-companion) -- the same opt-in code-quality
+skills plugin the root README describes for Claude Code -- installs on
+Codex from the same marketplace, the same way: `codex plugin add
+canon-companion@canon`. It has no hook, MCP server, or bundled subagent, so
+none of the install steps below apply to it.
+
 Codex loads a project's own `.codex/` layer -- config, hooks, rules -- only
 for a **trusted** project. Mark this checkout trusted the first time you use
 it here (via the CLI's own trust prompt, or `-c

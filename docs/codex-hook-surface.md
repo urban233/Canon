@@ -411,3 +411,47 @@ directories. `just sync-check` fails if either vendored copy drifts from
   on top of Codex itself will do) — this is a short, cheap, one-time check,
   not a recurring cost, and the defensive coding above means shipping without
   it first is safe, just not yet fully verified.
+
+## Part 4: `plugins/codex/plugin.json` vs. `plugins/codex/.codex-plugin/plugin.json` — settled empirically
+
+The release-packaging branch found `plugins/codex/plugin.json` (at the
+plugin's root) and `plugins/codex/.codex-plugin/plugin.json` byte-identical,
+with no record of which one `codex plugin add` actually reads. This was
+settled by mutating each copy in turn against a real `codex plugin add
+codex@canon` from this checkout (marketplace added via `codex plugin
+marketplace add .`), not inferred from the docs or from Claude Code's
+`.claude-plugin`/`.claude-plugin` convention:
+
+- **Either file alone is sufficient.** With only `.codex-plugin/plugin.json`
+  present (root renamed away), install succeeded and the installed cache
+  carried just that file. With only the root `plugin.json` present
+  (`.codex-plugin/plugin.json` renamed away instead), install also
+  succeeded, cache carrying just the root file. Neither location is
+  required by itself.
+- **When both are present, the root `plugin.json` is the one Codex
+  actually validates and uses; `.codex-plugin/plugin.json` is ignored.**
+  Confirmed by giving the two copies different `name` fields and watching
+  which one Codex checks against the marketplace entry's name (the same
+  check `docs/codex-hook-surface.md` Part 2 already documented as strict
+  under Codex, unlike Claude Code): with the root copy's `name` matching
+  the marketplace entry (`codex`) and `.codex-plugin/plugin.json`'s `name`
+  deliberately mismatched, `codex plugin add codex@canon` **succeeded**
+  — proving the mismatched `.codex-plugin` copy was never read. Flipping
+  it — root mismatched, `.codex-plugin/plugin.json` matching — made the
+  same command **fail** with `plugin.json name "..." does not match
+  marketplace plugin name "codex"`, naming the root file's value in the
+  error. This is decisive: when both exist, Codex reads the root file and
+  the `.codex-plugin` copy is inert, not merely untested.
+
+**Resolution:** `plugins/codex/.codex-plugin/plugin.json` was deleted;
+`plugins/codex/plugin.json` (root) is the sole, load-bearing manifest for
+this plugin. This is specific to `plugins/codex`'s own layout, where a
+root-level `plugin.json` already existed before `.codex-plugin/` was ever
+added (see Part 2's install history above) — it does not contradict the
+convention every real OpenAI-shipped skills-only plugin on this machine
+uses (`.codex-plugin/plugin.json` only, no root copy at all, confirmed
+against `~/.codex/plugins/cache/openai-curated-remote/plugin-management`
+and `openai-bundled/visualize`), which is why `plugins/canon-companion`'s
+new Codex manifest (added by this same branch) is placed at
+`.codex-plugin/plugin.json` with no root copy, matching that convention
+exactly rather than mirroring `plugins/codex`'s now-resolved duplicate.

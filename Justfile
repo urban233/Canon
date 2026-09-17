@@ -78,9 +78,55 @@ sync-mcp:
         find "$dest" -name '__pycache__' -type d -exec rm -rf {} +
     done
 
-# Fails if a vendored copy has drifted from src/canon_hooks or
-# src/canon_mcp -- the regression guard for sync-hooks/sync-mcp, part of
-# `just ci`.
+# decide, review-change, ship and testing-craft are byte-identical between
+# plugins/claude/skills and plugins/codex/skills, so they're copied rather
+# than hand-maintained twice, the same reasoning as sync-hooks/sync-mcp.
+# frame, plan and review are NOT here: they genuinely differ (Codex has no
+# ExitPlanMode tool), and that divergence is a decision recorded here, not
+# a silent omission -- see the plan this branch followed and
+# plugins/codex/README.md.
+_SHARED_SKILL_DIRS := "decide review-change ship testing-craft"
+
+# Copy the four shared skills from plugins/claude/skills into
+# plugins/codex/skills. plugins/claude/skills is the source of truth: it's
+# the copy the eval suite actually exercises, so the tested copy is the
+# canonical one. Neither copy's text is ever hand-edited to fix drift --
+# fix plugins/claude/skills and run this to propagate it.
+sync-skills:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    for s in {{_SHARED_SKILL_DIRS}}; do
+        rm -rf "plugins/codex/skills/$s"
+        cp -R "plugins/claude/skills/$s" "plugins/codex/skills/$s"
+        find "plugins/codex/skills/$s" -name '__pycache__' -type d -exec rm -rf {} +
+    done
+
+# canon-companion is a skills-only plugin with nothing platform-specific in
+# it (no hook, no MCP server, no bundled subagent), so its Codex manifest
+# is generated from its Claude one plus the one key Codex needs
+# ("skills") instead of hand-maintaining a second copy -- two hand-edited
+# manifests for the same plugin is exactly the duplication this branch
+# exists to stop being casual about.
+sync-manifests:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    python3 - <<'PY'
+    import json
+    from pathlib import Path
+
+    src = Path("plugins/canon-companion/.claude-plugin/plugin.json")
+    dest = Path("plugins/canon-companion/.codex-plugin/plugin.json")
+    data = json.loads(src.read_text())
+    generated = {"$schema": "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json"}
+    generated.update(data)
+    generated["skills"] = "./skills/"
+    dest.write_text(json.dumps(generated, indent=2) + "\n")
+    PY
+
+# Fails if a vendored copy has drifted from src/canon_hooks, src/canon_mcp,
+# the four shared skills, or canon-companion's generated Codex manifest --
+# the regression guard for sync-hooks/sync-mcp/sync-skills/sync-manifests,
+# part of `just ci`.
 sync-check:
     #!/usr/bin/env bash
     set -euo pipefail
@@ -101,6 +147,30 @@ sync-check:
             drifted=1
         fi
     done
+    for s in {{_SHARED_SKILL_DIRS}}; do
+        if ! diff -rq "plugins/claude/skills/$s" "plugins/codex/skills/$s" > /dev/null 2>&1; then
+            echo "drifted: plugins/codex/skills/$s (run 'just sync-skills')" >&2
+            drifted=1
+        fi
+    done
+    tmp_manifest="$(mktemp)"
+    python3 - "$tmp_manifest" <<'PY'
+    import json
+    import sys
+    from pathlib import Path
+
+    src = Path("plugins/canon-companion/.claude-plugin/plugin.json")
+    data = json.loads(src.read_text())
+    generated = {"$schema": "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json"}
+    generated.update(data)
+    generated["skills"] = "./skills/"
+    Path(sys.argv[1]).write_text(json.dumps(generated, indent=2) + "\n")
+    PY
+    if ! diff -q "$tmp_manifest" "plugins/canon-companion/.codex-plugin/plugin.json" > /dev/null 2>&1; then
+        echo "drifted: plugins/canon-companion/.codex-plugin/plugin.json (run 'just sync-manifests')" >&2
+        drifted=1
+    fi
+    rm -f "$tmp_manifest"
     exit $drifted
 
 # Validate the plugin manifest and marketplace. --strict is what CI runs;

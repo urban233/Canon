@@ -10,6 +10,13 @@
         "source": "local",
         "path": "./plugins/codex"
       }
+    },
+    {
+      "name": "canon-companion",
+      "source": {
+        "source": "local",
+        "path": "./plugins/canon-companion"
+      }
     }
   ]
 }
