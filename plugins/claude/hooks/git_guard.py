@@ -181,18 +181,17 @@ _DESTRUCTIVE_PATTERNS = [
 ]
 
 _COMMIT_PATTERN = re.compile(r"\bgit\s+commit\b", re.IGNORECASE)
-# `[^"'\n]*`, not `.*` -- issue #58. The old `.*` ran to the end of the
-# line, so when the trailer was the last line inside a quoted `-m`
-# message the closing quote sat on that same line and was removed along
-# with it, leaving an unbalanced command in `updatedInput`. Excluding
-# both quote characters from the match means the substitution can never
-# delete one, whatever the surrounding quoting looks like: the rewrite
-# is guaranteed to preserve the count of `"` and of `'` in the command,
-# without this hook having to understand the quoting itself (see the
-# module docstring's stance against shell-aware parsing here).
-_TRAILER_LINE = re.compile(
-    r"^[ \t]*Co-Authored-By:[^\"'\n]*\n?", re.IGNORECASE | re.MULTILINE
-)
+# `.*` deliberately still runs to the end of the line, exactly as it did
+# before issue #58 -- `_strip_attribution` below is what changed to fix
+# that issue, not this pattern. See its docstring for why matching the
+# whole line and then filtering the match down to quote characters,
+# rather than narrowing what this pattern matches in the first place,
+# is the fix.
+_TRAILER_LINE = re.compile(r"^[ \t]*Co-Authored-By:.*\n?", re.IGNORECASE | re.MULTILINE)
+# Used by `_strip_attribution` to keep only the quote characters a
+# matched trailer line contained, in order -- see that function's
+# docstring.
+_QUOTE_CHAR = re.compile(r"[\"']")
 
 _QUOTED_SPAN = re.compile(r"'[^']*'|\"[^\"]*\"")
 
@@ -233,8 +232,45 @@ def _matched_destructive_operation(command: str) -> str | None:
 
 def _strip_attribution(command: str) -> str | None:
     """The command with every `Co-Authored-By:` trailer line removed, or
-    None if there was nothing to strip."""
-    stripped = _TRAILER_LINE.sub("", command)
+    None if there was nothing to strip.
+
+    Issue #58: `_TRAILER_LINE`'s `.*` runs to the end of the line, so a
+    trailer that happens to be the last line inside a quoted `-m`
+    message shares that line with the closing quote. Deleting the whole
+    matched line outright -- this function's first fix -- deletes that
+    quote along with it, handing back an unbalanced command through
+    `updatedInput`. Narrowing the pattern to stop at any quote
+    character fixes that, but trades it for a quieter defect: a trailer
+    whose own text contains a `'` or a `"` (an ordinary thing for a
+    human co-author's name to have, e.g. "Mary O'Neill", and this
+    pattern matches any `Co-Authored-By:` trailer, not only Claude's)
+    is then only partially removed, leaving a readable fragment of the
+    trailer in the command while `log_decision` still reports a clean
+    strip.
+
+    The fix instead keeps the pattern matching the whole line, and
+    rewrites each match to contain only the quote characters that line
+    contained, in their original order -- dropping every other
+    character, including the literal `Co-Authored-By:` label. Because
+    characters outside the match are left untouched, and the
+    characters kept inside it are exactly its quote-character
+    subsequence in order, the sequence of `"` and `'` characters read
+    across the *whole* command is identical before and after, not
+    merely equal in count -- so no character can appear to cross from
+    inside a quoted region to outside it, or vice versa, and no
+    fragment of the trailer's own text can survive. This holds without
+    this hook parsing the shell's quoting rules at all: a shell-aware
+    rewrite would be the more thorough fix, but it turns a hook that
+    runs before every `Bash` call into a shell parser, for a problem
+    this line-local, quote-preserving rewrite already solves.
+
+    A match always includes that literal `Co-Authored-By:` label, which
+    contains no quote character, so every match is strictly longer than
+    its replacement and this function can never rewrite a match back
+    into the text it started as -- it never newly returns None."""
+    stripped = _TRAILER_LINE.sub(
+        lambda m: "".join(_QUOTE_CHAR.findall(m.group())), command
+    )
     return stripped if stripped != command else None
 
 
