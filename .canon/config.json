@@ -1,3 +1,4 @@
 {
+  "check": "bazel test //:fmt_check //:lint //:typecheck",
   "verify": "bazel test //tests/..."
 }

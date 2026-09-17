@@ -113,12 +113,19 @@ class NextStepTests(unittest.TestCase):
         step = position._next_step(True, plan, pr, review)
         self.assertIn("dispatch the reviewer and risk-reviewer subagents", step)
 
-    def test_stale_verdict_asks_to_dispatch_again(self) -> None:
+    def test_stale_verdict_asks_for_a_delta_re_review(self) -> None:
+        """The wording has to agree with the `review` skill, which asks
+        for the delta since the commit that reviewer last saw *alongside*
+        the full range. "Dispatch again" alone reads as "review it all
+        from scratch", which is exactly the re-read that hides a fix
+        breaking something already passed."""
         plan = _empty_plan()
         pr: dict[str, Any] = {"number": 7, "state": "OPEN", "statusCheckRollup": []}
         review = _review("READY FOR HUMAN APPROVAL", stale=True)
         step = position._next_step(True, plan, pr, review)
-        self.assertIn("dispatch the reviewer again", step)
+        self.assertIn("re-review", step)
+        self.assertIn("delta", step)
+        self.assertIn("full range", step)
 
     def test_changes_required(self) -> None:
         plan = _empty_plan()

@@ -361,5 +361,63 @@ class StateDirTests(unittest.TestCase):
         self.assertEqual(result, Path("/scratch") / "other")
 
 
+class RunCommandTests(unittest.TestCase):
+    """`run_command` reports four independent facts.
+
+    `configuration_fault` and `timed_out` are separate booleans because
+    two different callers ask only one of them each: `stop.py` keeps a
+    configuration fault out of its refusal budget, and `fast_check.py`
+    stays silent on a timeout. Both are reported rather than described,
+    so neither caller has to string-match `detail` to tell them apart.
+    """
+
+    def test_passes_on_zero_exit(self) -> None:
+        result = _common.run_command(Path.cwd(), "true", 30)
+        self.assertTrue(result.passed)
+        self.assertEqual(result.detail, "")
+        self.assertFalse(result.configuration_fault)
+        self.assertFalse(result.timed_out)
+
+    def test_fails_on_nonzero_exit_with_output_attached(self) -> None:
+        """A genuine failure -- the command ran -- must not be flagged as
+        a configuration fault, or `stop.py`'s `main` would silently
+        withhold it from the refusal budget the way it does a real
+        config problem."""
+        result = _common.run_command(
+            Path.cwd(), "python3 -c \"import sys; print('boom'); sys.exit(1)\"", 30
+        )
+        self.assertFalse(result.passed)
+        self.assertIn("boom", result.detail)
+        self.assertFalse(result.configuration_fault)
+        self.assertFalse(result.timed_out)
+
+    def test_fails_on_unparsable_command(self) -> None:
+        result = _common.run_command(Path.cwd(), 'unterminated "quote', 30)
+        self.assertFalse(result.passed)
+        self.assertIn("Could not parse", result.detail)
+        self.assertTrue(result.configuration_fault)
+
+    def test_fails_on_missing_executable(self) -> None:
+        """A binary that isn't on `PATH` is a configuration fault, not a
+        failing check -- previously `stop.py`'s `main` could not tell
+        this apart from a genuine red result."""
+        result = _common.run_command(Path.cwd(), "canon-nonexistent-command-xyz", 30)
+        self.assertFalse(result.passed)
+        self.assertIn("Could not run", result.detail)
+        self.assertTrue(result.configuration_fault)
+
+    def test_a_timeout_is_reported_as_timed_out_not_as_a_fault(self) -> None:
+        """A command that ran and overran is a real, if unfinished,
+        answer -- unlike a missing binary, which never started. Only
+        `timed_out` is set, and `fast_check.py` depends on that
+        distinction to stay silent rather than reporting a build-tool
+        lock wait as a regression."""
+        result = _common.run_command(Path.cwd(), "sleep 5", 1)
+        self.assertFalse(result.passed)
+        self.assertIn("timed out", result.detail)
+        self.assertFalse(result.configuration_fault)
+        self.assertTrue(result.timed_out)
+
+
 if __name__ == "__main__":
     unittest.main()

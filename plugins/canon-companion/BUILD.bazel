@@ -3,3 +3,17 @@ filegroup(
     srcs = glob(["**/*.py"]),
     visibility = ["//:__pkg__", "//tests:__pkg__"],
 )
+
+# The companion suite's own eval cases, validated by the same static
+# checker as the Claude plugin's -- see plugins/claude/BUILD.bazel.
+filegroup(
+    name = "eval_sources",
+    # results/ is written by `just eval` and gitignored; mocks/ is read
+    # by `--mocks`. Neither is a case, and globbing them would also pull
+    # untracked run artifacts into this target's declared inputs.
+    srcs = glob(
+        ["evals/**"],
+        exclude = ["evals/results/**", "evals/mocks/**"],
+    ),
+    visibility = ["//tests:__pkg__"],
+)

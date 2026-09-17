@@ -326,51 +326,6 @@ class PlanVerifyOverrideTests(unittest.TestCase):
             self.assertIn("`false` exited 1", result["reason"])
 
 
-class RunVerificationUnitTests(unittest.TestCase):
-    """`_run_verification` returns `(passed, detail, configuration_fault)`.
-    `configuration_fault` is the distinction Step 3/4 add: True for a
-    command that could not even be attempted (unparsable, or its binary
-    is missing), False for one that ran -- whether it passed, failed, or
-    timed out. `main` uses the flag to keep a fault from being reported,
-    or counted, as though it were a red run."""
-
-    def test_passes_on_zero_exit(self) -> None:
-        passed, detail, configuration_fault = stop._run_verification(Path.cwd(), "true")
-        self.assertTrue(passed)
-        self.assertEqual(detail, "")
-        self.assertFalse(configuration_fault)
-
-    def test_fails_on_nonzero_exit_with_output_attached(self) -> None:
-        """A genuine failure -- the command ran -- must not be flagged as
-        a configuration fault, or `main` would silently withhold it from
-        the refusal budget the way it does a real config problem."""
-        passed, detail, configuration_fault = stop._run_verification(
-            Path.cwd(), "python3 -c \"import sys; print('boom'); sys.exit(1)\""
-        )
-        self.assertFalse(passed)
-        self.assertIn("boom", detail)
-        self.assertFalse(configuration_fault)
-
-    def test_fails_on_unparsable_command(self) -> None:
-        passed, detail, configuration_fault = stop._run_verification(
-            Path.cwd(), 'unterminated "quote'
-        )
-        self.assertFalse(passed)
-        self.assertIn("Could not parse", detail)
-        self.assertTrue(configuration_fault)
-
-    def test_fails_on_missing_executable(self) -> None:
-        """A binary that isn't on `PATH` is a configuration fault, not a
-        failing check -- this is defect (b) from the task: previously
-        `main` could not tell this apart from a genuine red result."""
-        passed, detail, configuration_fault = stop._run_verification(
-            Path.cwd(), "canon-nonexistent-command-xyz"
-        )
-        self.assertFalse(passed)
-        self.assertIn("Could not run", detail)
-        self.assertTrue(configuration_fault)
-
-
 class ConfigurationFaultTests(unittest.TestCase):
     """A `verify` command already on disk that cannot be run as configured
     -- defect (a) from the task -- must be reported as a

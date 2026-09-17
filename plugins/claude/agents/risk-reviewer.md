@@ -29,6 +29,13 @@ where outputs and `execution_count` are absent by construction -- never
 file their absence, or their churn, as a finding. Size for a notebook is
 `code_cells_changed`, not lines.
 
+If you are told which commit you reviewed before, review that
+`<previous>..HEAD` delta **as well as** the full range, and say explicitly whether
+anything you already passed has regressed. A fix that closes the finding you
+reported and breaks something adjacent is the single failure this exists to catch,
+and it is invisible when the whole diff is re-read from scratch. State both ranges
+in your verdict.
+
 **State your full verdict in your final reply** -- there is nothing else
 reading your work afterward except your own final message. End with
 exactly one of `READY FOR HUMAN APPROVAL`, `CHANGES REQUIRED`, or

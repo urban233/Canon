@@ -34,12 +34,13 @@ from __future__ import annotations
 
 import json
 import re
+import shlex
 import subprocess
 import sys
 import tempfile
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any, Callable, NamedTuple
 
 _DECISIONS_LOG_RELATIVE = ".canon/hooks/decisions.jsonl"
 _GIT_TIMEOUT_SECONDS = 10
@@ -230,6 +231,87 @@ def fail_open(main: Callable[[], None]) -> Callable[[], None]:
             sys.exit(0)
 
     return wrapped
+
+
+_OUTPUT_TAIL_CHARS = 4000
+
+
+class CommandResult(NamedTuple):
+    """What `run_command` learned, as four independent facts.
+
+    `configuration_fault` and `timed_out` are deliberately separate
+    booleans rather than one status enum, because they answer different
+    questions and two different callers ask only one of them each:
+    `stop.py` keeps a configuration fault out of its refusal budget,
+    while `fast_check.py` stays silent on a timeout. A caller that
+    string-matched `detail` to tell these apart would be one message
+    rewrite away from breaking, which is why the runner reports them
+    rather than describing them.
+    """
+
+    passed: bool
+    detail: str
+    configuration_fault: bool
+    timed_out: bool
+
+
+def run_command(root: Path, command: str, timeout: int) -> CommandResult:
+    """Run `command` in `root` with **no shell**, and report the result.
+
+    Returns a `CommandResult`.
+    `configuration_fault` is True for the two ways this can go wrong that
+    say nothing about whether the repository is healthy -- the command
+    could not be parsed at all, or the named binary is not on `PATH`
+    (`OSError`, typically `FileNotFoundError`) -- and False for a command
+    that actually ran and either timed out or exited non-zero. A caller
+    uses the flag to keep a misconfiguration from being reported, or
+    counted against a budget, as though it were a red run.
+
+    No shell, ever: see
+    docs/decisions/0005-verify-command-never-runs-through-a-shell.md.
+    A command that needs one is caught before it reaches here, by
+    `_config.verify_command_problem`; the `ValueError` branch below stays
+    as the defense in depth that decision describes, for a malformed
+    command that slips past some other way -- an unbalanced quote, say,
+    which is a parse failure rather than a metacharacter.
+
+    Shared by `stop.py`, which runs the repository's verification command
+    at a turn's end, and `fast_check.py`, which runs its fast check after
+    an edit. They differ only in `timeout` and in what they do with the
+    answer, so the running of it lives here rather than being written
+    twice. `canon_mcp`'s own copy stays forked, because the hooks and the
+    server share no dependency edge -- see `canon_mcp/_git.py`.
+    """
+    try:
+        argv = shlex.split(command)
+    except ValueError as exc:
+        return CommandResult(False, f"Could not parse the command: {exc}", True, False)
+    if not argv:
+        return CommandResult(False, "The command is empty.", True, False)
+    try:
+        completed = subprocess.run(
+            argv,
+            cwd=root,
+            capture_output=True,
+            text=True,
+            timeout=timeout,
+            check=False,
+        )
+    except subprocess.TimeoutExpired:
+        return CommandResult(
+            False, f"`{command}` timed out after {timeout}s.", False, True
+        )
+    except OSError as exc:
+        return CommandResult(False, f"Could not run `{command}`: {exc}", True, False)
+    if completed.returncode == 0:
+        return CommandResult(True, "", False, False)
+    output = (completed.stdout or "") + (completed.stderr or "")
+    return CommandResult(
+        False,
+        f"`{command}` exited {completed.returncode}:\n{output[-_OUTPUT_TAIL_CHARS:]}",
+        False,
+        False,
+    )
 
 
 def log_decision(
