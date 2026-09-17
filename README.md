@@ -227,6 +227,11 @@ own runtime, resolved from source on first use rather than built by Bazel
 Actions](.github/workflows/ci.yml) runs the same checks on every pull
 request and on `main`.
 
+Cutting a release is written up in [`docs/releasing.md`](docs/releasing.md):
+two human gates -- merging the release pull request, and pressing Publish on
+a drafted release -- with everything between them read out of the repository
+rather than typed by hand.
+
 ## License
 
 BSD-3-Clause. See [`LICENSE`](LICENSE).
