@@ -81,11 +81,16 @@ sync-mcp:
 # decide, review-change, ship and testing-craft are byte-identical between
 # plugins/claude/skills and plugins/codex/skills, so they're copied rather
 # than hand-maintained twice, the same reasoning as sync-hooks/sync-mcp.
-# frame, plan and review are NOT here: they genuinely differ (Codex has no
-# ExitPlanMode tool), and that divergence is a decision recorded here, not
-# a silent omission -- see the plan this branch followed and
-# plugins/codex/README.md.
 _SHARED_SKILL_DIRS := "decide review-change ship testing-craft"
+
+# frame, plan and review genuinely differ (Codex has no ExitPlanMode tool)
+# and stay hand-maintained -- see the plan this branch followed and
+# plugins/codex/README.md. Named here, not just in this comment, so
+# sync-check's exhaustiveness loop below can tell "known to differ" apart
+# from "nobody classified this yet": a skill directory that's in neither
+# list used to sync-check silently, the same silent-enumeration drift
+# .github/workflows/ci.yml already learned this lesson about once.
+_DIVERGENT_SKILL_DIRS := "frame plan review"
 
 # Copy the four shared skills from plugins/claude/skills into
 # plugins/codex/skills. plugins/claude/skills is the source of truth: it's
@@ -103,30 +108,31 @@ sync-skills:
 
 # canon-companion is a skills-only plugin with nothing platform-specific in
 # it (no hook, no MCP server, no bundled subagent), so its Codex manifest
-# is generated from its Claude one plus the one key Codex needs
-# ("skills") instead of hand-maintaining a second copy -- two hand-edited
-# manifests for the same plugin is exactly the duplication this branch
-# exists to stop being casual about.
+# is generated from its Claude one plus "skills": "./skills/" -- the key
+# every OpenAI-shipped skills plugin on this machine declares, though a
+# real `codex plugin add` confirmed it is not required for skill discovery
+# at the default `./skills/` path (see docs/codex-hook-surface.md Part 5;
+# plugins/codex ships seven skills with no such key and all seven are
+# discoverable). Declared anyway, to match the convention every real
+# installed example uses, instead of hand-maintaining a second manifest --
+# two hand-edited copies of the same plugin's manifest is exactly the
+# duplication this branch exists to stop being casual about.
+#
+# tools/sync_manifests.py holds the actual generation logic, shared with
+# sync-check below, so the two can never disagree about what "in sync"
+# means.
 sync-manifests:
     #!/usr/bin/env bash
     set -euo pipefail
-    python3 - <<'PY'
-    import json
-    from pathlib import Path
-
-    src = Path("plugins/canon-companion/.claude-plugin/plugin.json")
-    dest = Path("plugins/canon-companion/.codex-plugin/plugin.json")
-    data = json.loads(src.read_text())
-    generated = {"$schema": "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json"}
-    generated.update(data)
-    generated["skills"] = "./skills/"
-    dest.write_text(json.dumps(generated, indent=2) + "\n")
-    PY
+    python3 tools/sync_manifests.py plugins/canon-companion/.codex-plugin/plugin.json
 
 # Fails if a vendored copy has drifted from src/canon_hooks, src/canon_mcp,
 # the four shared skills, or canon-companion's generated Codex manifest --
 # the regression guard for sync-hooks/sync-mcp/sync-skills/sync-manifests,
-# part of `just ci`.
+# part of `just ci`. Also fails if a skill directory exists that is in
+# neither _SHARED_SKILL_DIRS nor _DIVERGENT_SKILL_DIRS: a skill named in
+# no list would sync silently forever, exactly the enumeration drift
+# .github/workflows/ci.yml already carries a scar from.
 sync-check:
     #!/usr/bin/env bash
     set -euo pipefail
@@ -153,19 +159,24 @@ sync-check:
             drifted=1
         fi
     done
+    known="{{_SHARED_SKILL_DIRS}} {{_DIVERGENT_SKILL_DIRS}}"
+    for plugin in claude codex; do
+        for dir in "plugins/$plugin/skills/"*/; do
+            [ -d "$dir" ] || continue
+            name="$(basename "$dir")"
+            case " $known " in
+                *" $name "*) ;;
+                *)
+                    echo "unclassified: plugins/$plugin/skills/$name is in neither" \
+                        "_SHARED_SKILL_DIRS nor _DIVERGENT_SKILL_DIRS in the Justfile" \
+                        "-- add it to whichever one actually describes it" >&2
+                    drifted=1
+                    ;;
+            esac
+        done
+    done
     tmp_manifest="$(mktemp)"
-    python3 - "$tmp_manifest" <<'PY'
-    import json
-    import sys
-    from pathlib import Path
-
-    src = Path("plugins/canon-companion/.claude-plugin/plugin.json")
-    data = json.loads(src.read_text())
-    generated = {"$schema": "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json"}
-    generated.update(data)
-    generated["skills"] = "./skills/"
-    Path(sys.argv[1]).write_text(json.dumps(generated, indent=2) + "\n")
-    PY
+    python3 tools/sync_manifests.py "$tmp_manifest"
     if ! diff -q "$tmp_manifest" "plugins/canon-companion/.codex-plugin/plugin.json" > /dev/null 2>&1; then
         echo "drifted: plugins/canon-companion/.codex-plugin/plugin.json (run 'just sync-manifests')" >&2
         drifted=1

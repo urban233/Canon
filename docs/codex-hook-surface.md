@@ -455,3 +455,86 @@ and `openai-bundled/visualize`), which is why `plugins/canon-companion`'s
 new Codex manifest (added by this same branch) is placed at
 `.codex-plugin/plugin.json` with no root copy, matching that convention
 exactly rather than mirroring `plugins/codex`'s now-resolved duplicate.
+
+**The alternative this evidence also supports, and why it wasn't taken:**
+"either file alone is sufficient" cuts both ways — it would have been just
+as defensible to move `plugins/codex`'s manifest *into* `.codex-plugin/`
+instead, making every plugin in this repo use one convention
+(`.codex-plugin/plugin.json` only, matching every real OpenAI-shipped
+plugin). That was not done here because `plugins/codex/plugin.json` at
+root is the copy every other file in this plugin — `docs/codex-hook-surface.md`
+Part 2's install history, this repo's own muscle memory for where to look
+— already points at, and moving it buys convention-uniformity at the cost
+of a rename that touches nothing functionally broken. Recorded here as a
+live option, not a closed question: whoever finds a second reason to
+prefer the OpenAI-wide convention should not have to redo this
+investigation to justify moving it.
+
+## Part 5: does canon-companion's `skills` key actually matter for skill discovery?
+
+The release-packaging branch's `sync-manifests` generator adds `"skills":
+"./skills/"` to canon-companion's Codex manifest, calling it "the key
+every OpenAI-shipped skills plugin declares" — a description, not a claim
+that Codex requires it. That distinction was checked empirically, using
+`codex debug prompt-input` (a genuinely free, local, no-model-call command
+that renders the exact prompt input a session would send, including the
+full skills list Codex discovered) rather than by running a real session:
+
+- With canon-companion installed (its manifest **carrying** the `skills`
+  key), `codex debug prompt-input` listed
+  `canon-companion:audit-google-python-style` in the model-visible skills
+  list, at its real installed-cache path.
+- With canon-companion removed and `codex@canon` installed instead —
+  `plugins/codex/plugin.json` ships seven skills and has **no `skills`
+  key at all** — all seven (`codex:decide`, `codex:frame`, `codex:plan`,
+  `codex:review`, `codex:review-change`, `codex:ship`,
+  `codex:testing-craft`) were listed too, identically discoverable.
+
+**Conclusion: the `skills` key is not required for discovery when skills
+live at the default `./skills/` path**, which every plugin in this repo
+does. `plugins/codex` is not shipping seven undiscoverable skills at
+0.1.0 — that specific release risk is ruled out by this test, not merely
+assumed safe. What the key is actually *for* (an explicit override for a
+non-default skills path, forward-compatibility, or purely documentary)
+remains unconfirmed; this session did not find anything in the CLI's own
+help output or behavior that pinned down its purpose beyond "every real
+example declares it." canon-companion's manifest keeps declaring it
+regardless, matching every other real installed example on this machine —
+harmless if inert, and one less way this plugin's manifest looks
+different from a normal one.
+
+Same install/removal discipline as elsewhere in this doc: `~/.codex/config.toml`
+was checksummed before either install, and confirmed byte-identical to
+that checksum after both plugins and the `canon` marketplace were removed
+again.
+
+## Part 6: `codex plugin add canon-companion@canon` — the plan's `## Done` criterion, confirmed
+
+Everything above in Part 4 confirmed the `plugins/codex` manifest
+question; this is the separate, and newer, claim: that canon-companion —
+previously Claude-only by omission — actually installs on Codex. Run for
+real from this checkout (`codex plugin marketplace add .` then `codex
+plugin add canon-companion@canon`):
+
+- The command reported success (`Added plugin canon-companion from
+  marketplace canon`) and installed to
+  `~/.codex/plugins/cache/canon/canon-companion/0.0.1/`.
+- The installed cache directory carried the generated
+  `.codex-plugin/plugin.json` (read correctly — see Part 5's discovery
+  test, which used this exact installed copy) alongside the untouched
+  `.claude-plugin/plugin.json`, `skills/audit-google-python-style/SKILL.md`,
+  and the plugin's other files (BUILD.bazel, evals/, references/,
+  scripts/) copied verbatim.
+- `codex plugin list` reported `canon-companion@canon` as `installed,
+  enabled`.
+- Part 5's `codex debug prompt-input` run against this exact installed
+  copy is what confirmed the skill is in the model-visible skills list,
+  not just present as a file in the cache.
+
+**What this does not confirm:** no live, real `codex exec`/interactive
+session was run asking the model to actually invoke
+`$audit-google-python-style`. The cache contents, the enabled status, and
+the model-visible skills list are all confirmed directly against the real
+CLI; whether a session in practice picks the skill and completes the
+workflow correctly was not exercised, and is a smaller, cheaper gap than
+"does it install at all" was before this branch.

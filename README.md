@@ -143,10 +143,12 @@ codex plugin add codex@canon
 
 Custom MCP servers connect to Codex intermittently right now -- a
 Codex-side bug, not something wrong with this plugin -- so `canon_position`,
-`canon_plan`, `canon_review`, `canon_evidence`, and `canon_ship` may need a
-retry the first time a session reaches for one; every hook, skill, and
-reviewer subagent works independently of it. See `plugins/codex/README.md`'s
-"MCP connectivity is intermittent" section for what was actually confirmed.
+`canon_plan`, `canon_review`, `canon_evidence`, and `canon_ship` may be
+missing from a session entirely, or hang on first use; start a fresh
+session if that happens, rather than retrying the call in the one where
+the tools never showed up. Every hook, skill, and reviewer subagent works
+independently of it. See `plugins/codex/README.md`'s "MCP connectivity is
+intermittent" section for what was actually confirmed.
 
 This is the only install scope Codex's plugin manager has -- unlike
 Claude Code, there is no `--scope project` flag, and `codex plugin add`
