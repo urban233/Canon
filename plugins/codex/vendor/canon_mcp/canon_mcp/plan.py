@@ -1,9 +1,10 @@
 # SPDX-License-Identifier: BSD-3-Clause
 """`canon_plan` -- the saved plan for this branch, and its parent if any.
 
-Reads `.canon/plans/<branch>.md` (written by `save_plan.py`'s
-`PostToolUse:ExitPlanMode` hook) back, and resolves one level of
-`parent:` if the header names one.
+Reads the current branch's own saved plan back (written by
+`save_plan.py`'s `PostToolUse:ExitPlanMode` hook, at the path
+`_plan.branch_plan_relative` names), and resolves one level of `parent:`
+if the header names one.
 
 `parent:` resolution lives in `_plan.resolve_parent`, shared with
 `position.py`. Deeper structure than one level is deliberately not
@@ -18,14 +19,14 @@ from pathlib import Path
 from typing import Any
 
 from ._git import current_branch
-from ._plan import read_plan_file, resolve_parent
+from ._plan import branch_plan_relative, read_plan_file, resolve_parent
 
 
 def build_plan(root: Path) -> dict[str, Any]:
     """The current branch's saved plan, and its parent feature plan if
     the header names one."""
     branch = current_branch(root) or "HEAD"
-    plan = read_plan_file(root, f".canon/plans/{branch}.md")
+    plan = read_plan_file(root, branch_plan_relative(branch))
     if plan is None:
         return {
             "branch": branch,

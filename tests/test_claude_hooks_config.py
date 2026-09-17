@@ -447,12 +447,74 @@ class VerifyCommandProblemTests(unittest.TestCase):
         self.assertIn("if the real answer is a sequence", problem.lower())
 
 
+class PlanVerifyCommandTests(unittest.TestCase):
+    def test_reads_the_redirected_plan_for_a_features_prefixed_branch(self) -> None:
+        """`plan_header.branch_plan_path` redirects a `features/<x>`
+        branch's own plan to `.canon/plans/branches/features/<x>.md`, out
+        of the `.canon/plans/features/` namespace a feature plan of that
+        slug already occupies. `plan_verify_command` must read that
+        redirected path -- reading the plain `.canon/plans/<branch>.md`
+        formula instead means a `verify:` override is read from the wrong
+        plan, so the wrong command would gate every turn end on this
+        branch."""
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            feature_plan = root / ".canon" / "plans" / "features" / "widget.md"
+            feature_plan.parent.mkdir(parents=True)
+            feature_plan.write_text(
+                "---\nstatus: approved\nsteps:\n---\n\n## Steps\n- a: x\n",
+                encoding="utf-8",
+            )
+            branch_plan = (
+                root / ".canon" / "plans" / "branches" / "features" / "widget.md"
+            )
+            branch_plan.parent.mkdir(parents=True)
+            branch_plan.write_text(
+                '---\nstatus: approved\nverify: "pytest tests/widget -x"\n---\n\n'
+                "## Approach\nx\n",
+                encoding="utf-8",
+            )
+            self.assertEqual(
+                _config.plan_verify_command(root, "features/widget"),
+                "pytest tests/widget -x",
+            )
+
+
 class VerifyCommandSourceTests(unittest.TestCase):
     """A caller reporting a problem with the resolved command must name
     the file a human should actually go edit -- see
     `stop.py`'s `_handle_configuration_fault` and
     `evidence.py`'s `build_evidence`, both of which name this instead of
     hard-coding `.canon/config.json`."""
+
+    def test_names_the_redirected_plan_for_a_features_prefixed_branch(self) -> None:
+        """Same redirect as `PlanVerifyCommandTests` above, checked at
+        the layer that names a file to a human told to go fix it: naming
+        the wrong file here sends them to edit a plan that has nothing to
+        do with this branch."""
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            feature_plan = root / ".canon" / "plans" / "features" / "widget.md"
+            feature_plan.parent.mkdir(parents=True)
+            feature_plan.write_text(
+                "---\nstatus: approved\nsteps:\n---\n\n## Steps\n- a: x\n",
+                encoding="utf-8",
+            )
+            branch_plan = (
+                root / ".canon" / "plans" / "branches" / "features" / "widget.md"
+            )
+            branch_plan.parent.mkdir(parents=True)
+            branch_plan.write_text(
+                '---\nstatus: approved\nverify: "pytest tests/widget -x"\n---\n\n'
+                "## Approach\nx\n",
+                encoding="utf-8",
+            )
+            self.assertEqual(
+                _config.verify_command_source(
+                    root, "features/widget", {"verify": "just test"}
+                ),
+                ".canon/plans/branches/features/widget.md",
+            )
 
     def test_defaults_to_the_config_file_with_no_plan(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

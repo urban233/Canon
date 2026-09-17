@@ -79,6 +79,22 @@ load("@rules_python//python:defs.bzl", "py_test")
     for src in glob(["test_canon_mcp_*.py"])
 ]
 
+# Pins canon_mcp's copy of the branch-plan path rule to
+# src/canon_hooks/plan_header.py's canonical one -- see
+# test_branch_plan_path_parity.py's own module docstring. Its own
+# explicit target, not folded into either glob group above: it is the
+# one test that needs both libraries at once, and canon_hooks and
+# canon_mcp define no colliding module names, so depending on both here
+# doesn't hit the runfiles collision the split above exists to avoid.
+py_test(
+    name = "test_branch_plan_path_parity",
+    srcs = ["test_branch_plan_path_parity.py", "__init__.py"],
+    deps = [
+        "//src/canon_hooks:canon_hooks_lib",
+        "//src/canon_mcp:canon_mcp_lib",
+    ],
+)
+
 # Exposes this package's own .py files to the root package's lint/typecheck
 # targets -- see plugins/claude/hooks/BUILD.bazel's py_sources for why.
 filegroup(

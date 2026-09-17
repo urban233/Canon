@@ -27,7 +27,7 @@ from ._git import (
     merge_base,
     merged_branch_names,
 )
-from ._plan import read_plan_file, resolve_parent
+from ._plan import branch_plan_relative, read_plan_file, resolve_parent
 from ._steps import annotate, parse_steps, summarize
 from .review import build_review
 
@@ -185,7 +185,7 @@ def build_position(root: Path) -> dict[str, Any]:
     base = merge_base(root, default)
     head = head_sha(root)
     ahead = commits_ahead(root, base)
-    plan = read_plan_file(root, f".canon/plans/{branch}.md")
+    plan = read_plan_file(root, branch_plan_relative(branch))
     config = load_config(root)
     verify_ok = has_verification_signal(config)
     mode = interaction_mode(config)

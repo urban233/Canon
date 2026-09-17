@@ -23,6 +23,7 @@ from pathlib import Path
 from typing import Any
 
 import _common
+import plan_header
 
 _CONFIG_PATH_RELATIVE = ".canon/config.json"
 
@@ -135,9 +136,6 @@ def interaction_mode(config: dict[str, Any] | None) -> str:
     return mode if mode in _VALID_MODES else _DEFAULT_MODE
 
 
-_PLANS_DIR_RELATIVE = ".canon/plans"
-
-
 def plan_verify_command(root: Path, branch: str | None) -> str | None:
     """The `verify:` a branch's saved plan header names, or None.
 
@@ -145,11 +143,19 @@ def plan_verify_command(root: Path, branch: str | None) -> str | None:
     Overrides it for that branch | One branch, where the work needs
     something different." Never raises; a missing or malformed plan file
     is simply "no override".
+
+    Reads through `plan_header.branch_plan_path`, not the plain
+    `.canon/plans/<branch>.md` formula: a `features/<x>` branch's own
+    plan is redirected to `.canon/plans/branches/features/<x>.md`, to
+    avoid colliding with a feature plan of the same slug (see
+    plan_header.py's module docstring). Reading the plain formula instead
+    would read a `verify:` override out of the wrong plan for exactly the
+    branch names that redirect exists to protect.
     """
     if not branch:
         return None
     try:
-        text = (root / _PLANS_DIR_RELATIVE / f"{branch}.md").read_text(encoding="utf-8")
+        text = plan_header.branch_plan_path(root, branch).read_text(encoding="utf-8")
     except OSError:
         return None
     verify = _common.parse_header(text).get("verify", "")
@@ -193,9 +199,15 @@ def verify_command_source(
     `config` is accepted for symmetry with `resolve_verify_command` and
     because a config-derived answer may grow a second source later; today
     the plan header is the only thing that can outrank it.
+
+    Named through `plan_header.branch_plan_relative`, the same redirect
+    `plan_verify_command` reads through -- naming the plain
+    `.canon/plans/<branch>.md` formula here would send a human to fix the
+    wrong file for a `features/<x>` branch, whose plan actually lives at
+    `.canon/plans/branches/features/<x>.md`.
     """
-    if plan_verify_command(root, branch):
-        return f"{_PLANS_DIR_RELATIVE}/{branch}.md"
+    if branch and plan_verify_command(root, branch):
+        return plan_header.branch_plan_relative(branch)
     return _CONFIG_PATH_RELATIVE
 
 

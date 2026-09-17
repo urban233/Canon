@@ -90,6 +90,47 @@ def _split_document(text: str) -> tuple[str, str] | None:
 
 
 _PLANS_DIR_RELATIVE = ".canon/plans"
+_BRANCH_PLAN_COLLISION_DIR_RELATIVE = ".canon/plans/branches"
+# The one path segment `feature_plan_path` ever writes under -- see
+# `branch_plan_relative`'s docstring.
+_RESERVED_BRANCH_PLAN_SEGMENT = "features"
+
+
+def _branch_plan_collides_with_feature_namespace(branch: str) -> bool:
+    head, _, rest = branch.partition("/")
+    return head.casefold() == _RESERVED_BRANCH_PLAN_SEGMENT and bool(rest)
+
+
+def branch_plan_relative(branch: str) -> str:
+    """The relative path `branch`'s own saved plan lives at.
+
+    A documented copy of `plan_header.branch_plan_path`/
+    `branch_plan_relative` in plugins/claude/hooks/plan_header.py (the
+    canonical, save-side rule), not an import of it: `canon_mcp`
+    deliberately does not depend on `canon_hooks` -- see `_git.py`'s
+    module docstring, "two delivery mechanisms that should not share a
+    dependency edge." A branch named `features/<x>` reduces, via the
+    plain `<branch>.md` formula, to the same path a feature plan titled
+    `<x>` occupies (`.canon/plans/features/<x>.md`); saving or reading a
+    branch plan there would collide with that feature plan, so the whole
+    `features/` prefix is reserved and such a branch's plan is redirected
+    to `.canon/plans/branches/<branch>.md` instead. See that function's
+    own docstring for the full reasoning, including the case-insensitive
+    comparison (both of Canon's supported platforms resolve paths
+    case-insensitively by default) and the one deliberately unresolved
+    overlap (a branch literally named `branches/features/<x>`).
+
+    tests/test_branch_plan_path_parity.py pins this function and
+    `plan_header`'s to the same answer across a table of branch names --
+    without that test this is just a second copy of the bug waiting to
+    happen, not a mirror.
+    """
+    base = (
+        _BRANCH_PLAN_COLLISION_DIR_RELATIVE
+        if _branch_plan_collides_with_feature_namespace(branch)
+        else _PLANS_DIR_RELATIVE
+    )
+    return f"{base}/{branch}.md"
 
 
 def resolve_parent(root: Path, parent_path: str) -> dict[str, Any] | None:

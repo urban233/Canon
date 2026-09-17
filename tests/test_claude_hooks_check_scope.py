@@ -170,6 +170,42 @@ def _invoke_main(payload: dict[str, Any]) -> str:
 
 
 class MainTests(unittest.TestCase):
+    def test_uses_the_redirected_branch_plan_for_a_features_prefixed_branch(
+        self,
+    ) -> None:
+        """`plan_header.branch_plan_path` redirects a `features/<x>`
+        branch's own plan to `.canon/plans/branches/features/<x>.md`, to
+        avoid colliding with a feature plan of the same slug at
+        `.canon/plans/features/<x>.md` (see plan_header.py's module
+        docstring). This hook must compare against the redirected plan --
+        comparing against the plain `.canon/plans/<branch>.md` formula
+        instead means comparing against a feature-level `## Non-goals`
+        that was never written with these files in mind (or, as here, no
+        `## Non-goals` at all)."""
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            _init_repo(root, "features/widget")
+            feature_plan = root / ".canon" / "plans" / "features" / "widget.md"
+            feature_plan.parent.mkdir(parents=True)
+            feature_plan.write_text(
+                "---\nstatus: approved\nsteps:\n---\n\n## Steps\n- a: x\n",
+                encoding="utf-8",
+            )
+            branch_plan = (
+                root / ".canon" / "plans" / "branches" / "features" / "widget.md"
+            )
+            branch_plan.parent.mkdir(parents=True)
+            branch_plan.write_text(SAVED_PLAN_WITH_SCOPE, encoding="utf-8")
+
+            output = _invoke_main(
+                {
+                    "cwd": str(root),
+                    "tool_name": "Edit",
+                    "tool_input": {"file_path": str(root / "docs" / "readme.md")},
+                }
+            )
+            self.assertIn("Non-goals", output)
+
     def test_noop_when_no_plan_exists(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)

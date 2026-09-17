@@ -18,7 +18,7 @@ from pathlib import Path
 from typing import Any
 
 from ._git import current_branch
-from ._plan import read_plan_file
+from ._plan import branch_plan_relative, read_plan_file
 from .evidence import build_evidence
 from .review import build_review
 
@@ -72,7 +72,7 @@ def build_ship(root: Path) -> dict[str, Any]:
     """Whether the three invariants are met right now, and what's
     missing if not."""
     branch = current_branch(root) or "HEAD"
-    plan = read_plan_file(root, f".canon/plans/{branch}.md")
+    plan = read_plan_file(root, branch_plan_relative(branch))
     plan_ok, plan_reason = _plan_readiness(plan)
 
     evidence = build_evidence(root)

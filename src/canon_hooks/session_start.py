@@ -58,8 +58,8 @@ from typing import Any
 
 import _common
 import _config
+import plan_header
 
-_PLANS_DIR_RELATIVE = Path(".canon") / "plans"
 _BULLET_MARKERS = ("- ", "* ", "+ ")
 # Enough for the three or four non-goals a well-written plan carries,
 # and short enough that a plan with fifteen cannot dominate the message
@@ -72,7 +72,12 @@ _FAILING_CONCLUSIONS = {"FAILURE", "ERROR", "CANCELLED", "TIMED_OUT", "ACTION_RE
 
 
 def _plan_relative_path(branch: str) -> Path:
-    return _PLANS_DIR_RELATIVE / f"{branch}.md"
+    # `plan_header.branch_plan_relative`, not the plain
+    # `.canon/plans/<branch>.md` formula: a `features/<x>` branch's plan
+    # is saved at `.canon/plans/branches/features/<x>.md` instead, to
+    # avoid colliding with a feature plan of the same slug (see
+    # plan_header.py's module docstring).
+    return Path(plan_header.branch_plan_relative(branch))
 
 
 def _read_plan(root: Path, branch: str) -> tuple[dict[str, str], dict[str, str]] | None:
