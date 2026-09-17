@@ -184,6 +184,21 @@ sync-check:
     rm -f "$tmp_manifest"
     exit $drifted
 
+# Fails if Canon's version is not stated identically in every file that
+# states one, or if the newest CHANGELOG.md entry names a different one.
+# Distinct from sync-check: that one asks whether a generated copy matches
+# its source, this one asks whether the eleven independent declarations
+# agree with each other at all. `just ci` was green with mismatched
+# versions until this existed -- estimating the 0.1.0 bump produced "six
+# version strings" for a tree that had eleven, and nothing caught it.
+#
+# tools/check_versions.py discovers the files rather than listing them,
+# so a manifest added later is covered the day it lands. That is
+# deliberate: a hardcoded list is the failure .github/workflows/ci.yml
+# and sync-check's skill classification each already carry a scar from.
+version-check:
+    python3 tools/check_versions.py
+
 # Validate the plugin manifest and marketplace. --strict is what CI runs;
 # there's no reason to check less strictly locally than CI will.
 validate-plugin:
@@ -210,7 +225,7 @@ eval-check:
     bazel test //tests:test_evals_graders
 
 # Everything CI runs. `test-py39` is not here on purpose -- see its comment.
-ci: build test lint fmt-check typecheck lock-check sync-check eval-check validate-plugin
+ci: build test lint fmt-check typecheck lock-check sync-check version-check eval-check validate-plugin
 
 # Run Canon's own eval suite against its own plugin: a local, on-demand
 # check of what the model actually does with the instructions Canon

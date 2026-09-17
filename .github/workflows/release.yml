@@ -1,0 +1,91 @@
+name: Release
+
+# Manual only, and deliberately so. Whether a marketplace install pins to
+# a tag or tracks the default branch is not established (see
+# docs/codex-hook-surface.md for what this project does and does not
+# claim to have confirmed about either CLI). If installs pin to a tag,
+# then creating the tag *is* publishing -- so a workflow that tagged
+# automatically on every push to main would publish without anyone
+# deciding to. Requiring a button press is correct under both readings
+# and costs one click.
+#
+# What this does NOT do: publish. It creates a draft release. A draft is
+# visible only to people who can write to the repository; publishing it
+# notifies watchers and puts it in feeds, which is an outward-facing act
+# and stays a human's. Canon holds the same line on pull requests -- it
+# never merges, approves or closes one -- and a release is the larger
+# version of that call.
+#
+# The version is read from the repository, never typed into this
+# workflow's inputs. A human typing a version here is exactly the
+# hand-copied enumeration ci.yml already carries a scar from: the
+# repository already states its version in eleven places, and
+# `just version-check` proves they agree, so there is nothing left for a
+# human to restate.
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7.0.1
+        with:
+          # The tag is created from this commit and the changelog is read
+          # from it, so the whole history is needed to tell whether that
+          # tag already exists.
+          fetch-depth: 0
+
+      - uses: extractions/setup-just@v4.0.0
+
+      - name: Refuse unless every declared version agrees
+        # The same check `just ci` runs on every pull request. Running it
+        # again here is not redundant: this workflow can be dispatched
+        # from any ref, including one CI never saw green.
+        run: just version-check
+
+      - name: Read the version the repository declares
+        id: version
+        run: |
+          version="$(python3 tools/check_versions.py --print)"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "tag=v$version" >> "$GITHUB_OUTPUT"
+
+      - name: Refuse if that tag already exists
+        run: |
+          tag="${{ steps.version.outputs.tag }}"
+          if git rev-parse -q --verify "refs/tags/$tag" >/dev/null; then
+            echo "$tag already exists -- bump the version and the CHANGELOG first" >&2
+            exit 1
+          fi
+
+      - name: Extract this version's changelog section
+        id: notes
+        run: |
+          python3 tools/check_versions.py --notes > release-notes.md
+          echo "--- release notes ---"
+          cat release-notes.md
+
+      - name: Tag
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git tag -a "${{ steps.version.outputs.tag }}" \
+            -m "Canon ${{ steps.version.outputs.version }}"
+          git push origin "${{ steps.version.outputs.tag }}"
+
+      - name: Draft the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "${{ steps.version.outputs.tag }}" \
+            --draft \
+            --title "Canon ${{ steps.version.outputs.version }}" \
+            --notes-file release-notes.md
+          echo
+          echo "Drafted, not published. Review it and press Publish:"
+          gh release view "${{ steps.version.outputs.tag }}" --json url --jq .url

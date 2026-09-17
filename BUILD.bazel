@@ -28,9 +28,27 @@ py_binary(
     deps = ["@canon_pypi//pyrefly"],
 )
 
+# The tools/ scripts the Justfile shells out to, minus the two that drive
+# ruff and pyrefly themselves. Those two import the third-party packages
+# this typecheck run has no visibility into, which is why they are
+# excluded in pyproject.toml; the rest are plain stdlib and were only
+# unchecked because nothing listed them here -- tools/ruff_check.sh has
+# always passed `tools` to ruff, so the directory was named but never
+# materialized in the sandbox. Found when a version-agreement check was
+# added as a second such script and would have landed in the same hole.
+filegroup(
+    name = "tool_py_sources",
+    srcs = [
+        "tools/check_versions.py",
+        "tools/sync_manifests.py",
+    ],
+    visibility = ["//visibility:private"],
+)
+
 # The whole tree, laid out with real repo-relative paths, for the read-only
 # checks below -- see plugins/claude/hooks/BUILD.bazel's py_sources.
 _PY_SOURCES = [
+    "//:tool_py_sources",
     "//plugins/claude/hooks:py_sources",
     "//plugins/canon-companion:py_sources",
     "//plugins/codex/hooks:py_sources",

@@ -26,9 +26,9 @@ _CLAUDE_MANIFEST = Path("plugins/canon-companion/.claude-plugin/plugin.json")
 _SCHEMA = "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json"
 
 
-def generate() -> dict:
+def generate() -> dict[str, object]:
     data = json.loads(_CLAUDE_MANIFEST.read_text())
-    generated = {"$schema": _SCHEMA}
+    generated: dict[str, object] = {"$schema": _SCHEMA}
     generated.update(data)
     generated["skills"] = "./skills/"
     return generated
