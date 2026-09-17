@@ -24,7 +24,7 @@ line-length = 88
 select = ["E", "F", "I", "UP", "B"]
 
 [tool.pyrefly]
-project-includes = ["plugins", "tests", "src"]
+project-includes = ["plugins", "tests", "src", "tools"]
 # server.py is canon-mcp's one file that imports the third-party `mcp`
 # SDK -- resolved by `uvx` at runtime (see MODULE.bazel), not by any
 # Bazel-managed hub this typecheck run has visibility into. Same
@@ -32,6 +32,8 @@ project-includes = ["plugins", "tests", "src"]
 project-excludes = [
     "**/__pycache__",
     "**/*.pyc",
+    "tools/run_ruff.py",
+    "tools/run_pyrefly.py",
     "plugins/canon-companion/skills/audit-google-python-style/scripts/check_google_rules.py",
     "src/canon_mcp/canon_mcp/server.py",
 ]
