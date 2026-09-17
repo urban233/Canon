@@ -1,7 +1,7 @@
 """Canon build graph. Step 1: build, test, lint, typecheck -- no runtime
 dependencies yet. See docs/plan.md."""
 
-module(name = "canon", version = "0.0.1")
+module(name = "canon", version = "0.1.0")
 
 bazel_dep(name = "rules_python", version = "2.3.2")
 bazel_dep(name = "rules_shell", version = "0.8.0")
