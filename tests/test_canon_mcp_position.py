@@ -223,6 +223,72 @@ class BuildPositionTests(unittest.TestCase):
         self.assertEqual(result["mode"], "async")
 
 
+class RedirectedBranchPlanFeatureTests(unittest.TestCase):
+    """`_plan.branch_plan_relative` redirects a `features/<x>` branch's
+    own plan to `.canon/plans/branches/features/<x>.md`, out of the
+    `.canon/plans/features/` namespace a feature plan of that slug
+    already occupies. `build_position` must resolve through that
+    redirect -- resolving the plain `.canon/plans/<branch>.md` formula
+    instead means reading a `parent:` a feature plan's own header never
+    carries, so `_build_feature` always reports no feature, even when
+    the branch's real (redirected) plan names a real parent with real
+    steps. Deliberately not mocking `read_plan_file`, unlike
+    `FeatureStepTests` below: the real path resolution is exactly what
+    is under test."""
+
+    def _build(self, root: Path) -> dict[str, Any]:
+        with (
+            mock.patch(
+                "canon_mcp.position.current_branch", return_value="features/widget"
+            ),
+            mock.patch("canon_mcp.position.default_branch", return_value="main"),
+            mock.patch("canon_mcp.position.merge_base", return_value="abc123456"),
+            mock.patch("canon_mcp.position.head_sha", return_value="def123456"),
+            mock.patch("canon_mcp.position.commits_ahead", return_value=1),
+            mock.patch("canon_mcp.position.pr_view", return_value=None),
+            mock.patch(
+                "canon_mcp.position.build_review", return_value={"verdict": None}
+            ),
+            mock.patch("canon_mcp.position.load_config", return_value={"verify": "x"}),
+            mock.patch(
+                "canon_mcp.position.branch_names", return_value={"features/widget"}
+            ),
+            mock.patch("canon_mcp.position.merged_branch_names", return_value=set()),
+            mock.patch("canon_mcp.position.pr_list_by_head", return_value={}),
+        ):
+            return position.build_position(root)
+
+    def test_feature_is_found_via_the_redirected_plan(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            plans = root / ".canon" / "plans"
+            (plans / "features").mkdir(parents=True)
+            # The same-slug feature plan the plain formula would collide
+            # with -- has no `parent:`, the way a feature plan never does.
+            (plans / "features" / "widget.md").write_text(
+                "---\nstatus: approved\nsteps:\n---\n\n"
+                "## Steps\n- a: unrelated feature step\n",
+                encoding="utf-8",
+            )
+            (plans / "features" / "other-feature.md").write_text(
+                "---\nstatus: approved\nsteps:\n---\n\n"
+                "# Other feature\n\n## Steps\n"
+                "- widget: build the widget\n"
+                "- polish: polish it\n",
+                encoding="utf-8",
+            )
+            (plans / "branches" / "features").mkdir(parents=True)
+            (plans / "branches" / "features" / "widget.md").write_text(
+                '---\nstatus: approved\nparent: "features/other-feature.md"\n---\n\n'
+                "## Approach\nx\n",
+                encoding="utf-8",
+            )
+            result = self._build(root)
+            self.assertIsNotNone(result["feature"])
+            assert result["feature"] is not None
+            self.assertEqual(result["feature"]["total"], 2)
+
+
 class FeatureStepTests(unittest.TestCase):
     """§06's "which step am I on?", end to end from a branch plan's
     `parent:` through the feature plan's `## Steps`."""

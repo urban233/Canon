@@ -67,6 +67,32 @@ class PlanStatusTests(unittest.TestCase):
             status = session_start._plan_status(Path(root), "feature/widget")
             self.assertTrue(status.startswith("approved"))
 
+    def test_reads_the_redirected_plan_for_a_features_prefixed_branch(self) -> None:
+        """`plan_header.branch_plan_path` redirects a `features/<x>`
+        branch's own plan to `.canon/plans/branches/features/<x>.md`, out
+        of the `.canon/plans/features/` namespace a feature plan of that
+        slug already occupies. `_plan_status` must read that redirected
+        path -- reading the plain `.canon/plans/<branch>.md` formula
+        instead means the session opens naming a plan path, and a plan
+        status, that belong to the wrong file."""
+        with tempfile.TemporaryDirectory() as root:
+            feature_plan = Path(root) / ".canon" / "plans" / "features" / "widget.md"
+            feature_plan.parent.mkdir(parents=True)
+            feature_plan.write_text(
+                "---\nstatus: approved\nsteps:\n---\n\n## Steps\n- a: x\n",
+                encoding="utf-8",
+            )
+            branch_plan = (
+                Path(root) / ".canon" / "plans" / "branches" / "features" / "widget.md"
+            )
+            branch_plan.parent.mkdir(parents=True)
+            branch_plan.write_text(
+                "---\nstatus: in-progress\n---\n\n## Approach\nx\n", encoding="utf-8"
+            )
+            status = session_start._plan_status(Path(root), "features/widget")
+            self.assertTrue(status.startswith("in-progress"))
+            self.assertIn(".canon/plans/branches/features/widget.md", status)
+
     def test_unknown_status_when_header_has_no_status_field(self) -> None:
         with tempfile.TemporaryDirectory() as root:
             plan_path = Path(root) / ".canon" / "plans" / "solo.md"

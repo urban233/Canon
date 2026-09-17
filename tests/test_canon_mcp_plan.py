@@ -94,6 +94,39 @@ class ReadPlanFileTests(unittest.TestCase):
 
 
 class BuildPlanTests(unittest.TestCase):
+    def test_reads_the_redirected_branch_plan_not_a_same_slug_feature_plan(
+        self,
+    ) -> None:
+        """`_plan.branch_plan_relative` redirects a `features/<x>`
+        branch's own plan to `.canon/plans/branches/features/<x>.md`, out
+        of the `.canon/plans/features/` namespace a feature plan of that
+        slug already occupies. `build_plan` must resolve through that
+        redirect -- resolving the plain `.canon/plans/<branch>.md`
+        formula instead means `canon_plan` shows the feature plan's body
+        as though it were this branch's own."""
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            plans = root / ".canon" / "plans"
+            (plans / "features").mkdir(parents=True)
+            (plans / "features" / "widget.md").write_text(
+                "---\nstatus: approved\nsteps:\n---\n\n## Steps\n- a: x\n",
+                encoding="utf-8",
+            )
+            (plans / "branches" / "features").mkdir(parents=True)
+            (plans / "branches" / "features" / "widget.md").write_text(
+                "---\nstatus: approved\n---\n\n## Approach\nThe branch's own plan.\n",
+                encoding="utf-8",
+            )
+
+            completed = mock.Mock(returncode=0, stdout="features/widget\n")
+            with mock.patch("subprocess.run", return_value=completed):
+                result = plan.build_plan(root)
+
+        assert result["plan"] is not None
+        self.assertEqual(
+            result["plan"]["sections"].get("approach"), "The branch's own plan."
+        )
+
     def test_reports_no_plan_saved(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             completed = mock.Mock(returncode=0, stdout="fix-slug-collision\n")

@@ -45,8 +45,7 @@ from pathlib import Path
 
 import _common
 import _config
-
-_PLANS_DIR_RELATIVE = ".canon/plans"
+import plan_header
 
 _EDIT_TOOL_NAMES = ("Edit", "Write", "apply_patch")
 _SHELL_TOOL_NAMES = ("Bash",)
@@ -58,7 +57,14 @@ _COMMIT_PATTERN = re.compile(r"\bgit\s+commit\b", re.IGNORECASE)
 
 
 def _plan_exists(root: Path, branch: str) -> bool:
-    return (root / _PLANS_DIR_RELATIVE / f"{branch}.md").is_file()
+    # `plan_header.branch_plan_path`, not the plain `.canon/plans/<branch>.md`
+    # formula: a `features/<x>` branch's plan is saved at
+    # `.canon/plans/branches/features/<x>.md` instead, to avoid colliding
+    # with a feature plan of the same slug (see plan_header.py's module
+    # docstring). Checking the plain formula here would let a same-slug
+    # feature plan satisfy this gate for a branch that has no plan of its
+    # own saved at all.
+    return plan_header.branch_plan_path(root, branch).is_file()
 
 
 _ASYNC_SUFFIX = (

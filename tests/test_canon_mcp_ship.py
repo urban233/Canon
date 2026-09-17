@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import tempfile
 import unittest
 from pathlib import Path
 from unittest import mock
@@ -117,6 +118,48 @@ class ReviewReadinessTests(unittest.TestCase):
 
 
 class BuildShipTests(unittest.TestCase):
+    def test_plan_invariant_is_unsatisfied_with_only_a_same_slug_feature_plan(
+        self,
+    ) -> None:
+        """`_plan.branch_plan_relative` redirects a `features/<x>`
+        branch's own plan to `.canon/plans/branches/features/<x>.md`, out
+        of the `.canon/plans/features/` namespace a feature plan of that
+        slug already occupies. `build_ship` must resolve through that
+        redirect -- resolving the plain `.canon/plans/<branch>.md`
+        formula instead means `canon_ship` reads the feature plan's own
+        `status: approved` header and reports the plan invariant
+        satisfied on the strength of the wrong file, on the one call that
+        decides whether a human should look at the branch. Deliberately
+        not mocking `read_plan_file` here, unlike the other tests in this
+        class: the real path resolution is exactly what is under test."""
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            feature_plan = root / ".canon" / "plans" / "features" / "widget.md"
+            feature_plan.parent.mkdir(parents=True)
+            feature_plan.write_text(
+                "---\nstatus: approved\nsteps:\n---\n\n## Steps\n- a: x\n",
+                encoding="utf-8",
+            )
+            with (
+                mock.patch(
+                    "canon_mcp.ship.current_branch", return_value="features/widget"
+                ),
+                mock.patch(
+                    "canon_mcp.ship.build_evidence", return_value={"green": True}
+                ),
+                mock.patch(
+                    "canon_mcp.ship.build_review",
+                    return_value={
+                        "verdict": {"decision": "READY FOR HUMAN APPROVAL"},
+                        "stale": False,
+                    },
+                ),
+            ):
+                result = ship.build_ship(root)
+        self.assertFalse(result["plan"]["satisfied"])
+        assert result["plan"]["reason"] is not None
+        self.assertIn("no plan saved", result["plan"]["reason"])
+
     def test_ready_when_all_three_invariants_are_met(self) -> None:
         with (
             mock.patch("canon_mcp.ship.current_branch", return_value="feature/x"),

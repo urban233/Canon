@@ -134,6 +134,41 @@ class EditOrWriteTests(unittest.TestCase):
             )
             self.assertEqual(output, "")
 
+    def test_asks_on_features_prefixed_branch_even_with_a_same_slug_feature_plan(
+        self,
+    ) -> None:
+        """`plan_header.branch_plan_path` redirects a `features/<x>`
+        branch's own plan to `.canon/plans/branches/features/<x>.md`, out
+        of the `.canon/plans/features/` namespace a feature plan of that
+        slug already occupies (see plan_header.py's module docstring).
+        `_plan_exists` must check that redirected path -- checking the
+        plain `.canon/plans/<branch>.md` formula instead means a feature
+        plan sharing this branch's slug defeats the gate entirely: an
+        edit proceeds as though a plan had been approved for the branch
+        when none was ever saved for it."""
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            _init_repo(root, "features/widget")
+            feature_plan = root / ".canon" / "plans" / "features" / "widget.md"
+            feature_plan.parent.mkdir(parents=True)
+            feature_plan.write_text(
+                "---\nstatus: approved\nsteps:\n---\n\n## Steps\n- a: do a\n",
+                encoding="utf-8",
+            )
+            output = _invoke_main(
+                {
+                    "cwd": str(root),
+                    "tool_name": "Edit",
+                    "tool_input": {"file_path": str(root / "a.py")},
+                }
+            )
+            payload = json.loads(output)
+            self.assertEqual(payload["hookSpecificOutput"]["permissionDecision"], "ask")
+            self.assertIn(
+                "No plan is saved",
+                payload["hookSpecificOutput"]["permissionDecisionReason"],
+            )
+
     def test_default_branch_guard_can_be_disabled(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)

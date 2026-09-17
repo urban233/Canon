@@ -197,6 +197,43 @@ class VerifyCommandSourceTests(unittest.TestCase):
                 ".canon/config.json",
             )
 
+    def test_names_the_redirected_plan_for_a_features_prefixed_branch(self) -> None:
+        """Same read-side redirect as plugins/claude/hooks/_config.py's
+        identical test (issue #54): a `features/<x>` branch's own plan
+        lives at `.canon/plans/branches/features/<x>.md`, not the plain
+        `.canon/plans/<branch>.md` formula, to avoid colliding with a
+        feature plan of the same slug. Naming the plain formula here
+        would send a human to fix the wrong file."""
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            feature_plan = root / ".canon" / "plans" / "features" / "widget.md"
+            feature_plan.parent.mkdir(parents=True)
+            feature_plan.write_text(
+                "---\nstatus: approved\nsteps:\n---\n\n## Steps\n- a: x\n",
+                encoding="utf-8",
+            )
+            branch_plan = (
+                root / ".canon" / "plans" / "branches" / "features" / "widget.md"
+            )
+            branch_plan.parent.mkdir(parents=True)
+            branch_plan.write_text(
+                '---\nstatus: approved\nverify: "pytest tests/widget -x"\n---\n\n'
+                "## Approach\nx\n",
+                encoding="utf-8",
+            )
+            self.assertEqual(
+                _config.verify_command_source(
+                    root, "features/widget", {"verify": "just test"}
+                ),
+                ".canon/plans/branches/features/widget.md",
+            )
+            self.assertEqual(
+                _config.resolve_verify_command(
+                    root, "features/widget", {"verify": "just test"}
+                ),
+                "pytest tests/widget -x",
+            )
+
     def test_defaults_to_the_config_file_with_no_branch(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             self.assertEqual(

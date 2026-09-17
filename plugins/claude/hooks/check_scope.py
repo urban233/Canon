@@ -2,7 +2,7 @@
 """Canon's `PostToolUse` hook for an edit -- scope departure.
 
 Compares the file(s) just touched against the current branch's saved plan
-(`.canon/plans/<branch>.md`): its header's `scope:` glob list, if
+(`plan_header.branch_plan_path`): its header's `scope:` glob list, if
 populated, and its `## Non-goals` section, if non-empty (see
 docs/plan.md §07's "Scope creep" row). Neither is guaranteed to be
 populated -- a freshly saved plan always writes `scope:` blank by design
@@ -42,8 +42,8 @@ from pathlib import Path
 
 import _common
 import _config
+import plan_header
 
-_PLANS_DIR_RELATIVE = ".canon/plans"
 _COUNTER_NAME = "consecutive_scope_departures"
 _SUSTAINED_THRESHOLD = 3
 
@@ -145,7 +145,7 @@ def main() -> None:
         return
 
     branch = _common.current_branch(root) or "HEAD"
-    plan_path = root / _PLANS_DIR_RELATIVE / f"{branch}.md"
+    plan_path = plan_header.branch_plan_path(root, branch)
     try:
         text = plan_path.read_text(encoding="utf-8")
     except OSError:

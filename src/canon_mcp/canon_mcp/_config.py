@@ -25,7 +25,7 @@ import shlex
 from pathlib import Path
 from typing import Any
 
-from ._plan import read_plan_file
+from ._plan import branch_plan_relative, read_plan_file
 
 _CONFIG_PATH_RELATIVE = ".canon/config.json"
 
@@ -58,9 +58,6 @@ def has_verification_signal(config: dict[str, Any] | None) -> bool:
     return isinstance(verify, str) and verify.strip() != ""
 
 
-_PLANS_DIR_RELATIVE = ".canon/plans"
-
-
 def resolve_verify_command(
     root: Path, branch: str | None, config: dict[str, Any] | None
 ) -> str | None:
@@ -71,9 +68,17 @@ def resolve_verify_command(
     copied-and-forked rule as the rest of this module -- see _git.py's
     docstring. It exists here so a local re-run in `evidence.py` and the
     `Stop` gate can never disagree about which command counts.
+
+    Reads through `_plan.branch_plan_relative`, not the plain
+    `.canon/plans/<branch>.md` formula: a `features/<x>` branch's own
+    plan is redirected to `.canon/plans/branches/features/<x>.md`, to
+    avoid colliding with a feature plan of the same slug. Reading the
+    plain formula instead would read a `verify:` override out of the
+    wrong plan for exactly the branch names that redirect exists to
+    protect.
     """
     if branch:
-        plan = read_plan_file(root, f"{_PLANS_DIR_RELATIVE}/{branch}.md")
+        plan = read_plan_file(root, branch_plan_relative(branch))
         if plan is not None:
             override = str(plan["header"].get("verify", "")).strip()
             if override:
@@ -95,14 +100,16 @@ def verify_command_source(
     `build_evidence` uses this to name the file a human should actually
     go fix when reporting a configuration fault -- naming
     `.canon/config.json` unconditionally would send them to edit the
-    wrong file for a command that came from a plan header instead.
+    wrong file for a command that came from a plan header instead, which
+    is exactly what naming the plain `.canon/plans/<branch>.md` formula
+    would do for a `features/<x>` branch (see `resolve_verify_command`).
     """
     if branch:
-        plan = read_plan_file(root, f"{_PLANS_DIR_RELATIVE}/{branch}.md")
+        plan = read_plan_file(root, branch_plan_relative(branch))
         if plan is not None:
             override = str(plan["header"].get("verify", "")).strip()
             if override:
-                return f"{_PLANS_DIR_RELATIVE}/{branch}.md"
+                return branch_plan_relative(branch)
     return _CONFIG_PATH_RELATIVE
 
 
