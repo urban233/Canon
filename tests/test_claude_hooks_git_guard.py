@@ -635,16 +635,17 @@ class HeredocTerminatorTests(unittest.TestCase):
     interactive shell resolves a modern one (5.x), but Bazel's sandboxed
     test run resolves macOS's ancient system `/bin/bash` (3.2), which
     has its own, unrelated defect -- it can mis-lex a `<<'quoted'`
-    heredoc whenever the heredoc body contains an *odd* total count of
-    `'` or `"`, regardless of where that character sits, because its
-    single-pass lexer still tracks quote balance through heredoc bodies
-    that should be opaque to it. A trailer with exactly one quote
-    character (an ordinary apostrophe in a name) always produces an odd
-    count, so this fix's output -- correct under the invariants it's
-    required to hold -- still fails `bash -n` on that one shell. That is
-    a real, separate finding, reported rather than chased in this round:
-    see git_guard.py's own note by `_TRAILER_LINE` and the round's
-    handback for the evidence. A shape assertion tests the actual
+    heredoc whenever the heredoc body is not quote-*balanced* when read
+    as ordinary shell text, because its single-pass lexer still tracks
+    quote balance through heredoc bodies that should be opaque to it. A
+    trailer carrying a single apostrophe in a name is the common way to
+    get there, so this fix's output -- correct under the invariants it's
+    required to hold -- still fails `bash -n` on that one shell. The
+    unrewritten command fails there too: the rewrite preserves the quote
+    subsequence, which is what that shell keys on, so it cannot flip the
+    verdict either way. That is a real, separate finding, reported
+    rather than chased: see `_strip_attribution`'s own docstring in
+    git_guard.py for the full note. A shape assertion tests the actual
     contract this fix controls (the terminator's position) without
     being hostage to which bash binary happens to be resolved when the
     suite runs."""
