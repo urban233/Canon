@@ -15,6 +15,7 @@ import io
 import json
 import sys
 import tempfile
+import time
 import unittest
 from pathlib import Path
 from typing import Any
@@ -45,6 +46,16 @@ def _payload(root: Path, state: Path | None = None, **extra: Any) -> dict[str, A
         payload["scratchpad_dir"] = str(state)
     payload.update(extra)
     return payload
+
+
+def _marker(state: Path, name: str) -> Path:
+    """Where `_common.state_dir` actually puts a marker.
+
+    It is `<scratchpad_dir>/canon`, not the scratchpad root. Writing a
+    stamp to the wrong directory makes a debounce test pass because the
+    hook ignored it, which is the opposite of what the test claims.
+    """
+    return state / "canon" / name
 
 
 def _invoke_main(payload: dict[str, Any]) -> str:
@@ -187,6 +198,9 @@ class DebounceTests(unittest.TestCase):
             self.assertEqual(second, "")
 
     def test_the_check_runs_again_once_the_window_has_passed(self) -> None:
+        """The stamp says when the next run is allowed, so "the window has
+        passed" is a stamp in the past -- not a smaller constant, which
+        would not touch a stamp already written."""
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             state = root / "state"
@@ -194,10 +208,12 @@ class DebounceTests(unittest.TestCase):
             self.assertIn(
                 "additionalContext", _invoke_main(_payload(root, state=state))
             )
-            with mock.patch.object(fast_check, "_DEBOUNCE_SECONDS", 0):
-                self.assertIn(
-                    "additionalContext", _invoke_main(_payload(root, state=state))
-                )
+            _marker(state, fast_check._NEXT_RUN_NAME).write_text(
+                str(time.time() - 1), encoding="utf-8"
+            )
+            self.assertIn(
+                "additionalContext", _invoke_main(_payload(root, state=state))
+            )
 
     def test_without_session_state_the_check_runs_every_time(self) -> None:
         """No `scratchpad_dir` and no `session_id` means no state to
@@ -210,6 +226,84 @@ class DebounceTests(unittest.TestCase):
             _configure(root, check="false")
             self.assertIn("additionalContext", _invoke_main(_payload(root)))
             self.assertIn("additionalContext", _invoke_main(_payload(root)))
+
+
+class StandDownTests(unittest.TestCase):
+    """The stamp records when the next run is *allowed*, not when the last
+    one happened -- which is what lets a timeout stand down for longer
+    than an ordinary debounce without a future stamp reading as
+    "disabled"."""
+
+    def test_a_timeout_stands_the_check_down_past_the_debounce_window(self) -> None:
+        """Without this a `check` that reliably overruns would spawn a
+        60-second subprocess every 30 seconds for ever, emitting nothing
+        each time.
+
+        Asserted on the stamp rather than on a second invocation: the
+        ordinary debounce stamp is written before the command runs, so a
+        behavioural test cannot tell the two windows apart -- it would
+        pass with the backoff deleted.
+        """
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            state = root / "state"
+            _configure(root, check="sleep 300")
+            timed_out = _common.CommandResult(
+                passed=False,
+                detail="`sleep 300` timed out after 60s.",
+                configuration_fault=False,
+                timed_out=True,
+            )
+            before = time.time()
+            with mock.patch.object(_common, "run_command", return_value=timed_out):
+                self.assertEqual(_invoke_main(_payload(root, state=state)), "")
+            stamp = float(
+                _marker(state, fast_check._NEXT_RUN_NAME).read_text(encoding="utf-8")
+            )
+            deferral = stamp - before
+            # Near the backoff, not near the debounce: comparing against
+            # _DEBOUNCE_SECONDS alone would pass on 30.0001 seconds.
+            self.assertGreaterEqual(deferral, fast_check._TIMEOUT_BACKOFF_SECONDS - 5)
+            self.assertLessEqual(deferral, fast_check._TIMEOUT_BACKOFF_SECONDS + 5)
+
+    def test_an_implausible_future_stamp_does_not_disable_the_check(self) -> None:
+        """A clock corrected backwards -- NTP, a resumed laptop, a skewed
+        container -- would otherwise leave a stamp this module could never
+        have written, and silently switch the layer off for the length of
+        the skew. An implausible stamp is treated as no stamp, which fails
+        toward running."""
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            state = root / "state"
+            _marker(state, "x").parent.mkdir(parents=True)
+            _configure(root, check="false")
+            _marker(state, fast_check._NEXT_RUN_NAME).write_text(
+                str(time.time() + 10_000_000), encoding="utf-8"
+            )
+            self.assertIn(
+                "additionalContext", _invoke_main(_payload(root, state=state))
+            )
+
+
+class ConfigurationFaultWordingTests(unittest.TestCase):
+    def test_the_once_per_session_claim_is_dropped_without_session_state(self) -> None:
+        """Without a `state_dir` the marker cannot be written, so the
+        message would repeat on every edit -- and a message that claims
+        "Canon mentions this once" while repeating is asserting a property
+        the code does not hold."""
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            _configure(root, check="ruff check . && pytest")
+            output = _invoke_main(_payload(root))
+            self.assertIn("cannot be run as configured", output)
+            self.assertNotIn("once per session", output)
+
+    def test_the_claim_is_made_when_there_is_state_to_keep_it_with(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            _configure(root, check="ruff check . && pytest")
+            output = _invoke_main(_payload(root, state=root / "state"))
+            self.assertIn("once per session", output)
 
 
 if __name__ == "__main__":

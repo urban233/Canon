@@ -18,8 +18,11 @@ session-scoped consecutive-refusal counter for what "sustained" means.
 
 Not implemented here: formatting the touched file (§07 also mentions
 this for the same hook slot) -- hooks are stdlib-only and run via bare
-`python3`, with no guaranteed access to a resolved formatter binary;
-that's a separate decision, not a bolt-on to this one.
+`python3`, with no guaranteed access to a resolved formatter binary.
+That separate decision has since been taken, and it went the other way:
+`fast_check.py` runs a command the repository names and reports the
+result rather than formatting anything. See
+docs/decisions/0006-layer-one-reports-rather-than-formats.md.
 
 Inert without a verification signal (docs/plan.md §07, "No signal, no
 Canon"): with no `verify` command in `.canon/config.json` this hook is a

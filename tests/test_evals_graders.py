@@ -35,8 +35,19 @@ import re
 import unittest
 from pathlib import Path
 
-_REPO_ROOT = Path(__file__).resolve().parents[1]
+# Deliberately not `.resolve()`: a runfiles entry is an absolute symlink
+# back into the source tree, so resolving it walks out of the runfiles
+# and the test would read the working tree no matter what Bazel
+# delivered -- which would make the vacuity guard below a no-op.
+_REPO_ROOT = Path(__file__).parent.parent
 _EVAL_SUITES = ("plugins/claude/evals", "plugins/canon-companion/evals")
+# Directories the eval CLI owns rather than cases anyone wrote.
+# `claude plugin eval` writes its results under `<eval dir>/results/`
+# (already gitignored) and reads recorded mocks from `<eval dir>/mocks/`.
+# Without this, running `just eval` makes the very next `just ci` fail
+# with "case.yaml is missing" pointing at a results directory -- the
+# checker that exists to protect an eval run, broken by one.
+_NON_CASE_DIRS = frozenset({"results", "mocks"})
 
 _VALID_TYPES = {"llm", "regex", "tool_used"}
 _VALID_SCALAR_TARGETS = {"files", "trace"}
@@ -98,7 +109,13 @@ def _case_dirs() -> list[Path]:
         suite_path = _REPO_ROOT / suite
         if not suite_path.is_dir():
             continue
-        cases.extend(sorted(p for p in suite_path.iterdir() if p.is_dir()))
+        cases.extend(
+            sorted(
+                p
+                for p in suite_path.iterdir()
+                if p.is_dir() and p.name not in _NON_CASE_DIRS
+            )
+        )
     return cases
 
 

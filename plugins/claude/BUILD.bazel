@@ -6,6 +6,12 @@
 # would expect a target providing PyInfo.
 filegroup(
     name = "eval_sources",
-    srcs = glob(["evals/**"]),
+    # results/ is written by `just eval` and gitignored; mocks/ is read
+    # by `--mocks`. Neither is a case, and globbing them would also pull
+    # untracked run artifacts into this target's declared inputs.
+    srcs = glob(
+        ["evals/**"],
+        exclude = ["evals/results/**", "evals/mocks/**"],
+    ),
     visibility = ["//tests:__pkg__"],
 )

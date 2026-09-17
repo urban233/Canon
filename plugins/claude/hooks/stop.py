@@ -187,7 +187,13 @@ def _first_run_reason(root: Path) -> str:
         "instead. Propose that wrapper to the developer -- do not write "
         "it yourself: editing this repository's build configuration is "
         "not Canon's job, the same line it holds on `nbstripout` and on "
-        "branch protection."
+        "branch protection. Finally, and optionally: an adjacent `check` "
+        "key names a *fast* command -- a formatter, a linter, a "
+        "typechecker, never tests -- that Canon runs after an edit and "
+        "reports without blocking, so a pull request never fails CI on "
+        "formatting alone. Offer it if this repository has an obvious "
+        "one, and leave it out if it does not; unlike `verify`, its "
+        "absence costs nothing."
     )
 
 

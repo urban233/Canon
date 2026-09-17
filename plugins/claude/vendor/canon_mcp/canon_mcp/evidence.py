@@ -8,8 +8,8 @@ unpushed commit has no such record, so the honest answer is a fresh
 local re-run, never a cached guess. This module computes both paths
 fresh on every call -- nothing here is stored.
 
-`_run_local_check` is `plugins/claude/hooks/stop.py`'s
-`_run_verification`, ported (not imported -- see `_git.py`'s module
+`_run_local_check` is `plugins/claude/hooks/_common.py`'s
+`run_command`, ported (not imported -- see `_git.py`'s module
 docstring for why hooks and this package don't share a dependency
 edge): same `shlex.split`, same 300s timeout, same 4000-char output
 tail on failure, and the same three-way split between "passed",
@@ -46,7 +46,7 @@ def _run_local_check(root: Path, command: str) -> tuple[bool, str, bool]:
     """Run `command` with no shell and report the result.
 
     Returns `(passed, detail, configuration_fault)` -- see
-    `plugins/claude/hooks/stop.py`'s `_run_verification`, which this
+    `plugins/claude/hooks/_common.py`'s `run_command`, which this
     mirrors exactly. `configuration_fault` is True when the command
     could not be parsed or its binary is not on `PATH`, and False for a
     command that ran and either timed out or exited non-zero.

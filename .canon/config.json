@@ -1,4 +1,4 @@
 {
-  "check": "bazel --output_base=/tmp/canon-fast-check test //:fmt_check //:lint //:typecheck",
+  "check": "bazel test //:fmt_check //:lint //:typecheck",
   "verify": "bazel test //tests/..."
 }

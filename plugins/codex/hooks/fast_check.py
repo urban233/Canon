@@ -30,7 +30,7 @@ wanted to; it emits `additionalContext` and nothing else, which is what
 worth stating at length, because getting it wrong would make the layer
 worse than absent. A repository's `check` and its `verify` are both
 likely to be the same build tool -- in this repository both are Bazel --
-and Bazel serialises commands per output base. A `check` firing while
+and a build tool serialises per output base. A `check` firing while
 `verify`, or a developer's own `just ci`, holds that lock would spend its
 whole budget waiting and then report a timeout. Reported as a failure,
 that is indistinguishable from a real regression the edit introduced, and
@@ -39,6 +39,20 @@ a timeout produces no output at all: layer one has no authority, which
 means an unknown answer costs nothing. `_common.run_command` already
 separates a timeout from a non-zero exit, and this hook is the reason
 that distinction earns its place twice.
+
+Pointing `check` at its own output base would dodge the contention
+instead, and an earlier draft of this repository's own config did. It was
+withdrawn: a fixed path under a shared `/tmp` is a permissions failure
+waiting for the second user of a machine, and that arrives here as a
+non-zero exit rather than an `OSError` -- so Canon would tell an agent its
+edit broke something when the truth is that another account owns a
+directory. Waiting on a lock and saying nothing is the better failure, and
+it is the one this hook is already built for.
+
+**A timeout also stands the hook down for longer.** The window is written
+before the command runs, so without that a `check` that reliably exceeds
+its budget would spawn a 60-second subprocess every debounce window, for
+ever, to emit nothing each time.
 
 **Debounced, deliberately.** An edit-heavy turn would otherwise pay the
 command once per tool call. The interval is a module constant rather
@@ -66,40 +80,66 @@ from pathlib import Path
 import _common
 import _config
 
-_EDIT_TOOL_NAMES = ("Edit", "Write", "apply_patch")
+# `None` is included to match check_scope.py, which is bound to the same
+# event: a payload that carries no `tool_name` at all is a shape
+# docs/codex-hook-surface.md records as unconfirmed, and two hooks on one
+# event disagreeing about whether to act on it would be worse than either
+# answer.
+_EDIT_TOOL_NAMES = (None, "Edit", "Write", "apply_patch")
 
 _FAST_CHECK_TIMEOUT_SECONDS = 60
-# Not a config key, on purpose -- see the module docstring.
+# Neither is a config key, on purpose -- see the module docstring.
 _DEBOUNCE_SECONDS = 30
+# A check that timed out is one that is structurally too slow for this
+# layer, or one waiting on a lock it will keep waiting on. Standing down
+# for longer than the ordinary window keeps a repository whose `check`
+# reliably overruns from paying a 60-second stall every 30 seconds
+# forever, for a report it never even emits.
+_TIMEOUT_BACKOFF_SECONDS = 600
 
-_LAST_RUN_NAME = "fast_check_last_run"
+_NEXT_RUN_NAME = "fast_check_next_run"
 _CONFIG_FAULT_MARKER_NAME = "fast_check_config_fault_reported"
 
 
-def _read_last_run(state_dir: Path | None) -> float:
-    """When this hook last ran the check, as a unix timestamp, or 0.0.
+def _read_next_run(state_dir: Path | None) -> float:
+    """The unix timestamp before which this hook should not run again, or
+    0.0 meaning "no restriction".
 
     0.0 for a missing, unreadable or malformed marker, and for no
     `state_dir` at all -- every one of which means "run it", which is the
-    degraded behaviour this hook wants: without session state it simply
-    stops debouncing rather than stopping working.
+    degraded behaviour this hook wants: without session state it stops
+    debouncing rather than stopping working.
     """
     if state_dir is None:
         return 0.0
     try:
-        return float((state_dir / _LAST_RUN_NAME).read_text(encoding="utf-8").strip())
+        return float((state_dir / _NEXT_RUN_NAME).read_text(encoding="utf-8").strip())
     except (OSError, ValueError):
         return 0.0
 
 
-def _write_last_run(state_dir: Path | None, when: float) -> None:
+def _write_next_run(state_dir: Path | None, when: float) -> None:
     if state_dir is None:
         return
     try:
         state_dir.mkdir(parents=True, exist_ok=True)
-        (state_dir / _LAST_RUN_NAME).write_text(str(when), encoding="utf-8")
+        (state_dir / _NEXT_RUN_NAME).write_text(str(when), encoding="utf-8")
     except OSError:
         pass
+
+
+def _deferred(state_dir: Path | None, now: float) -> bool:
+    """Whether the hook is still inside its stand-down window.
+
+    The upper bound matters as much as the lower one. A stamp further
+    ahead than any window this module writes cannot have come from this
+    module -- a clock corrected backwards by NTP, a resumed laptop, a
+    container with skewed time -- and treating it as a deferral would
+    silently disable the check for the length of the skew. An implausible
+    stamp is therefore treated as no stamp, which fails toward running.
+    """
+    remaining = _read_next_run(state_dir) - now
+    return 0 < remaining <= _TIMEOUT_BACKOFF_SECONDS
 
 
 def _already_reported_fault(state_dir: Path | None) -> bool:
@@ -116,20 +156,29 @@ def _mark_fault_reported(state_dir: Path | None) -> None:
         pass
 
 
-def _configuration_fault_message(command: str, detail: str) -> str:
-    """Said once per session, then never again.
+def _configuration_fault_message(command: str, detail: str, *, once: bool) -> str:
+    """Reported once per session where there is session state to remember
+    with, and on every offending edit where there is not.
 
-    Deliberately the same shape as `stop.py`'s equivalent: a command that
-    cannot be run is a fact about `.canon/config.json`, not about the
+    `once` is not decoration: without a `state_dir` the marker cannot be
+    written, so the claim "Canon mentions this once" would be false on
+    exactly the platforms that cannot keep it. Saying less is better than
+    asserting a property the code does not hold -- the same care
+    `stop.py`'s equivalent takes.
+
+    Deliberately the same shape as that equivalent otherwise: a command
+    that cannot be run is a fact about `.canon/config.json`, not about the
     code, and telling the agent to fix the code is how a misconfiguration
     gets "repaired" into a real change.
     """
+    closing = (
+        " Canon mentions this once per session and then stays quiet." if once else ""
+    )
     return (
         f"Canon's fast check (`{command}`, from .canon/config.json's `check`) "
         f"cannot be run as configured: {detail} Fix the command in "
         ".canon/config.json -- this is a configuration problem, not something "
-        "wrong with the change you just made. Canon mentions this once per "
-        "session and then stays quiet."
+        "wrong with the change you just made." + closing
     )
 
 
@@ -151,41 +200,36 @@ def main() -> None:
         return  # this repository has not asked for layer one
 
     state_dir = _common.state_dir(payload)
+    now = time.time()
+    # Ahead of every other branch, including the configuration-fault
+    # report: an edit-heavy turn should cost this hook nothing at all,
+    # whatever it would have had to say.
+    if _deferred(state_dir, now):
+        return
 
     problem = _config.verify_command_problem(command)
     if problem is not None:
-        if _already_reported_fault(state_dir):
-            return
-        _mark_fault_reported(state_dir)
-        message = _configuration_fault_message(command, problem)
-        _common.log_decision(root, "fast_check.py", "config_fault", reason=message)
-        _common.context("PostToolUse", message)
+        _report_configuration_fault(root, state_dir, command, problem)
         return
 
-    now = time.time()
-    if now - _read_last_run(state_dir) < _DEBOUNCE_SECONDS:
-        return
-    _write_last_run(state_dir, now)
-
+    _write_next_run(state_dir, now + _DEBOUNCE_SECONDS)
     result = _common.run_command(root, command, _FAST_CHECK_TIMEOUT_SECONDS)
     if result.passed:
         return  # silence is the whole point of a layer with no authority
 
     if result.configuration_fault:
-        if _already_reported_fault(state_dir):
-            return
-        _mark_fault_reported(state_dir)
-        message = _configuration_fault_message(command, result.detail)
-        _common.log_decision(root, "fast_check.py", "config_fault", reason=message)
-        _common.context("PostToolUse", message)
+        _report_configuration_fault(root, state_dir, command, result.detail)
         return
 
     if result.timed_out:
         # See the module docstring: a timeout is very likely this hook
         # waiting on a build-tool lock another Canon gate is holding, and
         # reporting that as a failure is indistinguishable from a real
-        # regression. An advisory layer says nothing rather than
-        # something it cannot stand behind.
+        # regression. An advisory layer says nothing rather than something
+        # it cannot stand behind -- and stands down for longer, so a
+        # `check` that is structurally too slow costs one stall rather
+        # than one every debounce window forever.
+        _write_next_run(state_dir, now + _TIMEOUT_BACKOFF_SECONDS)
         _common.log_decision(
             root, "fast_check.py", "timeout", reason=f"`{command}` timed out"
         )
@@ -196,8 +240,22 @@ def main() -> None:
         "PostToolUse",
         f"Canon's fast check failed after this edit:\n{result.detail}\n"
         "This blocks nothing -- it is the cheap layer, run so a pull request "
-        "never fails CI on formatting. Fix it now if it came from this edit.",
+        "never fails CI on formatting. If it came from this edit, fix it now; "
+        "if it was already there, say so rather than widening this change to "
+        "chase it.",
     )
+
+
+def _report_configuration_fault(
+    root: Path, state_dir: Path | None, command: str, detail: str
+) -> None:
+    """Report an unrunnable `check` once per session, where it can."""
+    if _already_reported_fault(state_dir):
+        return
+    _mark_fault_reported(state_dir)
+    message = _configuration_fault_message(command, detail, once=state_dir is not None)
+    _common.log_decision(root, "fast_check.py", "config_fault", reason=message)
+    _common.context("PostToolUse", message)
 
 
 if __name__ == "__main__":
