@@ -1,7 +1,7 @@
 {
   "name": "canon",
   "description": "Keeps agentic development on track without a stored state machine: plan mode's output persisted and enforced, a verification gate that never takes the agent's word, and review that runs as a subagent rather than self-assessment.",
-  "version": "0.0.1",
+  "version": "0.1.0",
   "author": {
     "name": "Martin Urban"
   },

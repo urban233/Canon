@@ -12,7 +12,7 @@
       "name": "claude",
       "source": "claude",
       "description": "Canon for Claude Code: plan persistence, a verification gate, and evidence-based review — without a stored state machine.",
-      "version": "0.0.1",
+      "version": "0.1.0",
       "author": {
         "name": "Martin Urban"
       },
@@ -23,7 +23,7 @@
       "name": "canon-companion",
       "source": "canon-companion",
       "description": "Opt-in Canon companion: explicit code-quality and style skills.",
-      "version": "0.0.1",
+      "version": "0.1.0",
       "author": {
         "name": "Martin Urban, Hannah Kullik"
       },

@@ -1,7 +1,7 @@
 {
   "name": "canon-companion",
   "description": "Opt-in code-quality skills for Canon, starting with an explicit Google Python Style audit and bounded remediation workflow.",
-  "version": "0.0.1",
+  "version": "0.1.0",
   "author": {
     "name": "Martin Urban, Hannah Kullik"
   },
