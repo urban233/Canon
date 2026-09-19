@@ -119,7 +119,15 @@ class OutcomeTests(unittest.TestCase):
             output = _invoke_main(_payload(root))
             self.assertIn("additionalContext", output)
             self.assertIn("boom", output)
-            self.assertIn("blocks nothing", output)
+            # Deliberately no assertion on the message saying it blocks
+            # nothing. That sentence was cut after two ablation runs
+            # (2026-09-19) scored 1.00 both with and without it -- the
+            # model does not describe the edit as blocked either way,
+            # so by AGENTS.md's admission rule it had not earned its
+            # place. The guarantee it described is still covered, and
+            # covered better, by `test_a_failing_check_never_blocks`
+            # below, which asserts the payload carries no permission
+            # decision rather than asserting a form of words.
 
     def test_a_failing_check_never_blocks(self) -> None:
         """`PostToolUse` could not deny even if it wanted to -- the edit

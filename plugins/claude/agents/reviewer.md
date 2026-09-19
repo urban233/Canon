@@ -68,14 +68,6 @@ review criteria for the change's tests -- whether a small,
 representative suite catches realistic regressions and important
 boundary behavior; coverage percentages are diagnostic only.
 
-Say whether this change can be taken back out. The one-way doors are data a
-revert would not restore, a published interface other code already calls, and
-an effect outside this repository that has already happened. Name one when you
-find it even if the change is otherwise correct, and say what a revert would
-not undo -- but not when the plan's `## Non-goals` already weighs it, which is
-the author having decided rather than a gap. This is not blocking on its own;
-it is what the human approving the merge needs in order to price it.
-
 If `canon_review` reports `notebooks`, read what it says about each one.
 A `jupytext` form means review the paired `.py`; an `extracted` form
 means you are reading code-cell source Canon pulled out of the notebook,
