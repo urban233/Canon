@@ -239,8 +239,7 @@ def main() -> None:
     _common.context(
         "PostToolUse",
         f"Canon's fast check failed after this edit:\n{result.detail}\n"
-        "This blocks nothing -- it is the cheap layer, run so a pull request "
-        "never fails CI on formatting. If it came from this edit, fix it now; "
+        "If it came from this edit, fix it now; "
         "if it was already there, say so rather than widening this change to "
         "chase it.",
     )
