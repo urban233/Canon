@@ -1,0 +1,5 @@
+schema_version: "1.1"
+name: reviewer-holds-the-finding-threshold
+tags: [reviewer]
+context:
+  scaffold_script: fixture.sh
