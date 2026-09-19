@@ -481,9 +481,9 @@ class AttributionStrippingTests(unittest.TestCase):
         trailer, not only Claude's) must not leave any readable
         fragment of that text behind. Deleting the whole matched line
         outright would also delete the closing quote sharing it; the
-        fix instead keeps only the quote characters the match
-        contained, so nothing of "O'Neill" survives -- just the bare
-        apostrophe that was part of the command's own quoting."""
+        fix instead keeps only the quote tokens the match contained, so
+        nothing of "O'Neill" survives -- just the bare apostrophe that
+        was part of the command's own quoting."""
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             _init_repo(root)
@@ -500,8 +500,8 @@ class AttributionStrippingTests(unittest.TestCase):
             self.assertNotIn("O'Neill", updated)
             self.assertNotIn("mary@example.com", updated)
             self.assertEqual(
-                git_guard._QUOTE_CHAR.findall(command),
-                git_guard._QUOTE_CHAR.findall(updated),
+                git_guard._QUOTE_TOKEN.findall(command),
+                git_guard._QUOTE_TOKEN.findall(updated),
             )
 
     def test_trailer_with_a_double_quote_in_the_name_is_fully_removed(self) -> None:
@@ -525,25 +525,41 @@ class AttributionStrippingTests(unittest.TestCase):
             self.assertNotIn("Lovelace", updated)
             self.assertNotIn("ada@example.com", updated)
             self.assertEqual(
-                git_guard._QUOTE_CHAR.findall(command),
-                git_guard._QUOTE_CHAR.findall(updated),
+                git_guard._QUOTE_TOKEN.findall(command),
+                git_guard._QUOTE_TOKEN.findall(updated),
             )
 
 
 class TrailerQuoteParityTests(unittest.TestCase):
     """`_strip_attribution` must never change the *subsequence* of quote
-    characters in the command it rewrites -- see its docstring in
-    git_guard.py, and issue #58, for why. That is stronger than equal
-    counts: it means no `"` or `'` can appear to move from inside a
-    quoted region to outside it (or vice versa), which is what rules
+    tokens in the command it rewrites -- see its docstring in
+    git_guard.py, and issues #58 and #69, for why. A quote token is a
+    `"` or `'` together with the whole run of backslashes directly in
+    front of it, and taking the token rather than the bare character is
+    what makes this assertion about quote *state*: the run's length
+    decides whether that quote toggles quoting or is an inert, escaped
+    literal, so a subsequence of bare characters can be intact while
+    the state it encodes is not. That was issue #69, and it is why the
+    last two commands below are here. Subsequence is in turn stronger
+    than equal counts: it means no quote can appear to move from inside
+    a quoted region to outside it (or vice versa), which is what rules
     out the fix injecting anything. This is the property the fix has to
     hold; the specific cases in `AttributionStrippingTests` are
     examples of it, not a substitute for it. Three of the commands
     below contain no quote character inside the trailer text and are
     byte-identical before and after the fix -- kept as pins against a
     future change, but by themselves they exercise nothing that a
-    no-op rewrite wouldn't also satisfy; the two with a quote character
-    inside the trailer are what actually exercises this property.
+    no-op rewrite wouldn't also satisfy; the four with a quote
+    character inside the trailer are what actually exercises this
+    property.
+
+    Note the ceiling on all of that: this class asserts the invariant
+    using `_QUOTE_TOKEN` itself, so it is only ever as strong as that
+    regex's definition, and it cannot catch a regression *in* the
+    definition -- weaken `_QUOTE_TOKEN` back to bare quote characters
+    and every command here still passes, #69's two included. What pins
+    the definition is `EscapedQuoteTests` below, which asserts the
+    exact rewritten text.
 
     This property is necessary but not sufficient for the rewritten
     command to still parse: repair round 2 found a case where the
@@ -599,6 +615,23 @@ class TrailerQuoteParityTests(unittest.TestCase):
             "git commit -m 'feat: thing\n\n"
             'Co-Authored-By: "Ada" Lovelace <ada@example.com>\''
         ),
+        # Issue #69, form 1: the `'\''` idiom, which is how an
+        # apostrophe gets into a single-quoted message at all. The
+        # middle `'` is escaped and inert; keeping the three `'`
+        # characters without the backslash turns close-literal-reopen
+        # into close-open-close.
+        (
+            "git commit -m 'feat: thing\n\n"
+            "Co-Authored-By: Mary O'\\''Neill <mary@example.com>\n"
+            "See-also: something'"
+        ),
+        # Issue #69, form 2: a single escaped double quote inside a
+        # double-quoted message. Dropping its backslash promotes an
+        # inert literal into the closing quote.
+        (
+            'git commit -m "Summary\n\n'
+            'Co-Authored-By: Bob \\"Bobby O\'Neill <bob@example.com>"'
+        ),
     ]
 
     def test_quote_subsequence_is_unchanged_for_every_rewritten_command(self) -> None:
@@ -608,8 +641,8 @@ class TrailerQuoteParityTests(unittest.TestCase):
                 self.assertIsNotNone(stripped)
                 assert stripped is not None
                 self.assertEqual(
-                    git_guard._QUOTE_CHAR.findall(command),
-                    git_guard._QUOTE_CHAR.findall(stripped),
+                    git_guard._QUOTE_TOKEN.findall(command),
+                    git_guard._QUOTE_TOKEN.findall(stripped),
                 )
 
 
@@ -697,6 +730,73 @@ class HeredocTerminatorTests(unittest.TestCase):
             'EOF\n)"'
         )
         expected = "git commit -m \"$(cat <<'EOF'\nfeat: thing\n\nEOF\n)\""
+        self.assertEqual(git_guard._strip_attribution(command), expected)
+
+
+class EscapedQuoteTests(unittest.TestCase):
+    """Issue #69. A backslash in front of a quote character is what
+    makes that character an inert literal rather than a quoting toggle,
+    so the rewrite has to keep the two together. Keeping the bare quote
+    characters -- which satisfied the old, character-level reading of
+    the subsequence invariant -- promoted a literal into a real toggle
+    and changed the quote state of everything after it, so a command
+    that parsed before the rewrite did not parse after it. Both forms
+    below broke under bash 3.2, zsh 5.9 and sh alike, which is what
+    distinguishes this from the bash-3.2-only heredoc gap documented in
+    `HeredocTerminatorTests` and in `_strip_attribution`'s docstring.
+
+    These assert the exact rewritten command rather than shelling out
+    to a syntax check, for the reason `HeredocTerminatorTests` gives:
+    which `bash` the suite resolves is not stable between an
+    interactive shell and Bazel's sandbox. The three shells were run
+    against these exact strings by hand when the fix landed; pinning
+    the output is what keeps that result from silently rotting."""
+
+    def test_escaped_apostrophe_idiom_keeps_its_backslash(self) -> None:
+        """The `'\\''` idiom -- close, escaped literal, reopen -- is how
+        an apostrophe gets into a single-quoted `-m` message at all, so
+        this is the realistic shape. Dropping the backslash left `'''`,
+        which is close-open-close, and the rest of the command ended up
+        inside a quote that never closes."""
+        command = (
+            "git commit -m 'feat: thing\n\n"
+            "Co-Authored-By: Mary O'\\''Neill <mary@example.com>\n"
+            "See-also: something'"
+        )
+        expected = "git commit -m 'feat: thing\n\n'\\''\nSee-also: something'"
+        stripped = git_guard._strip_attribution(command)
+        self.assertEqual(stripped, expected)
+        assert stripped is not None
+        self.assertNotIn("Co-Authored-By", stripped)
+        self.assertNotIn("Neill", stripped)
+        self.assertNotIn("mary@example.com", stripped)
+
+    def test_escaped_double_quote_keeps_its_backslash(self) -> None:
+        """The same defect inside a double-quoted message, where the
+        escaped quote matches the type doing the enclosing: dropping the
+        backslash turned an inert `\\"` into the message's closing
+        quote, leaving the real closing quote to open a new one."""
+        command = (
+            'git commit -m "Summary\n\n'
+            'Co-Authored-By: Bob \\"Bobby O\'Neill <bob@example.com>"'
+        )
+        expected = 'git commit -m "Summary\n\n\\"\'"'
+        stripped = git_guard._strip_attribution(command)
+        self.assertEqual(stripped, expected)
+        assert stripped is not None
+        self.assertNotIn("Co-Authored-By", stripped)
+        self.assertNotIn("Bobby", stripped)
+        self.assertNotIn("bob@example.com", stripped)
+
+    def test_backslash_before_a_backslash_does_not_escape_the_quote(self) -> None:
+        """Why `_QUOTE_TOKEN` takes the whole backslash run and not just
+        one backslash. In `\\\\"` the first backslash escapes the second,
+        so the quote is *not* escaped and still closes the message.
+        Keeping only the last backslash would invent an escape that was
+        never there -- the mirror image of #69's own defect, and it
+        breaks the same three shells."""
+        command = 'git commit -m "feat: thing\n\nCo-Authored-By: Path C:\\\\"'
+        expected = 'git commit -m "feat: thing\n\n\\\\"'
         self.assertEqual(git_guard._strip_attribution(command), expected)
 
 

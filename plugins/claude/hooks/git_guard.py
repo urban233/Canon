@@ -184,14 +184,17 @@ _COMMIT_PATTERN = re.compile(r"\bgit\s+commit\b", re.IGNORECASE)
 # `.*` deliberately still runs to the end of the line, exactly as it did
 # before issue #58 -- `_strip_attribution` below is what changed to fix
 # that issue, not this pattern. See its docstring for why matching the
-# whole line and then filtering the match down to quote characters,
+# whole line and then filtering the match down to its quote tokens,
 # rather than narrowing what this pattern matches in the first place,
 # is the fix.
 _TRAILER_LINE = re.compile(r"^[ \t]*Co-Authored-By:.*\n?", re.IGNORECASE | re.MULTILINE)
-# Used by `_strip_attribution` to keep only the quote characters a
-# matched trailer line contained, in order -- see that function's
-# docstring.
-_QUOTE_CHAR = re.compile(r"[\"']")
+# A quote character together with the whole run of backslashes directly
+# in front of it. `_strip_attribution` keeps these tokens, in order, and
+# drops everything else on a matched trailer line. The backslash run has
+# to travel with its quote: it is what decides whether that quote toggles
+# quoting at all, and the run's *length* is what decides it (issue #69).
+# See that function's docstring.
+_QUOTE_TOKEN = re.compile(r"\\*[\"']")
 
 _QUOTED_SPAN = re.compile(r"'[^']*'|\"[^\"]*\"")
 
@@ -249,46 +252,58 @@ def _strip_attribution(command: str) -> str | None:
     strip.
 
     The fix instead keeps the pattern matching the whole line, and
-    rewrites each match to contain only the quote characters that line
-    contained, in their original order, plus the line's own trailing
-    newline if it had one and kept at least one quote character --
-    dropping every other character, including the literal
-    `Co-Authored-By:` label. Because characters outside the match are
-    left untouched, and the characters kept inside it are exactly its
-    quote-character subsequence in order, the sequence of `"` and `'`
-    characters read across the *whole* command is identical before and
-    after, not merely equal in count -- so no character can appear to
-    cross from inside a quoted region to outside it, or vice versa, and
-    no fragment of the trailer's own text can survive. This holds
-    without this hook parsing the shell's quoting rules at all: a
-    shell-aware rewrite would be the more thorough fix, but it turns a
-    hook that runs before every `Bash` call into a shell parser, for a
-    problem this line-local, quote-preserving rewrite mostly solves.
+    rewrites each match to contain only its `_QUOTE_TOKEN` subsequence
+    -- every quote character the line held, in order, each still
+    carrying the run of backslashes that stood directly in front of it
+    -- plus the line's own trailing newline if it had one and kept at
+    least one token. Everything else goes, including the literal
+    `Co-Authored-By:` label.
 
-    Mostly, not entirely: quote-subsequence invariance is not sufficient
-    for the command to still parse. A heredoc's terminator (`EOF` above)
+    What that preserves is quote *state*, not quote characters. Read
+    the command as a sequence of quote characters, each tagged with the
+    parity of the backslash run in front of it -- odd means escaped and
+    inert, even means it toggles quoting -- and that tagged sequence is
+    identical before and after the rewrite. So no quote can flip
+    between inert and toggling, no character can appear to cross from
+    inside a quoted region to outside it, and no fragment of the
+    trailer's own text survives. All without the hook parsing the
+    shell's quoting rules: a shell-aware rewrite would be more
+    thorough, but it turns a hook that runs before every `Bash` call
+    into a shell parser, for a problem this line-local rewrite mostly
+    solves.
+
+    Issue #69 is why the rule is about tokens and not characters. The
+    first version kept the bare `"` and `'`, preserving the characters
+    and destroying the parity: an escaped, inert quote was promoted
+    into a real toggle. `'\\''` -- the standard way to get an apostrophe
+    into a single-quoted message, so "Mary O'Neill" again -- collapsed
+    to `'''`, and a lone `\\"` inside a double-quoted message to `"`.
+    Both commands parsed before the rewrite and failed after it, under
+    bash, zsh and sh alike.
+
+    Mostly, not entirely: no invariant over quotes is sufficient for
+    the command to still parse. A heredoc's terminator (`EOF` above)
     has to be alone on its line to close the heredoc, and that is a
     property of a line's *position*, not of quote characters -- no
     quote-preserving rewrite can see it. A trailer whose own text
     contains a quote character, immediately followed by a heredoc
     terminator line, used to glue a stray quote onto the front of that
     terminator (`'EOF` instead of `EOF`), which stops the terminator
-    from matching and leaves the heredoc -- and the command -- unclosed.
-    That is exactly the class of defect issue #58 is about, on the one
-    form this repo's own commit style actually uses. Fixed by keeping
-    the trailer line's own trailing newline in the replacement whenever
-    a quote character survives, so a kept quote lands at the end of the
-    line it came from rather than the start of the next one; a
-    quote-free trailer still collapses to nothing, exactly as it did
-    before this fix, so it can't leave a spurious blank line behind.
+    from matching and leaves the heredoc -- and the command -- unclosed,
+    on the one form this repo's own commit style actually uses. Fixed
+    by keeping the trailer line's own trailing newline whenever
+    a token survives, so a kept quote lands at the end of the line it
+    came from rather than the start of the next one; a quote-free
+    trailer still collapses to nothing, so it can't leave a spurious
+    blank line behind.
 
     A match always includes that literal `Co-Authored-By:` label, which
-    contains no quote character, so every match is strictly longer than
-    its replacement and this function can never rewrite a match back
-    into the text it started as -- it never newly returns None.
+    holds no quote character and no backslash, so every match is
+    strictly longer than its replacement and this function can never
+    rewrite a match back into the text it started as -- it never newly
+    returns None.
 
-    Known residual gap, found while fixing the terminator-gluing defect
-    above and deliberately not chased further: macOS's system
+    Known residual gap, deliberately not chased: macOS's system
     `/bin/bash` (3.2, still the default on an unmodified Mac) mis-lexes
     a `<<'quoted'` heredoc whenever its body is not quote-*balanced*
     when read as ordinary shell text -- its single-pass lexer keeps
@@ -298,17 +313,21 @@ def _strip_attribution(command: str) -> str | None:
     fine, because the `"` nests inside the `'...'` pair, while `a'b"c`
     is even-counted and fails, because the `'` opens and never closes.
 
-    This hook cannot cause that failure, and does not worsen it. The
-    rewrite leaves the command's quote subsequence identical, and bash
-    3.2's verdict is a function of exactly that structure, so the
-    verdict is the same before and after -- measured, not argued: seven
-    co-author names across three command forms and three shells, input
-    versus output, produced zero cases where a command that parsed
-    before failed after. Every bash-3.2 failure is already present in
-    the unrewritten command. It is also unreachable through Claude
-    Code, whose `Bash` tool runs the user's `$SHELL`.
+    This hook cannot cause that failure, and does not worsen it: bash
+    3.2's verdict is a function of exactly the structure the invariant
+    above preserves, so the verdict is the same before and after --
+    measured, not argued, over 470 commands that parse before the
+    rewrite, built by brute force from quotes and backslashes across
+    five command shapes and each checked with `bash -n`, `zsh -n` and
+    `sh -n`: none of them parsed before and failed after.
 
-    Closing the gap anyway -- rewriting so the output parses under a
+    That measurement replaces a narrower one that missed #69 entirely,
+    and on its strength this note used to say the whole residual gap
+    was bash-3.2-only, and so unreachable through Claude Code, whose
+    `Bash` tool runs the user's `$SHELL`. It is scoped to the heredoc
+    lexing above and always was; #69 broke zsh and sh too.
+
+    Closing that gap anyway -- rewriting so the output parses under a
     shell the input already failed under -- would mean knowing which
     surviving quote characters are structurally load-bearing and which
     are incidental prose, exactly the shell-parsing judgement this hook
@@ -316,8 +335,8 @@ def _strip_attribution(command: str) -> str | None:
 
     def _rewrite(match: re.Match[str]) -> str:
         line = match.group()
-        quotes = "".join(_QUOTE_CHAR.findall(line))
-        return quotes + "\n" if quotes and line.endswith("\n") else quotes
+        kept = "".join(_QUOTE_TOKEN.findall(line))
+        return kept + "\n" if kept and line.endswith("\n") else kept
 
     stripped = _TRAILER_LINE.sub(_rewrite, command)
     return stripped if stripped != command else None
