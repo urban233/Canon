@@ -21,9 +21,22 @@ vendored copy drifts.
 [`docs/antigravity-hook-surface.md`](../../docs/antigravity-hook-surface.md)
 is the probe write-up: what was captured from live `agy` sessions, what
 came from `agy plugin validate`, what came from Antigravity's own bundled
-documentation, and the five questions still open. Read it before changing
-anything here. Three assumptions in this port's first draft were wrong in
-ways nothing reports at runtime, which is why that document exists.
+documentation, and what is still open. Read it before changing anything
+here. Three assumptions in this port's first draft were wrong in ways
+nothing reports at runtime, which is why that document exists.
+
+Two measurements matter most, because the plugin would be pointless
+without the first and broken without the second:
+
+- **The `Stop` gate holds.** A hook answering `{"decision":
+  "continue"}` blocks the stop and re-enters the loop, repeatedly --
+  four refusals in one turn were captured. Canon's verification gate is
+  real on this platform, not assumed.
+- **Fail-open really fails open.** A hook that writes nothing reaches
+  Antigravity as "no opinion", which is what `fail_open` and every
+  non-matching gate rely on. A bare `{}`, by contrast, is a *refusal
+  with no reason* -- which is why `_common.allow()` answers
+  `{"decision": "allow"}` explicitly and a test pins it.
 
 ## Requirements
 
@@ -93,6 +106,17 @@ and `canon_ship` therefore have no way to learn which repository they are
 serving, and should be treated as unavailable on this platform. Every
 hook, skill and reviewer subagent works independently of them.
 
+The options and the measurements behind them are written up in
+[ADR 0007](../../docs/decisions/0007-how-canon-mcp-learns-its-workspace-on-antigravity.md).
+In short: Antigravity's MCP client *does* advertise the protocol's own
+`roots` capability, which is the principled answer -- but `roots` is
+deprecated as of protocol revision 2026-07-28, it answered with an empty
+list in every session that could be measured, and the SDK raises rather
+than degrades when a client has not declared it, so wiring it in
+unguarded would break Claude Code. The seam is in place
+(`canon_mcp._git.set_client_root`), so whichever option is chosen is a
+change at one call site; the choice itself is deliberately not made yet.
+
 This is the same shape of problem the Codex port has with intermittent MCP
 connectivity, and it is recorded the same way: as a known limitation with
 its cause named, not as a caveat buried in a comment.
@@ -113,6 +137,18 @@ read, so the `plan` and `frame` skills instruct the agent to write the
 approved plan itself and a `PostToolUse` hook (`normalize_plan.py`,
 shared with Codex) derives the file's header afterwards. A header the
 agent wrote itself is overwritten, per docs/plan.md §06.
+
+### Evals run through a different runner
+
+`just eval` drives `claude plugin eval` against the Claude plugin and
+cannot drive this one. `just eval-antigravity` runs the cases under
+[`evals/`](evals) through `agy` instead, reading the same
+`case.yaml`/`prompt.md`/`graders/` layout so a case stays portable
+between platforms. It needs allow-rules in
+`~/.gemini/antigravity-cli/settings.json`, because `agy --print` cannot
+prompt for tool permission; the runner refuses to start without them
+rather than producing a suite of failures that say nothing about the
+instructions. Like `just eval`, it is never part of `just ci`.
 
 ### Session context arrives one step later
 

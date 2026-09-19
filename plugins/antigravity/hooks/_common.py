@@ -184,9 +184,16 @@ def _normalize_antigravity(payload: dict[str, Any]) -> dict[str, Any]:
     # turn -- anything past the first means a Stop hook already refused
     # once and the loop re-entered, which is exactly what the flag means
     # on the other two platforms.
+    #
+    # `executionNum` is **zero-based**: a captured sequence of four
+    # refusals in one turn read 0, 1, 2, 3. So "already continuing" is
+    # `> 0`, not `> 1`. The off-by-one is not cosmetic -- it would make
+    # the second Stop of a turn look like the first, and `stop.py` reads
+    # this to decide whether it has already asked the first-run question,
+    # so Canon would ask it again mid-turn.
     execution_num = payload.get("executionNum")
     if isinstance(execution_num, int):
-        normalized["stop_hook_active"] = execution_num > 1
+        normalized["stop_hook_active"] = execution_num > 0
 
     artifact_dir = payload.get("artifactDirectoryPath")
     if isinstance(artifact_dir, str) and artifact_dir:

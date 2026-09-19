@@ -149,6 +149,110 @@ on the user's behalf, and this says it does not.
 Both were captured, carrying `invocationNum` and `initialNumSteps` alongside
 the common fields. `invocationNum` starts at `0`.
 
+### Silence is safe; an empty object is a refusal
+
+Four arms of the same turn, one `PreToolUse` hook, `matcher: "*"`, a
+prompt that needs `run_command`:
+
+| Hook writes | Outcome |
+| --- | --- |
+| `{"decision":"deny","reason":"..."}` | `tool call denied by pre-tool hook: <reason>` |
+| `{"decision":"allow"}` | normal permission flow (headless auto-deny) |
+| *nothing* (exit 0, empty stdout) | normal permission flow -- **identical to allow** |
+| `{}` | **blocked**, with no reason given |
+
+Two things follow, and they pull in opposite directions from what the
+documentation's "`decision` (string, required)" suggests.
+
+**Canon's fail-open posture is safe.** `_common.fail_open` exits 0 with
+no output, and so does every gate whose tool does not match -- which is
+most invocations. That silence reaches Antigravity as "no opinion", not
+as a refusal. Had it been read as a refusal, Canon would have blocked
+nearly every tool call on the platform, and "every gate fails open"
+would have been inverted rather than merely weakened.
+
+**But a bare `{}` is a refusal with no reason.** So an emitter must
+never answer with an empty object on `PreToolUse`. `_common.allow()`
+answers `{"decision": "allow"}` for exactly this reason, and
+`tests/test_antigravity_hooks_dialect.py` pins it.
+
+The deny arm is also the positive control for everything else here: it
+proves a hook's stdout is read and acted on at all.
+
+### The `Stop` gate works, and `executionNum` is zero-based
+
+A `Stop` hook answering `{"decision": "continue", "reason": ...}` blocks
+the stop and re-enters the loop. Four refusals in one turn produced:
+
+```
+PostInvocation inv=0
+Stop exec=0 term=NO_TOOL_CALL idle=True
+PostInvocation inv=1
+Stop exec=1 term=NO_TOOL_CALL idle=True
+PostInvocation inv=2
+Stop exec=2 term=NO_TOOL_CALL idle=True
+PostInvocation inv=3
+Stop exec=3 term=NO_TOOL_CALL idle=True
+```
+
+This is the measurement the whole port rests on: Canon's verification
+gate is real on Antigravity, and it refires rather than firing once.
+
+`executionNum` counts from **0**, not 1. `_normalize_antigravity` maps
+it to `stop_hook_active` as `> 0`; an earlier draft used `> 1`, which
+would have made the second `Stop` of a turn look like the first and led
+`stop.py` to re-ask the first-run question mid-turn.
+
+### `PostInvocation`'s `injectSteps` does inject
+
+The same run's `PostInvocation` hook answered with an
+`ephemeralMessage` instructing the model to include a nonce word. The
+model's replies carried it (`Understood. KUMQUAT.`). So the event
+`session_start.py` was moved to is live, unlike the `PreInvocation` it
+was moved off.
+
+### The MCP client offers `roots`, which is deprecated
+
+A stdio MCP server registered through a plugin's `mcp_config.json`
+received, on `initialize`:
+
+```json
+{"elicitation": {"form": {}, "url": {}}, "roots": {"listChanged": true}}
+```
+
+with `clientInfo` `{"name": "antigravity-client", "version": "v1.0.0"}`.
+A server-initiated `roots/list` was answered -- with `{"roots": []}` in
+an `agy --print` session, mirroring the empty `workspacePaths`.
+
+So the protocol's own mechanism for "which workspace am I serving" is
+available. Two caveats keep it from being an obvious fix: `roots` is
+**deprecated as of protocol revision 2026-07-28 (SEP-2577)**, and the
+SDK raises `MISSING_REQUIRED_CLIENT_CAPABILITY` when a client has not
+declared it, so wiring it in unguarded would break Claude Code. See
+`docs/decisions/0007-how-canon-mcp-learns-its-workspace-on-antigravity.md`.
+
+### Hooks get no `PLUGIN_ROOT` or `PLUGIN_DATA`
+
+The MCP server's environment carries both. A hook's does not -- it
+carries neither, and no `GEMINI`- or `WORKSPACE`-prefixed variable
+either. The only ground a hook and the server share is the plugin
+directory, which is the hook's working directory and the server's
+`${PLUGIN_ROOT}`. This is what rules out the otherwise-obvious
+"hook writes the workspace path into `PLUGIN_DATA`" handshake in its
+simplest form.
+
+### The transcript is readable JSONL
+
+`transcriptPath` points at a file of one JSON object per line, with
+`step_index`, `type`, `status`, `created_at` and `content`. Observed
+types include `USER_INPUT` and `PLANNER_RESPONSE`, the latter being the
+assistant's own message. So reading a final assistant message back out
+of a transcript is mechanically straightforward.
+
+What remains unverified is whether a *subagent's* output appears in the
+parent conversation's transcript, and how it is distinguished. That is
+the one thing standing between here and restoring verdict capture.
+
 ## Confirmed by `agy plugin validate`
 
 ### `agents/` is a first-class plugin directory, and takes Claude Code's layout
@@ -272,20 +376,27 @@ platform. The hooks, skills and reviewer subagents do not depend on them.
 
 ## Open questions
 
-Each of these is a thing this port currently assumes, which capture did not
-settle. They are tracked in the issue this port opened rather than answered
-by guessing.
+Everything the first probe left open has since been measured except two
+items. Both are tracked in the issue this port opened.
 
-1. Does `PostInvocation`'s `injectSteps` actually inject? `PreInvocation`'s
-   is explicitly dead; `PostInvocation`'s is documented as live but was
-   never observed taking effect.
-2. Does a `Stop` hook answering `{"decision": "continue"}` re-enter the loop
-   in practice? No `Stop` event was captured — the probe turns all ended on
-   a permission denial before reaching one.
-3. Does `overwrite` on a `PreToolUse` result rewrite the command as
-   documented? `git_guard.py` depends on it to strip a `Co-Authored-By`
-   trailer.
-4. Is `workspacePaths` populated in IDE sessions, as opposed to the `agy
-   --print` sessions probed here? If it is, the `Cwd` fallback is belt and
-   braces rather than the primary path.
-5. Can the subagent transcript be read back to restore verdict capture?
+1. **Does a subagent's output reach the parent transcript?** If it does,
+   a `PostToolUse` hook on `invoke_subagent` can restore verdict capture
+   and with it Invariant III. The transcript format is confirmed
+   readable; only the subagent question is open.
+2. **Is `workspacePaths` -- and `roots/list` -- populated in IDE
+   sessions?** Both came back empty in `agy --print`. If the IDE
+   populates them, the `Cwd` fallback is belt and braces and
+   `canon-mcp` has a workable path; if nothing does, both need a
+   different answer.
+
+Settled since the first draft, and recorded above: the fail-open
+posture, the `Stop` gate and its `executionNum` base, `PostInvocation`
+injection, `overwrite`'s dialect (still unexercised end to end -- see
+below), the MCP client's capabilities, and the hook environment.
+
+One thing is implemented but still unexercised: **`overwrite` on a
+`PreToolUse` result**, which `git_guard.py` uses to strip a
+`Co-Authored-By` trailer. The deny path it shares is confirmed working,
+so the hook's refusal behaviour is sound; only the rewrite is untested,
+and it needs a `run_command` to be permitted, which `agy --print`
+cannot do without an allow-rule.

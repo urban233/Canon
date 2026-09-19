@@ -232,12 +232,19 @@ sync-check:
 version-check:
     python3 tools/check_versions.py
 
-# Validate the plugin manifest and marketplace. --strict is what CI runs;
+# Validate the plugin manifests and marketplace. --strict is what CI runs;
 # there's no reason to check less strictly locally than CI will.
+#
+# Antigravity is checked by our own script rather than by `agy plugin
+# validate`, which is the real loader and the better check -- but is an
+# IDE-bundled binary with no install path on a CI runner, so wiring it in
+# here turned `just ci` red with `sh: 1: agy: not found`. Run `agy plugin
+# validate ./plugins/antigravity` locally as well when you have it; the
+# script is the portable floor, not a replacement.
 validate-plugin:
     claude plugin validate --strict ./plugins/claude
     claude plugin validate --strict ./plugins/canon-companion
-    agy plugin validate ./plugins/antigravity
+    python3 tools/check_antigravity_plugin.py plugins/antigravity
 
 # The companion style checker's tests on whatever `python3` is on PATH,
 # outside Bazel on purpose. Bazel pins a hermetic 3.13 (see MODULE.bazel),
@@ -271,6 +278,20 @@ eval *args:
         --allow-tools Bash Write Edit "mcp__plugin_canon_canon__*" \
         --mocks off \
         {{args}}
+
+# Run Canon's eval suite against the Antigravity plugin. Same cases,
+# same case.yaml/graders format as `eval` above; a different runner
+# because `claude plugin eval` cannot drive an Antigravity plugin. Also
+# never wired into `ci`, for the same reason and the same ADR -- the
+# cost argument in 0003 is about a billed model-backed run, not about
+# which vendor sends the bill.
+#
+# Needs allow-rules in ~/.gemini/antigravity-cli/settings.json, because
+# `agy --print` cannot prompt; the runner refuses rather than producing
+# a suite of meaningless failures. `--judge` additionally grades the
+# `llm` graders, at one more turn each.
+eval-antigravity *args:
+    python3 tools/eval_antigravity.py {{args}}
 
 # Run the opt-in code-quality skill evals. These are model-backed and remain a
 # local, on-demand check for the same cost and credential reasons as `eval`.

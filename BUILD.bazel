@@ -39,7 +39,9 @@ py_binary(
 filegroup(
     name = "tool_py_sources",
     srcs = [
+        "tools/check_antigravity_plugin.py",
         "tools/check_versions.py",
+        "tools/eval_antigravity.py",
         "tools/sync_manifests.py",
     ],
     visibility = ["//visibility:private"],

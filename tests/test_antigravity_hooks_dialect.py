@@ -170,10 +170,15 @@ class NormalizationTest(unittest.TestCase):
         )
 
     def test_a_later_execution_reads_as_an_active_stop_hook(self) -> None:
-        first = _read({"conversationId": "c", "executionNum": 1})
-        later = _read({"conversationId": "c", "executionNum": 2})
-        assert first is not None and later is not None
+        # Captured: four refusals in one turn read executionNum 0, 1, 2,
+        # 3. Zero-based, so the first Stop is 0 and anything above it is
+        # a turn that a Stop hook already refused once.
+        first = _read({"conversationId": "c", "executionNum": 0})
+        second = _read({"conversationId": "c", "executionNum": 1})
+        later = _read({"conversationId": "c", "executionNum": 3})
+        assert first is not None and second is not None and later is not None
         self.assertFalse(first["stop_hook_active"])
+        self.assertTrue(second["stop_hook_active"])
         self.assertTrue(later["stop_hook_active"])
 
     def test_the_original_camelcase_keys_survive_normalization(self) -> None:

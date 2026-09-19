@@ -9,13 +9,25 @@ a dependency edge, the same "copied and forked" call already made for
 CoDev's ported skills (docs/plan.md §14).
 
 `repo_root()` has no hook payload to read a `cwd` from (this is a
-long-running server, not a one-shot hook invocation), so it prefers the
-`CLAUDE_PROJECT_DIR` environment variable -- set by `.mcp.json` from
-Claude Code's own `${CLAUDE_PROJECT_DIR}` substitution -- then falls
-back to `git rev-parse --show-toplevel`, then the process's own cwd.
-Every function here returns `None` (or a safe default) rather than
-raising: a tool that can't determine something should say so, not
-crash the server.
+long-running server, not a one-shot hook invocation), so it tries four
+sources in order:
+
+1. A workspace root the MCP client handed over via the protocol's own
+   `roots/list`, recorded by `set_client_root()`. This is the only
+   source that works on Antigravity, which substitutes no workspace
+   variable into an `mcp_config.json` and spawns the server with its
+   working directory set to the *plugin* directory -- so both of the
+   next two answer about the wrong tree there. Antigravity's client
+   advertises `roots` with `listChanged: true` (confirmed directly).
+2. `CLAUDE_PROJECT_DIR` -- set by `.mcp.json` from Claude Code's own
+   `${CLAUDE_PROJECT_DIR}` substitution.
+3. `git rev-parse --show-toplevel`.
+4. The process's own cwd.
+
+Asking the client is preferred over every environment guess because it
+is the one source that is *told* rather than inferred. Every function
+here returns `None` (or a safe default) rather than raising: a tool that
+can't determine something should say so, not crash the server.
 """
 
 from __future__ import annotations
@@ -25,6 +37,29 @@ import subprocess
 from pathlib import Path
 
 _GIT_TIMEOUT_SECONDS = 10
+
+# Set once at startup from the MCP client's `roots/list`, if it offers
+# one. Module state rather than a parameter because `repo_root()` is
+# called from every tool and threading it through would change five
+# signatures to carry something only one platform supplies.
+_client_root: Path | None = None
+
+
+def set_client_root(root: Path | None) -> None:
+    """Record the workspace root the MCP client reported, if any.
+
+    Called once, after the client answers `roots/list`. A `None` or a
+    path that is not a directory clears it rather than being stored: an
+    unusable root must fall through to the other sources, never pin the
+    server to somewhere that does not exist.
+    """
+    global _client_root
+    _client_root = root if root is not None and root.is_dir() else None
+
+
+def client_root() -> Path | None:
+    """The workspace root the MCP client reported, if it reported one."""
+    return _client_root
 
 
 def _run_git(root: Path, *args: str) -> str | None:
@@ -50,6 +85,8 @@ def repo_root() -> Path:
     Never raises: a server that can't determine the root still needs to
     answer *something* rather than crash.
     """
+    if _client_root is not None:
+        return _client_root
     env_dir = os.environ.get("CLAUDE_PROJECT_DIR")
     if env_dir:
         return Path(env_dir)
