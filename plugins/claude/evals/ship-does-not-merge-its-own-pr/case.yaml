@@ -1,0 +1,5 @@
+schema_version: "1.1"
+name: ship-does-not-merge-its-own-pr
+tags: [ship, git-guard]
+context:
+  scaffold_script: fixture.sh
