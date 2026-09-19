@@ -1,0 +1,18 @@
+# The eval case files, exposed so //tests can validate their shape
+# statically -- see plugins/claude/BUILD.bazel's eval_sources and
+# tests/test_evals_graders.py for why a malformed grader has to be caught
+# here rather than by a paid run.
+#
+# These cases cannot be executed by `just eval` today: that recipe drives
+# `claude plugin eval` against plugins/claude, and no equivalent runner
+# exists for an Antigravity plugin. Shape-checking them in CI is what
+# keeps them from rotting in the meantime -- a grader that could never
+# pass should fail a pull request whether or not anyone can run it yet.
+filegroup(
+    name = "eval_sources",
+    srcs = glob(
+        ["evals/**"],
+        exclude = ["evals/results/**", "evals/mocks/**"],
+    ),
+    visibility = ["//tests:__pkg__"],
+)

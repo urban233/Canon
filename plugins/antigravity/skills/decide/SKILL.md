@@ -29,12 +29,11 @@ as new.
 
 ## What to write
 
-Pick the next number: inspect `docs/decisions/` (using `find_by_name` or
-`run_command`) for the highest `NNNN-*.md` prefix and add one, zero-padded to
-four digits (`0001` if the directory doesn't exist yet). Slug the title in
-kebab-case.
+Pick the next number: list `docs/decisions/` for the highest
+`NNNN-*.md` prefix and add one, zero-padded to four digits (`0001` if
+the directory doesn't exist yet). Slug the title in kebab-case.
 
-Write `docs/decisions/NNNN-slug.md` via `write_to_file` in the familiar Nygard shape:
+Write `docs/decisions/NNNN-slug.md` in the familiar Nygard shape:
 
 ```markdown
 # NNNN. <Title>

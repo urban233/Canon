@@ -1,50 +1,53 @@
 # SPDX-License-Identifier: BSD-3-Clause
-"""Canon's `PostToolUse:replace_file_content|write_to_file` hook --
-scope departure (Antigravity port).
+"""Canon's `PostToolUse` hook for an edit -- scope departure.
 
-Compares the file just touched against the current branch's saved plan
-(`.canon/plans/<branch>.md`): its header's `scope:` glob list, if
+Compares the file(s) just touched against the current branch's saved plan
+(`plan_header.branch_plan_path`): its header's `scope:` glob list, if
 populated, and its `## Non-goals` section, if non-empty (see
-docs/plan.md §07's "Scope creep" row).
+docs/plan.md §07's "Scope creep" row). Neither is guaranteed to be
+populated -- a freshly saved plan always writes `scope:` blank by design
+(see `plan_header.py`'s docstring), meant to be filled in later by a human
+or the `plan` skill's own dialogue -- so this hook has nothing to compare
+against for a plan that hasn't had that done, and does nothing in that
+case rather than manufacture a false departure.
 
-Under Antigravity's lifecycle protocol, PostToolUse hooks strictly emit `{}`
-(empty object) to allow tool execution recording to complete.
+The edit already happened by the time `PostToolUse` fires, so this hook
+can never deny it -- only note it (first departure) or log it as a
+decision (sustained departure), mirroring `stop.py`'s own
+session-scoped consecutive-refusal counter for what "sustained" means.
 
-This hook:
-1. Tracks consecutive departures under
-   `artifactDirectoryPath / conversationId / canon / consecutive_scope_departures`.
-2. Records the last departure reason into `last_scope_departure` for session awareness.
-3. When consecutive departures reach threshold (>= 3), logs a `departure` decision
-   to `.canon/hooks/decisions.jsonl`.
-4. Exempts edits to Canon internal metadata (`.canon/`).
-5. Inert without a verification signal (`_config.canon_is_active`).
+Not implemented here: formatting the touched file (§07 also mentions
+this for the same hook slot) -- hooks are stdlib-only and run via bare
+`python3`, with no guaranteed access to a resolved formatter binary.
+That separate decision has since been taken, and it went the other way:
+`fast_check.py` runs a command the repository names and reports the
+result rather than formatting anything. See
+docs/decisions/0006-layer-one-reports-rather-than-formats.md.
+
+Inert without a verification signal (docs/plan.md §07, "No signal, no
+Canon"): with no `verify` command in `.canon/config.json` this hook is a
+silent no-op. See docs/decisions/0001-what-inert-means.md for why
+`stop.py` and `session_start.py` are the two exceptions.
+
+**Touched-path extraction is deliberately defensive** -- see
+`_common.edited_paths` -- and treats every path it finds as touched by the
+same call. A call this can't extract any path from is a no-op, the same
+fail-open posture as everywhere else in this module.
 """
 
 from __future__ import annotations
 
 import fnmatch
-import sys
 from pathlib import Path
 
-_hooks_dir = str(Path(__file__).resolve().parent)
-if _hooks_dir not in sys.path:
-    sys.path.insert(0, _hooks_dir)
+import _common
+import _config
+import plan_header
 
-import _common_agy as _common  # noqa: E402
-import _config  # noqa: E402
-import plan_header  # noqa: E402
-
-_PLANS_DIR_RELATIVE = ".canon/plans"
 _COUNTER_NAME = "consecutive_scope_departures"
-_LAST_DEPARTURE_NAME = "last_scope_departure"
 _SUSTAINED_THRESHOLD = 3
 
-_RECOGNIZED_EDIT_TOOLS = {
-    "replace_file_content",
-    "write_to_file",
-    "Edit",
-    "Write",
-}
+_EDIT_TOOL_NAMES = (None, *_common.EDIT_TOOL_NAMES)
 
 
 def _match_parts(pattern_parts: list[str], path_parts: list[str]) -> bool:
@@ -66,12 +69,19 @@ def _match_parts(pattern_parts: list[str], path_parts: list[str]) -> bool:
 
 
 def _glob_match(pattern: str, path: str) -> bool:
-    """A small, hand-rolled `**`-aware glob matcher."""
+    """A small, hand-rolled `**`-aware glob matcher.
+
+    Not `pathlib.Path.full_match`/`glob.translate` -- both Python
+    3.13+, and hooks are held to a 3.9 floor (see pyproject.toml).
+    `**` consumes zero or more whole path segments; each remaining
+    segment is matched with `fnmatch`.
+    """
     return _match_parts(pattern.split("/"), path.split("/"))
 
 
 def _parse_scope_patterns(raw: str) -> list[str]:
-    """Split a `scope:` value (e.g. `[src/slugs/**, tests/slugs/**]`) into patterns."""
+    """Split a `scope:` value (e.g. `[src/slugs/**, tests/slugs/**]`,
+    per docs/plan.md §06's example) into individual glob patterns."""
     stripped = raw.strip()
     if stripped.startswith("[") and stripped.endswith("]"):
         stripped = stripped[1:-1]
@@ -80,10 +90,7 @@ def _parse_scope_patterns(raw: str) -> list[str]:
 
 def _relative_path(root: Path, file_path: str) -> str | None:
     try:
-        p = Path(file_path)
-        if not p.is_absolute():
-            p = root / p
-        return p.resolve().relative_to(root.resolve()).as_posix()
+        return str(Path(file_path).resolve().relative_to(root.resolve()))
     except (OSError, ValueError):
         return None
 
@@ -118,70 +125,23 @@ def _write_counter(counter_dir: Path | None, count: int) -> None:
         pass
 
 
-def _write_last_departure(counter_dir: Path | None, reason: str) -> None:
-    if counter_dir is None:
-        return
-    try:
-        counter_dir.mkdir(parents=True, exist_ok=True)
-        (counter_dir / _LAST_DEPARTURE_NAME).write_text(reason, encoding="utf-8")
-    except OSError:
-        pass
-
-
-def _clear_last_departure(counter_dir: Path | None) -> None:
-    if counter_dir is None:
-        return
-    try:
-        p = counter_dir / _LAST_DEPARTURE_NAME
-        if p.exists():
-            p.unlink()
-    except OSError:
-        pass
-
-
-@_common.fail_open(fallback_fn=_common.pass_stop)
 def main() -> None:
     payload = _common.read_payload()
     if payload is None:
-        _common.pass_stop()
         return
-
-    # If the tool call produced an error, do not perform scope checks
-    if payload.get("error"):
-        _common.pass_stop()
+    if payload.get("tool_name") not in _EDIT_TOOL_NAMES:
         return
-
-    tool_name = _common.tool_name(payload)
-    if tool_name and tool_name not in _RECOGNIZED_EDIT_TOOLS:
-        _common.pass_stop()
-        return
-
-    target_file = _common.tool_target_file(payload)
-    if not target_file:
-        _common.pass_stop()
-        return
-
-    if not _common.has_workspace(payload):
-        _common.pass_stop()
+    touched = _common.edited_paths(payload)
+    if not touched:
         return
 
     root = _common.repo_root(payload)
-    if not root.is_dir():
-        _common.pass_stop()
-        return
-
     if not _config.canon_is_active(_config.load_config(root)):
-        _common.pass_stop()
         return  # no verification signal: Canon is inert, not checking scope
-
-    relative_path = _relative_path(root, target_file)
-    if relative_path is None:
-        _common.pass_stop()
-        return
-
-    # Exempt Canon internal metadata
-    if relative_path.startswith(".canon/") or relative_path == ".canon":
-        _common.pass_stop()
+    relative_paths = [
+        relative for path in touched if (relative := _relative_path(root, path))
+    ]
+    if not relative_paths:
         return
 
     branch = _common.current_branch(root) or "HEAD"
@@ -189,7 +149,6 @@ def main() -> None:
     try:
         text = plan_path.read_text(encoding="utf-8")
     except OSError:
-        _common.pass_stop()
         return
 
     header, body = _common.plan_header_and_body(text)
@@ -198,44 +157,50 @@ def main() -> None:
     non_goals = _common.plan_sections(body).get("non-goals", "")
 
     if not patterns and not non_goals.strip():
-        _common.pass_stop()
         return  # nothing declared to compare against
 
-    out_of_scope = bool(patterns) and not any(
-        _glob_match(pattern, relative_path) for pattern in patterns
-    )
-    named_in_non_goals = _mentioned_in_non_goals(non_goals, relative_path)
-    departed = out_of_scope or named_in_non_goals
+    departed_paths: list[str] = []
+    departure_reasons: dict[str, list[str]] = {}
+    for relative_path in relative_paths:
+        out_of_scope = bool(patterns) and not any(
+            _glob_match(pattern, relative_path) for pattern in patterns
+        )
+        named_in_non_goals = _mentioned_in_non_goals(non_goals, relative_path)
+        if not (out_of_scope or named_in_non_goals):
+            continue
+        reasons = []
+        if out_of_scope:
+            reasons.append(f"outside the plan's declared scope ({scope_raw.strip()})")
+        if named_in_non_goals:
+            reasons.append("named in the plan's ## Non-goals")
+        departed_paths.append(relative_path)
+        departure_reasons[relative_path] = reasons
 
     counter_dir = _common.state_dir(payload)
-    if not departed:
+    if not departed_paths:
         _write_counter(counter_dir, 0)
-        _clear_last_departure(counter_dir)
-        _common.pass_stop()
         return
 
     count = _read_counter(counter_dir) + 1
     _write_counter(counter_dir, count)
 
-    reasons = []
-    if out_of_scope:
-        reasons.append(f"outside the plan's declared scope ({scope_raw.strip()})")
-    if named_in_non_goals:
-        reasons.append("named in the plan's ## Non-goals")
-    reason = f"{relative_path} is " + " and ".join(reasons)
-    _write_last_departure(counter_dir, reason)
+    reason = "; ".join(
+        f"{path} is " + " and ".join(reasons)
+        for path, reasons in departure_reasons.items()
+    )
 
     if count >= _SUSTAINED_THRESHOLD:
-        _common.log_decision(
-            root,
-            "check_scope.py",
-            "departure",
-            reason=reason,
-            extra={"consecutive": count, "file": relative_path},
+        _common.log_decision(root, "check_scope.py", "departure", reason=reason)
+        message = (
+            f"Sustained scope departure ({count} consecutive edits): {reason}. "
+            "Consider revising the plan's scope, or stopping to reconsider "
+            "whether this work belongs on this branch."
         )
+    else:
+        message = f"Possible scope departure: {reason}."
 
-    _common.pass_stop()
+    _common.context("PostToolUse", message)
 
 
 if __name__ == "__main__":
-    main()
+    _common.fail_open(main)()

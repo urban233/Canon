@@ -12,8 +12,9 @@ does nothing on exactly the machines it can't resolve on; this module has
 no such dependency to fail.
 
 This is the one canonical copy, at `src/canon_hooks/_common.py`. `just
-sync-hooks` vendors it byte-for-byte into `plugins/claude/hooks/` and
-`plugins/codex/hooks/`, because a hook runs via bare `python3` with only
+sync-hooks` vendors it byte-for-byte into `plugins/claude/hooks/`,
+`plugins/codex/hooks/` and `plugins/antigravity/hooks/`, because a hook
+runs via bare `python3` with only
 its own directory on `sys.path` and cannot import a sibling package at
 runtime. `just sync-check` fails if a vendored copy has drifted from this
 one. A bug fixed here is fixed on every platform Canon ships for, in one
@@ -38,12 +39,162 @@ import shlex
 import subprocess
 import sys
 import tempfile
+from collections.abc import Callable
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Callable, NamedTuple
+from typing import Any, NamedTuple
 
 _DECISIONS_LOG_RELATIVE = ".canon/hooks/decisions.jsonl"
 _GIT_TIMEOUT_SECONDS = 10
+
+# --- Host dialects -----------------------------------------------------
+#
+# Claude Code and Codex speak the same hook dialect: snake_case payload
+# keys, and a `hookSpecificOutput` envelope on the way back. Antigravity
+# speaks a second one -- protojson camelCase envelope keys, a `toolCall`
+# object whose *args* are PascalCase, and a flat `{"decision": ...}`
+# result. Both dialects are handled here, in the one shared module, so
+# every other hook file stays byte-identical on all three platforms.
+# That is the whole point of this file existing: a bug fixed once is
+# fixed everywhere, and a third platform must not fork nine modules to
+# gain three payload keys.
+#
+# Everything below was confirmed by capturing real payloads from a live
+# `agy` session, not read off a schema -- see
+# docs/antigravity-hook-surface.md for the transcript and for the parts
+# that are still assumption.
+
+HOST_DEFAULT = "default"
+HOST_ANTIGRAVITY = "antigravity"
+
+# Envelope keys only Antigravity sends. `conversationId` alone would be
+# enough today, but sniffing on any of the three means a payload that
+# drops one field still routes correctly.
+_ANTIGRAVITY_MARKERS = ("conversationId", "artifactDirectoryPath", "workspacePaths")
+
+# Antigravity tool arguments are PascalCase and tool-specific; these are
+# the ones Canon's gates actually read, mapped onto the snake_case names
+# the rest of this codebase already uses. Confirmed from live payloads:
+# `run_command` carries CommandLine/Cwd, `view_file` carries
+# AbsolutePath, `write_to_file` carries TargetFile/CodeContent/Overwrite.
+_ANTIGRAVITY_ARG_ALIASES = {
+    "CommandLine": "command",
+    "TargetFile": "file_path",
+    "AbsolutePath": "file_path",
+    "CodeContent": "content",
+}
+
+_host = HOST_DEFAULT
+
+# Every tool name, on every supported platform, that can change a file on
+# disk. Claude Code offers `Edit`/`Write`; Codex adds `apply_patch`;
+# Antigravity's family is larger and was read off the model-facing tool
+# list the language server itself ships ("always use specialized tools
+# such as grep_search, find_by_name, view_file, write_to_file, edit_file,
+# multi_replace_file_content, and list_dir"), with `write_to_file`
+# confirmed against a live payload.
+#
+# One list, shared by fast_check, check_scope and plan_gate. It used to
+# be written out three times, which is three chances to add a platform's
+# tool to two of them -- and a gate that silently never fires is worse
+# than one that is absent, because nothing announces it.
+EDIT_TOOL_NAMES = (
+    "Edit",
+    "Write",
+    "apply_patch",
+    "write_to_file",
+    "replace_file_content",
+    "multi_replace_file_content",
+    "edit_file",
+    "notebook_edit",
+    "edit_notebook",
+)
+
+
+def host() -> str:
+    """Which hook dialect this process is speaking.
+
+    Set by `read_payload`, which is the only thing that can know. Reads
+    as `HOST_DEFAULT` before any payload has been parsed, so a hook that
+    emits without reading (there are none today) still produces the
+    dialect Claude Code and Codex understand.
+    """
+    return _host
+
+
+def _looks_like_antigravity(payload: dict[str, Any]) -> bool:
+    return any(marker in payload for marker in _ANTIGRAVITY_MARKERS)
+
+
+def _normalize_antigravity(payload: dict[str, Any]) -> dict[str, Any]:
+    """Rewrite an Antigravity payload into the shape every hook reads.
+
+    Additive: the original camelCase keys are left in place, so a caller
+    that wants `stepIdx` or `terminationReason` can still read it. What
+    this adds is the snake_case view -- `tool_name`, `tool_input`,
+    `cwd`, `session_id`, `scratchpad_dir` -- that `edited_paths`,
+    `repo_root`, `state_dir` and the individual gates were written
+    against.
+
+    `cwd` is the load-bearing one. Antigravity sends `workspacePaths`,
+    which is a list and *can be empty* (confirmed: it is empty in `agy
+    --print` sessions). A hook's own process cwd is no help either --
+    Antigravity runs a hook in the directory holding `hooks.json`, which
+    after install is the plugin's own copied-out directory, not the
+    user's repository. So the tool call's own `Cwd` argument is the
+    second source, and when neither is usable the caller falls back to
+    `git rev-parse`, which will at least fail open rather than act on
+    the wrong tree.
+    """
+    normalized = dict(payload)
+
+    tool_call = payload.get("toolCall")
+    if isinstance(tool_call, dict):
+        name = tool_call.get("name")
+        if isinstance(name, str) and name:
+            normalized["tool_name"] = name
+        args = tool_call.get("args")
+        if isinstance(args, dict):
+            tool_input: dict[str, Any] = {}
+            for key, value in args.items():
+                tool_input[_ANTIGRAVITY_ARG_ALIASES.get(key, key)] = value
+            normalized["tool_input"] = tool_input
+
+    workspace_paths = payload.get("workspacePaths")
+    if isinstance(workspace_paths, list):
+        for candidate in workspace_paths:
+            if isinstance(candidate, str) and candidate:
+                normalized["cwd"] = candidate
+                break
+    if "cwd" not in normalized:
+        normalized_input = normalized.get("tool_input")
+        if isinstance(normalized_input, dict):
+            raw_cwd = normalized_input.get("Cwd")
+            # Only an absolute path is usable: a relative `Cwd` is
+            # relative to a working directory this process does not share.
+            if isinstance(raw_cwd, str) and raw_cwd.startswith("/"):
+                normalized["cwd"] = raw_cwd
+
+    conversation_id = payload.get("conversationId")
+    if isinstance(conversation_id, str) and conversation_id:
+        normalized["session_id"] = conversation_id
+
+    # Antigravity has no `stop_hook_active` flag. Its Stop payload
+    # carries `executionNum`, which counts execution loops within the
+    # turn -- anything past the first means a Stop hook already refused
+    # once and the loop re-entered, which is exactly what the flag means
+    # on the other two platforms.
+    execution_num = payload.get("executionNum")
+    if isinstance(execution_num, int):
+        normalized["stop_hook_active"] = execution_num > 1
+
+    artifact_dir = payload.get("artifactDirectoryPath")
+    if isinstance(artifact_dir, str) and artifact_dir:
+        # Already per-conversation (it ends in the conversation id), so
+        # this is used as-is rather than joined with the id again.
+        normalized["scratchpad_dir"] = artifact_dir
+
+    return normalized
 
 
 def read_payload() -> dict[str, Any] | None:
@@ -53,20 +204,36 @@ def read_payload() -> dict[str, Any] | None:
     top-level value that isn't an object -- rather than raising. Every
     caller must treat None as "fail open", never as an error to surface.
     """
+    global _host
     raw = sys.stdin.read()
     try:
         parsed = json.loads(raw)
     except (json.JSONDecodeError, ValueError):
+        _host = HOST_DEFAULT
         return None
-    return parsed if isinstance(parsed, dict) else None
+    if not isinstance(parsed, dict):
+        _host = HOST_DEFAULT
+        return None
+    # Assigned on every path, not only when Antigravity is detected: a
+    # function that can only ever switch the dialect *on* leaves the
+    # answer depending on what happened before it, which is exactly the
+    # kind of order-dependence that hides until something reads two
+    # payloads in one process.
+    if _looks_like_antigravity(parsed):
+        _host = HOST_ANTIGRAVITY
+        return _normalize_antigravity(parsed)
+    _host = HOST_DEFAULT
+    return parsed
 
 
 def repo_root(payload: dict[str, Any] | None) -> Path:
     """The repository root the hook should act on.
 
-    Prefers `cwd` from the payload -- every platform Canon ships for sets
-    this to the project directory (confirmed directly for both Claude Code
-    and Codex, not just documented). Falls back to `git rev-parse
+    Prefers `cwd` from the payload -- Claude Code and Codex both set it
+    to the project directory (confirmed directly, not just documented),
+    and `read_payload` synthesizes it for Antigravity out of
+    `workspacePaths` or the tool call's own absolute `Cwd`. Falls back to
+    `git rev-parse
     --show-toplevel` from the current process's own cwd, and finally to
     `Path.cwd()` itself -- this never raises, because a hook that can't
     find the repo root must still be able to fail open rather than crash.
@@ -154,12 +321,26 @@ def _emit(payload: dict[str, Any]) -> None:
 
 
 def allow() -> None:
-    """PreToolUse: let the tool call proceed with no comment."""
+    """PreToolUse: let the tool call proceed with no comment.
+
+    On Antigravity a `PreToolUse` hook is expected to answer with a
+    decision object rather than silence, so this says `allow` explicitly
+    there. That is *not* an approval: a live session confirmed that a
+    hook's `allow` leaves the user's own permission prompt exactly where
+    it was, and that only `permissionOverrides` -- which Canon never
+    emits -- actually grants anything. Canon may refuse a tool call; it
+    must never quietly approve one on the user's behalf.
+    """
+    if _host == HOST_ANTIGRAVITY:
+        _emit({"decision": "allow"})
     sys.exit(0)
 
 
 def ask(reason: str) -> None:
     """PreToolUse: pause for confirmation, with a reason the agent can show."""
+    if _host == HOST_ANTIGRAVITY:
+        _emit({"decision": "ask", "reason": reason})
+        sys.exit(0)
     _emit(
         {
             "hookSpecificOutput": {
@@ -180,6 +361,9 @@ def deny(reason: str) -> None:
     deny with no explanation when there is none, so a hook that might run
     headless should decide explicitly rather than rely on that fallback.
     """
+    if _host == HOST_ANTIGRAVITY:
+        _emit({"decision": "deny", "reason": reason})
+        sys.exit(0)
     _emit(
         {
             "hookSpecificOutput": {
@@ -194,13 +378,33 @@ def deny(reason: str) -> None:
 
 def block(reason: str) -> None:
     """Stop: refuse to let the turn end, with a reason handed back to the
-    agent."""
+    agent.
+
+    The two dialects spell this inversely and it matters: Claude Code and
+    Codex read `"block"` as "do not stop", while Antigravity reads
+    `"continue"` as "do not stop" and treats *any other value* -- the
+    word "block" included -- as permission to stop. Emitting the wrong
+    word here would not error; it would silently let a red turn end,
+    which is the one failure Canon's Stop gate exists to prevent.
+    """
+    if _host == HOST_ANTIGRAVITY:
+        _emit({"decision": "continue", "reason": reason})
+        sys.exit(0)
     _emit({"decision": "block", "reason": reason})
     sys.exit(0)
 
 
 def context(event: str, message: str) -> None:
-    """Any event that only wants to add context, never to gate anything."""
+    """Any event that only wants to add context, never to gate anything.
+
+    Antigravity injects context through `injectSteps` instead of an
+    `additionalContext` string, and an `ephemeralMessage` is the step
+    type that matches what this is for: a transient system note, not a
+    user turn and not a tool call.
+    """
+    if _host == HOST_ANTIGRAVITY:
+        _emit({"injectSteps": [{"ephemeralMessage": message}]})
+        sys.exit(0)
     _emit(
         {
             "hookSpecificOutput": {

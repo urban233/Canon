@@ -9,9 +9,10 @@
 [![Python 3.9+](https://img.shields.io/badge/python-3.9%2B-blue.svg)](pyproject.toml)
 [![Claude Code Plugin](https://img.shields.io/badge/Claude%20Code-plugin-D97757)](plugins/claude)
 [![Codex Plugin](https://img.shields.io/badge/Codex-plugin-412991)](plugins/codex/README.md)
+[![Antigravity Plugin](https://img.shields.io/badge/Antigravity-plugin-4285F4)](plugins/antigravity/README.md)
 
-An agentic-development plugin, for Claude Code and Codex, that keeps work on
-track without a stored state machine.
+An agentic-development plugin, for Claude Code, Codex and Antigravity, that
+keeps work on track without a stored state machine.
 
 ## Why "Canon"
 
@@ -43,7 +44,9 @@ its own bookkeeping commits. Canon has no equivalent to reopen.
 
 In place of that, Canon rebuilds on four primitives every supported agent
 platform provides -- described below as Claude Code provides them; see
-[`plugins/codex/`](plugins/codex) for how the same four map onto Codex:
+[`plugins/codex/`](plugins/codex) and
+[`plugins/antigravity/`](plugins/antigravity) for how the same four map onto
+those platforms, and what is genuinely weaker on each:
 
 - **A `Stop` hook** that runs the repository's own verification command and
   refuses to let a turn end red -- so a claim like "tests pass" is a fact
@@ -178,6 +181,35 @@ Full install steps, hook/project trust, and what's genuinely different
 about this port from the Claude plugin are in
 [`plugins/codex/README.md`](plugins/codex/README.md).
 
+### Antigravity
+
+Requires [Antigravity](https://antigravity.google), with its `agy` CLI on
+`PATH`.
+
+```sh
+agy plugin install ./plugins/antigravity
+```
+
+`agy plugin install` copies the plugin into `~/.gemini/config/plugins/`, so
+this is a global install; for a project-scoped one, copy the directory to
+that project's `.agents/plugins/` or point its `.agents/plugins.json` at
+this one. `agy plugin uninstall antigravity` removes it.
+
+Two things are genuinely weaker on this platform and are worth knowing
+before you install it. Antigravity fires no event when a subagent finishes,
+so a reviewer's verdict is not captured from the reviewer's own message the
+way it is elsewhere -- the `review` skill quotes it in-session instead. And
+Antigravity substitutes no workspace variable into an MCP server's
+configuration, so `canon_position`, `canon_plan`, `canon_review`,
+`canon_evidence` and `canon_ship` cannot tell which repository they are
+serving and should be treated as unavailable. Every hook, skill and reviewer
+subagent works without them.
+
+Full install steps, both limitations with their causes, and the probe
+findings the port was built from are in
+[`plugins/antigravity/README.md`](plugins/antigravity/README.md) and
+[`docs/antigravity-hook-surface.md`](docs/antigravity-hook-surface.md).
+
 `canon-companion` is a separate, opt-in plugin for code-quality skills that
 should not load with Canon's workflow core. Install it from the same
 marketplace only when needed -- Claude Code:
@@ -191,6 +223,8 @@ or Codex:
 ```sh
 codex plugin add canon-companion@canon
 ```
+
+It is not ported to Antigravity yet.
 
 Its first skill, `$audit-google-python-style`, performs a read-only audit and
 requires explicit approval before it applies any remediation.

@@ -451,6 +451,21 @@ def _compaction_recap(
 
 def main() -> None:
     payload = _common.read_payload()
+
+    # Antigravity has no `SessionStart`. Its nearest equivalent that can
+    # still inject anything is `PostInvocation`, which fires after every
+    # model call -- so this gate keeps the position line to the first one
+    # rather than repeating it all turn. (`PreInvocation` would be the
+    # natural home and is where a first draft of the Antigravity port put
+    # it, but the language server rejects its output outright: "Pre-
+    # invocation hook %q is deprecated and has no effect". A hook bound
+    # there runs and is ignored, which is the silent-no-op failure Canon
+    # is built to avoid shipping.)
+    if _common.host() == _common.HOST_ANTIGRAVITY and payload is not None:
+        invocation_num = payload.get("invocationNum")
+        if isinstance(invocation_num, int) and invocation_num != 0:
+            return
+
     root = _common.repo_root(payload)
     branch = _common.current_branch(root) or "unknown"
     default_branch = _common.default_branch(root)

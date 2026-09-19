@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: BSD-3-Clause
-"""Canon's committed config and the verification precondition (Antigravity port).
+"""Canon's committed config and the verification precondition.
 
 `.canon/config.json` is the one piece of state a human is meant to read,
 edit, and revert like any other file in the repo -- contrast
@@ -9,7 +9,7 @@ later hook (starting with `Stop`) checks before doing anything: per
 docs/plan.md's Invariant III, no verification signal means Canon stays
 inert rather than operating unverified.
 
-Unlike `_common_agy.py`, nothing here parses a hook payload -- every function
+Unlike `_common.py`, nothing here parses a hook payload -- every function
 takes `root: Path` directly, so this module is trivially unit-testable
 without mocking stdin.
 """
@@ -19,16 +19,11 @@ from __future__ import annotations
 import json
 import re
 import shlex
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from typing import Any
 
-try:
-    import _common_agy as _common
-except ImportError:
-    try:
-        from . import _common_agy as _common  # type: ignore[no-redef]
-    except ImportError:
-        import _common  # type: ignore[no-redef]
+import _common
+import plan_header
 
 _CONFIG_PATH_RELATIVE = ".canon/config.json"
 
@@ -130,7 +125,8 @@ def interaction_mode(config: dict[str, Any] | None) -> str:
     Defaults to "solo" -- the documented default -- for a missing
     config, a missing key, or any value that isn't one of the three
     literals. Never guessed at runtime: a hook has no controlling
-    terminal to sniff whether the session itself is interactive or not,
+    terminal to sniff (confirmed directly against both supported
+    platforms' hooks references) whether the session itself is interactive or not,
     so this is config, the same shape as `verify` and
     `guard_default_branch` before it.
     """
@@ -140,9 +136,6 @@ def interaction_mode(config: dict[str, Any] | None) -> str:
     return mode if mode in _VALID_MODES else _DEFAULT_MODE
 
 
-_PLANS_DIR_RELATIVE = ".canon/plans"
-
-
 def plan_verify_command(root: Path, branch: str | None) -> str | None:
     """The `verify:` a branch's saved plan header names, or None.
 
@@ -150,17 +143,19 @@ def plan_verify_command(root: Path, branch: str | None) -> str | None:
     Overrides it for that branch | One branch, where the work needs
     something different." Never raises; a missing or malformed plan file
     is simply "no override".
+
+    Reads through `plan_header.branch_plan_path`, not the plain
+    `.canon/plans/<branch>.md` formula: a `features/<x>` branch's own
+    plan is redirected to `.canon/plans/branches/features/<x>.md`, to
+    avoid colliding with a feature plan of the same slug (see
+    plan_header.py's module docstring). Reading the plain formula instead
+    would read a `verify:` override out of the wrong plan for exactly the
+    branch names that redirect exists to protect.
     """
     if not branch:
         return None
     try:
-        import plan_header
-
-        plan_path = plan_header.branch_plan_path(root, branch)
-    except ImportError:
-        plan_path = root / _PLANS_DIR_RELATIVE / f"{branch}.md"
-    try:
-        text = plan_path.read_text(encoding="utf-8")
+        text = plan_header.branch_plan_path(root, branch).read_text(encoding="utf-8")
     except OSError:
         return None
     verify = _common.parse_header(text).get("verify", "")
@@ -190,24 +185,30 @@ def resolve_verify_command(
 
 
 def verify_command_source(
-    root_or_config: Path | dict[str, Any] | None,
-    branch: str | None = None,
-    config: dict[str, Any] | None = None,
+    root: Path, branch: str | None, config: dict[str, Any] | None
 ) -> str:
-    """Where the verify command actually came from."""
-    if isinstance(root_or_config, dict):
-        return str(root_or_config.get("source", "config"))
-    if isinstance(root_or_config, Path):
-        root = root_or_config
-        if branch and plan_verify_command(root, branch):
-            try:
-                import plan_header
+    """Where the value `resolve_verify_command` returns actually came
+    from: the branch's plan header if it named one, else
+    `.canon/config.json`.
 
-                return plan_header.branch_plan_relative(branch)
-            except ImportError:
-                return f".canon/plans/{branch}.md"
-        return _CONFIG_PATH_RELATIVE
-    return "config"
+    A caller reporting a problem with the resolved command (see
+    `verify_command_problem` and `stop.py`'s `_handle_configuration_fault`)
+    must name the file a human should actually go fix -- naming
+    `.canon/config.json` unconditionally would send them to edit the
+    wrong file for a command that came from a plan header instead.
+    `config` is accepted for symmetry with `resolve_verify_command` and
+    because a config-derived answer may grow a second source later; today
+    the plan header is the only thing that can outrank it.
+
+    Named through `plan_header.branch_plan_relative`, the same redirect
+    `plan_verify_command` reads through -- naming the plain
+    `.canon/plans/<branch>.md` formula here would send a human to fix the
+    wrong file for a `features/<x>` branch, whose plan actually lives at
+    `.canon/plans/branches/features/<x>.md`.
+    """
+    if branch and plan_verify_command(root, branch):
+        return plan_header.branch_plan_relative(branch)
+    return _CONFIG_PATH_RELATIVE
 
 
 _SHELL_METACHARACTER_PUNCTUATION = "();<>|&`$\n"
@@ -215,12 +216,122 @@ _SHELL_METACHARACTER_CHARS = frozenset("&;<>|`\n")
 
 
 def shell_metacharacter(command: str) -> str | None:
-    """The first shell metacharacter `command` contains outside of a quoted argument."""
+    """The first shell metacharacter `command` contains outside of a
+    quoted argument, or None if it contains none.
+
+    Canon runs the configured verify command directly, with no shell --
+    `subprocess.run(shlex.split(command), ...)` in both `stop.py`'s
+    `_run_verification` and canon_mcp's `_run_local_check`. `shlex.split`
+    has no concept of `&&`, `||`, `|`, `;`, a newline, `>`, `<`, a
+    backtick, or `$(` -- it hands each one back as a plain argument
+    rather than raising. `ruff check . && pytest` becomes `['ruff',
+    'check', '.', '&&', 'pytest']`; `ruff` receives `&&` as a path,
+    exits non-zero for a reason that has nothing to do with the
+    repository, and the `Stop` gate reports that as a failing check
+    forever. This function is how `verify_command_problem` below catches
+    that before it ever reaches `subprocess.run`.
+
+    The near miss it has to get right: a metacharacter *inside* a quoted
+    argument. `pytest -k "a and b"` and `just test --flag='a|b'` are
+    both completely ordinary commands and must not be rejected. A
+    substring scan over the raw string cannot tell the two cases apart
+    -- `"a|b"` and `a|b` look identical to `"|" in command`. So rather
+    than re-deriving shlex's own quoting rules by hand, this asks shlex
+    itself, the same library that does the real split at verification
+    time:
+
+    `shlex.shlex` is configured with `punctuation_chars` set to exactly
+    the characters above (plus the parens, so a bare `$` run directly
+    into a `(` merges into one `$(` token the way adjacent punctuation
+    always does in this mode) and with `commenters` cleared -- more on
+    both below. Quoting still takes priority over punctuation-splitting
+    in this mode -- a quote's contents are consumed as one atomic span
+    before the characters inside it are ever considered for a
+    punctuation split -- so a metacharacter inside `'...'` or `"..."`
+    comes back fused into the surrounding word (`--flag='a|b'` tokenizes
+    to the single token `--flag=a|b`), while the same character
+    standalone tokenizes to its own exact token or a token built purely
+    out of operator characters (`a && b` tokenizes to `['a', '&&',
+    'b']`; `a &> b` tokenizes to `['a', '&>', 'b']`).
+
+    A token counts as an operator when *every* character in it is one of
+    `_SHELL_METACHARACTER_CHARS` -- deliberately "all characters," not
+    "contains a character": `--flag='a|b'` *contains* `|` but is not
+    *made of* only operator characters, so it reads as content, exactly
+    the distinction the near miss above needs. This single rule is what
+    catches every operator shlex's punctuation-merging can produce from
+    these characters, not just the two-character ones this function used
+    to special-case: a lone `&` (background), `>>` (append), `&>` and
+    `1>&2`-style merges (combined redirects), a lone `;`, and so on --
+    confirmed directly against `pytest 2>&1`, `ruff check . & pytest`,
+    `pytest &`, `pytest >> log`, and `pytest &> log`, none of which the
+    exact-membership version this replaced would catch.
+
+    A second deliberate over-rejection, the same family as `$(`'s below:
+    a *wholly quoted* argument made only of operator characters --
+    `cmd "|"`, `cmd '&&'`, `find . -exec cmd {} \\;` -- is rejected too,
+    the same as the bare operator would be. shlex strips the quotes
+    before this function ever sees the token, so `"|"` and a bare `|`
+    both arrive as the single-character token `|`; there is no way to
+    tell them apart without re-deriving shlex's own quote tracking by
+    hand, which is exactly what asking shlex directly (rather than
+    scanning the raw string) is meant to avoid. This fails in the safe
+    direction -- a block-once with a named, fixable reason, never a
+    silent mis-split -- so it is kept rather than special-cased away.
+
+    `commenters` defaults to `"#"` in `shlex.shlex` but to `""` in
+    `shlex.split` -- confirmed directly, and easy to miss because the
+    two normally agree. Left at the default here, this function would
+    stop reading at a `#` and never see an operator sitting after one,
+    while `shlex.split` -- what actually runs the command -- treats `#`
+    as an ordinary character and passes everything after it straight
+    through as more arguments. `just test # && ruff check .` is exactly
+    that: read with the default `commenters`, this function sees only
+    `just test` and reports no problem, while `_run_verification` still
+    receives `&&` as a literal argument. Clearing `commenters` makes
+    this function see what the real split actually does.
+
+    `$(` gets separate handling because it is the one operator made of
+    two *different* punctuation characters that only merge by sitting
+    next to each other, so the "every character is an operator
+    character" rule above does not cover it -- `(` is deliberately left
+    out of `_SHELL_METACHARACTER_CHARS`, on purpose, so that `(` and `)`
+    stay inert everywhere else. That is what keeps `<(` -- process
+    substitution syntax a real shell would treat specially, but this
+    function does not need to reject, since `shlex.split` just hands it
+    to the first program as a literal, malformed-looking argument rather
+    than silently doing something else -- from being caught by the same
+    rule that catches a bare `<`: the merged token `<(` contains a `(`,
+    so it fails "every character is an operator character," the same
+    way `cmd (a)`'s bare `(` does. `$(` does not get that protection,
+    because unlike `<(` it is a real, common way to smuggle a
+    substitution into an argument `shlex.split` will not perform, so a
+    token starting with `$(` is treated as unsafe even in the one case
+    this is conservative about: a whole argument that is quoted and
+    happens to look like a substitution (`"$(x)"` alone, with nothing
+    else in it) is rejected too, rather than trying to also prove it was
+    quoted. That is a deliberate trade for a construct no real verify
+    command is shaped like, not an oversight -- contrast a prefixed,
+    genuinely-quoted use such as `--flags="$(x)"`, which still reads
+    clean, because that token is `--flags=$(x)` and does not start with
+    `$(`.
+
+    An unterminated quote makes shlex raise `ValueError` while reading
+    the stream; that is a different, already-handled problem (see
+    `verify_command_problem`, and the identical `ValueError` caught in
+    `_run_verification`/`_run_local_check`), so this returns None rather
+    than raising -- "no metacharacter found" is a true statement even
+    when the command cannot be fully parsed.
+    """
     lexer = shlex.shlex(
         command, posix=True, punctuation_chars=_SHELL_METACHARACTER_PUNCTUATION
     )
     lexer.whitespace_split = True
+    # Keep "\n" out of whitespace so it surfaces as punctuation instead of
+    # silently acting as an ordinary token separator (see the docstring).
     lexer.whitespace = " \t\r"
+    # Match what `shlex.split` actually does at verification time -- see
+    # the docstring's "commenters" paragraph.
     lexer.commenters = ""
     try:
         tokens = list(lexer)
@@ -233,22 +344,152 @@ def shell_metacharacter(command: str) -> str | None:
             return token
         if token.startswith("$("):
             return "$("
+        # A "$" and a "(" only stay as two tokens when whitespace
+        # separates them (`$ (...)`); contiguous `$(...)` already starts
+        # a token with "$(" and is caught above. This is the rare
+        # fallback for the spaced-out form.
         if token == "$" and tokens[index + 1 : index + 2] == ["("]:
             return "$("
     return None
 
 
+# Programs whose job is to interpret a command *string*. Names only --
+# `PurePosixPath(...).name` strips any directory, so `/bin/sh` and `sh`
+# are the same entry.
+_SHELL_PROGRAMS = frozenset(
+    {
+        "sh",
+        "bash",
+        "zsh",
+        "dash",
+        "ksh",
+        "ksh93",
+        "mksh",
+        "ash",
+        "csh",
+        "tcsh",
+        "fish",
+    }
+)
+
+
+def shell_wrapper(argv: list[str]) -> str | None:
+    """The shell `argv` asks to interpret a command string, or None.
+
+    `shell_metacharacter` cannot catch this one and should not try. Its
+    rule is that a token made *entirely* of operator characters is an
+    operator, which is what keeps a legitimately quoted argument -- the
+    `"a and b"` in `pytest -k "a and b"`, a regex with a `|` in it --
+    from being mistaken for one. But quoting is exactly what hides the
+    operator in `sh -c "ruff check . && pytest"`: `shlex.split` yields
+    `['sh', '-c', 'ruff check . && pytest']`, no token is all operator
+    characters, and the string sails through to be handed to a real
+    shell -- precisely what
+    docs/decisions/0005-verify-command-never-runs-through-a-shell.md
+    exists to rule out.
+
+    So this is a second, separate fault rather than a widening of the
+    first: not "the command contains an operator" but "the command *is*
+    a shell, invoked to parse something". An eval run on 2026-09-19
+    found a model reaching for this form unprompted, one turn after
+    correctly explaining why the compound command it replaces was
+    refused -- the refusal it had just relayed taught it the shape of
+    the workaround.
+
+    Only the `-c` family is refused. A shell running a *script* --
+    `bash scripts/verify.sh` -- is the wrapper Canon actively
+    recommends, exits with that script's status, and is left alone: the
+    ambiguity this guards against comes from operator grammar inside an
+    inline string, not from the interpreter being a shell.
+
+    Not caught: an indirection that puts the shell somewhere other than
+    `argv[0]`, such as `env sh -c ...` or `busybox sh -c ...`. Those are
+    left to `suggest_verify_command`'s conventions and to review rather
+    than chased here, on the same "name the characters, not the tokens"
+    reasoning as `shell_metacharacter`'s message -- an enumeration of
+    every indirection would drift out of date faster than it earned.
+    """
+    if not argv:
+        return None
+    program = PurePosixPath(argv[0]).name
+    if program not in _SHELL_PROGRAMS:
+        return None
+    for argument in argv[1:]:
+        # `--` ends option parsing; what follows is a script path.
+        if argument == "--":
+            return None
+        # A bare `-` is stdin, and the first non-option argument is the
+        # script -- neither is an inline command string.
+        if argument == "-" or not argument.startswith("-"):
+            return None
+        if argument.startswith("--"):
+            if argument == "--command":
+                return program
+            continue
+        # Short options cluster: `-lc` and `-ec` carry `-c` with them.
+        if "c" in argument[1:]:
+            return program
+    return None
+
+
 def verify_command_problem(command: str) -> str | None:
-    """Why `command` cannot be run directly via `shlex.split`, or None."""
+    """Why `command` cannot be run the way Canon runs it -- directly, via
+    `shlex.split`, with no shell -- or None when it can.
+
+    Two distinct faults, and both are configuration problems rather
+    than anything a red run would mean: shlex cannot parse the string
+    at all (unbalanced quoting), or it parses fine but contains a shell
+    metacharacter -- see `shell_metacharacter` -- that a real shell
+    would act on and that `shlex.split` instead hands to the first
+    program as a literal argument.
+
+    Callers check this *before* ever attempting to run the command:
+    `stop.py`'s `main` and canon_mcp's `evidence.py` both must report a
+    positive result here as a `.canon/config.json` problem, never as a
+    failing check -- see docs/plan.md §07's "wrong-but-plausible is
+    worse than absent," and the reason Canon refuses rather than runs a
+    compound command through a shell in the first place: a partial
+    failure inside a chain is exactly the ambiguous evidence the `Stop`
+    gate exists to eliminate, so "which half was red" must never be a
+    question Canon has to answer.
+    """
     try:
         argv = shlex.split(command)
     except ValueError as exc:
-        return f"Could not parse this command: {exc}"
+        return f"could not parse this command: {exc}"
     if not argv:
         return "this command is empty"
+    shell = shell_wrapper(argv)
+    if shell is not None:
+        return (
+            f"this command hands its work to `{shell}` to interpret. Canon "
+            "runs the configured command directly, with no shell, so "
+            f'wrapping a sequence in `{shell} -c "..."` does not make it '
+            "runnable -- it just moves the shell inside the string, where "
+            "the same ambiguity this refusal exists to prevent comes back "
+            "with nothing able to see it. The fix is a named command that "
+            "exits once, with one status: a Justfile recipe, an npm "
+            "script, or a shell script committed to the repository, with "
+            "that single command configured here. Propose it to the "
+            "developer rather than writing it -- editing this "
+            "repository's build configuration is not Canon's job."
+        )
     metacharacter = shell_metacharacter(command)
     if metacharacter is None:
         return None
+    # Describes the character set `shell_metacharacter` checks against,
+    # not an enumerated list of tokens -- an earlier version of this
+    # message listed `&&`, `||`, `|`, `;`, a newline, `>`, `<`, a
+    # backtick, and `$(` explicitly, which stopped matching what the
+    # detector actually catches the moment it grew past exact-token
+    # matching (round 2 added a lone `&`, `>>`, `&>`/`2>&1`-style merges,
+    # and more): the operator named at the start of this message no
+    # longer necessarily appeared anywhere in this list. Naming the
+    # *characters* instead of the tokens keeps the two from drifting
+    # apart again the next time the detector's coverage grows. The
+    # closing advice is conditional -- "if the real answer is a
+    # sequence" -- because it is right for `a && b` and simply wrong for
+    # `pytest 2>&1`, which is not a sequence at all.
     return (
         f"this command contains `{metacharacter}`, which Canon can't run "
         "as configured -- it runs the configured command directly, with "
@@ -264,7 +505,30 @@ def verify_command_problem(command: str) -> str | None:
 
 
 def fast_check_command(config: dict[str, Any] | None) -> str | None:
-    """The fast command that should pass after an edit, or None."""
+    """The fast command that should pass after an edit, or None.
+
+    docs/plan.md §11 describes three quality layers at three latencies,
+    and this is the first of them: cheap, immediate, and with no
+    authority at all. `verify` answers "can this turn end?" and belongs
+    to the `Stop` gate; `check` answers "is the file I just wrote
+    obviously wrong?" and belongs to `fast_check.py`. A repository names
+    a formatter, a linter and a typechecker here -- never its tests,
+    which is what `verify` is for and what makes that gate slow enough to
+    be worth running only once per turn.
+
+    Optional, and unlike `verify` its absence does **not** make Canon
+    inert. §07's precondition is about being able to check the agent's
+    word before a turn ends; a repository with no fast check is simply a
+    repository where layer one does nothing, which is exactly what Canon
+    did before this existed.
+
+    Canon does not infer this. `suggest_verify_command` exists because
+    §07 asks Canon to propose a verification command on first run, and
+    that proposal is confirmed by a human before it is written. There is
+    no equivalent first-run question here, so a wrong guess would be
+    wrong-but-plausible with nobody asked -- the failure §07 names. A
+    repository that wants layer one says so.
+    """
     if config is None:
         return None
     command = config.get("check")
@@ -324,11 +588,8 @@ def suggest_verify_command(root: Path) -> str | None:
                 ):
                     return "npm test"
 
-    try:
-        for notebook in root.rglob("*.ipynb"):
-            if ".ipynb_checkpoints" not in notebook.parts:
-                return "pytest --nbval-lax ."
-    except OSError:
-        pass
+    for notebook in root.rglob("*.ipynb"):
+        if ".ipynb_checkpoints" not in notebook.parts:
+            return "pytest --nbval-lax ."
 
     return None

@@ -1,44 +1,76 @@
 # SPDX-License-Identifier: BSD-3-Clause
-"""Canon's `Stop` hook -- the verification gate (Antigravity port).
+"""Canon's `Stop` hook — the verification gate.
 
 Invariant III ("nothing ships on the agent's own word") is a precondition:
 if this repository has no configured verification command, Canon stays
 inert rather than operating unverified (see docs/plan.md §07, "No signal,
-no Canon").
+no Canon"). So this hook does one of three things on every `Stop` event:
 
-Under Antigravity's lifecycle protocol, the Stop decision contract is:
-- To allow the agent to stop: emit `{}` (empty object) and exit 0.
-- To block stopping and continue the turn: emit
-  `{"decision": "continue", "reason": "..."}` and exit 0.
+- No `verify` command in `.canon/config.json` yet: block once per
+  session to surface the first-run question -- proposing whatever
+  `_config.suggest_verify_command` inferred, or asking outright when
+  nothing was inferred -- then allow silently on every later `Stop` in
+  the same session. A `Stop` hook has no "ask" permission decision and no
+  TTY-based degradation the way `PreToolUse` does; `block` is the only
+  mechanism that reliably puts text in front of the agent, which is then
+  expected to relay the question to the developer and, once answered,
+  write `.canon/config.json` itself -- a plain file edit, not a new tool.
+- A `verify` command is configured, but cannot actually be run as
+  written -- `_config.verify_command_problem` says why, most often
+  because it is compound (`ruff check . && pytest`) and Canon runs it
+  with no shell. This is a configuration fault, not a red result: it
+  says nothing about whether the repository's tests pass, so it must
+  never be reported as one, never counted against the
+  consecutive-refusal budget below, and never left for the developer to
+  discover only by noticing the same error every single turn. It gets
+  the identical treatment as the first-run question -- block once per
+  session with a reason that names the actual file to fix
+  (`_config.verify_command_source`: `.canon/config.json`, or the plan
+  header's file when that is what resolved to this command), then
+  allow -- because an unrunnable command *is* "no signal" under §07,
+  just discovered a turn later than a missing one.
+- A `verify` command is configured and runs: block on a red result,
+  attaching the failure so the claim "tests pass" is something the
+  harness checked rather than something the agent asserted. Here too a
+  command that could not even be executed -- its binary is not on
+  `PATH` -- is a configuration fault handled the way above, not a red
+  result; only a command that ran and exited non-zero (or timed out)
+  counts against the refusal budget.
 
-This hook handles:
-1. No `verify` command in `.canon/config.json`: continues turn once per session
-   to surface the first-run question, then allows stopping on subsequent stops.
-2. A `verify` command is configured: runs repo verification with a 300s timeout.
-   - On pass: resets consecutive refusals, logs allow, and emits `{}`.
-   - On failure: increments consecutive refusals. If cap (3) is exceeded,
-     gives up, resets counter, logs allow, and emits `{}`. Otherwise emits
-     `{"decision": "continue", "reason": detail}`.
-3. State (refusal counter and verify prompt marker) is stored exclusively under
-   `artifactDirectoryPath / conversationId / canon`, never in the repository.
+The one state this hook is allowed to remember, per `_common.py`'s module
+docstring and `AGENTS.md`: two same-session markers (so the first-run
+question and the configuration-fault report are each surfaced once, not
+on every `Stop`) and a consecutive-refusal counter (so a run of genuinely
+red results doesn't block forever). All three live under
+`_common.state_dir` -- the `scratchpad_dir` Claude Code includes in the
+`Stop` payload, or, on a platform that includes no such directory (Codex
+does not -- confirmed directly, see docs/codex-hook-surface.md), one
+`state_dir` derives itself from the payload's `session_id`. Either way,
+never under the repository.
+
+When `state_dir` returns None -- neither source was available -- all
+three degrade to their empty state, and an empty state is not a safe one
+here: an always-zero counter never reaches its cap, so a persistently red
+repository would block every turn end for good, and an always-absent
+marker asks the same question on every `Stop` rather than once. So
+`stop_hook_active` -- the harness's own signal that this turn is already
+continuing because a `Stop` hook blocked it -- stands in for all three,
+but *only* in that fully-degraded case. It cannot count, so it is a
+strictly weaker guarantee than three attempts: one block, then through.
+That is the right trade for a degraded payload and the wrong one for a
+healthy session, which is why it is a fallback rather than the mechanism.
 """
 
 from __future__ import annotations
 
-import sys
 from pathlib import Path
 from typing import Any
 
-_hooks_dir = str(Path(__file__).resolve().parent)
-if _hooks_dir not in sys.path:
-    sys.path.insert(0, _hooks_dir)
-
-import _common_agy as _common  # noqa: E402
-import _config  # noqa: E402
+import _common
+import _config
 
 _MAX_CONSECUTIVE_REFUSALS = 3
 _VERIFY_TIMEOUT_SECONDS = 300
-_OUTPUT_TAIL_CHARS = 4000
 
 _PROMPTED_MARKER_NAME = "verify_prompted"
 _CONFIG_FAULT_MARKER_NAME = "verify_config_fault_prompted"
@@ -46,16 +78,9 @@ _REFUSAL_COUNTER_NAME = "consecutive_refusals"
 
 
 def _stop_hook_active(payload: dict[str, Any] | None) -> bool:
-    """Whether the harness reports this turn is already continuing.
-    Checks Antigravity's `executionNum > 1` and fallback `stop_hook_active`."""
-    if not payload:
-        return False
-    if payload.get("stop_hook_active"):
-        return True
-    execution_num = payload.get("executionNum")
-    if isinstance(execution_num, int) and execution_num > 1:
-        return True
-    return False
+    """Whether the harness says this turn is already continuing because a
+    `Stop` hook blocked it. Absent or non-boolean reads as False."""
+    return bool(payload.get("stop_hook_active")) if payload else False
 
 
 def _has_been_prompted(
@@ -63,14 +88,21 @@ def _has_been_prompted(
     stop_hook_active: bool,
     marker_name: str = _PROMPTED_MARKER_NAME,
 ) -> bool:
+    """Whether the once-per-session marker named by `marker_name` is
+    already set. Two independent markers use this: the first-run
+    question (`_PROMPTED_MARKER_NAME`) and the configuration-fault
+    report (`_CONFIG_FAULT_MARKER_NAME`) -- see the module docstring.
+    They are deliberately separate files, not one shared marker, so a
+    session that has already been told "no command configured" still
+    gets told, once, "the command you configured cannot run" if the
+    developer's answer to the first turns out to be unrunnable."""
     if state_dir is None:
-        return True
+        return stop_hook_active
     return (state_dir / marker_name).exists()
 
 
 def _mark_prompted(
-    state_dir: Path | None,
-    marker_name: str = _PROMPTED_MARKER_NAME,
+    state_dir: Path | None, marker_name: str = _PROMPTED_MARKER_NAME
 ) -> None:
     if state_dir is None:
         return
@@ -107,11 +139,12 @@ def _should_give_up(
     """Whether a red result should be let through rather than blocked again.
 
     With a scratchpad, that's the counter reaching its cap. Without one
-    there is no counter, so we fail open immediately to avoid infinite
-    refusal loops.
+    there is no counter, so the harness's own loop guard is all that can
+    end the run -- see the module docstring for why a one-shot backstop
+    is accepted there and only there.
     """
     if state_dir is None:
-        return True
+        return stop_hook_active
     return refusals > _MAX_CONSECUTIVE_REFUSALS
 
 
@@ -135,13 +168,51 @@ def _first_run_reason(root: Path) -> str:
     )
     return (
         "Canon has no verification command configured for this repository "
-        "yet, and stays inert until it does. " + ask + " Confirm it with "
-        'the developer, then save it by writing {"verify": "<command>"} '
-        "to .canon/config.json."
+        "yet, and stays inert until it does. " + ask + " Run the candidate "
+        "yourself and show the developer what actually happened -- pass, "
+        "fail, or error -- before either of you settles on it: a command "
+        "neither of you has watched run is still a guess, and docs/plan.md "
+        "§07 is explicit that a wrong-but-plausible guess is worse than no "
+        "answer at all. Confirm it with the developer, then save it by "
+        'writing {"verify": "<command>"} to .canon/config.json. One thing '
+        "the answer cannot be: compound. Canon runs this command directly, "
+        "with no shell, so `a && b`, `a || b`, a pipe, a `;`-separated "
+        "sequence, or anything else only a shell would know how to run is "
+        "refused rather than executed -- a partial failure inside a chain "
+        "is exactly the ambiguous evidence this gate exists to eliminate, "
+        "since there would be no way to tell which half went red. If the "
+        "real answer is a sequence, the fix is a recipe or script that "
+        "wraps it -- a Justfile recipe, an npm script, a shell script "
+        "committed to the repo -- with that single command named here "
+        'instead. What does not count is `sh -c "a && b"`, or any '
+        "other inline shell invocation: that keeps the sequence in this "
+        "string and just hides the operators inside a quoted argument, "
+        "which is the same ambiguity with nothing able to see it. The "
+        "wrapper has to be a named command, committed to the repository, "
+        "that exits once with one status. Propose that wrapper to the "
+        "developer -- do not write "
+        "it yourself: editing this repository's build configuration is "
+        "not Canon's job, the same line it holds on `nbstripout` and on "
+        "branch protection. Finally, and optionally: an adjacent `check` "
+        "key names a *fast* command -- a formatter, a linter, a "
+        "typechecker, never tests -- that Canon runs after an edit and "
+        "reports without blocking, so a pull request never fails CI on "
+        "formatting alone. Offer it if this repository has an obvious "
+        "one, and leave it out if it does not; unlike `verify`, its "
+        "absence costs nothing."
     )
 
 
 def _configuration_fault_reason(command: str, source: str, detail: str) -> str:
+    """The message for a `verify` command that cannot be run as
+    configured -- see the module docstring's second bullet. Named after
+    `source` -- `.canon/config.json`, or the plan header's file when
+    that is what actually resolved to this command, per
+    `_config.verify_command_source` -- explicitly, because the whole
+    point is that this must never be mistaken for a failing check: it
+    says nothing about whether the repository's own tests pass, and
+    naming the wrong file would send the developer to fix the wrong
+    place."""
     return (
         f"The verify command in {source} (`{command}`) cannot be "
         f"run as configured: {detail} This is a configuration problem, not "
@@ -159,6 +230,12 @@ def _handle_configuration_fault(
     source: str,
     detail: str,
 ) -> None:
+    """Report `command` as unrunnable and end the hook -- either the
+    once-per-session block, or silent allow if that block already
+    happened this session. See the module docstring's second bullet:
+    this is deliberately the same shape as the first-run question, not
+    the refusal-counter path, because an unrunnable command is "no
+    signal" under §07 just the same as a missing one."""
     reason = _configuration_fault_reason(command, source, detail)
     if _has_been_prompted(
         state_dir, stop_hook_active, marker_name=_CONFIG_FAULT_MARKER_NAME
@@ -169,51 +246,39 @@ def _handle_configuration_fault(
             "allow",
             reason=f"configuration fault already surfaced this session: {reason}",
         )
-        _common.pass_stop()
+        _common.allow()
         return
     _mark_prompted(state_dir, marker_name=_CONFIG_FAULT_MARKER_NAME)
-    _common.log_decision(root, "stop.py", "continue", reason=reason)
-    _common.continue_turn(reason)
+    _common.log_decision(root, "stop.py", "block", reason=reason)
+    _common.block(reason)
 
 
-@_common.fail_open(fallback_fn=_common.pass_stop)
 def main() -> None:
     payload = _common.read_payload()
-    if not payload:
-        _common.pass_stop()
-        return
-
-    if not _common.has_workspace(payload):
-        _common.pass_stop()
-        return
-
-    state_dir = _common.state_dir(payload)
-    if state_dir is None:
-        _common.pass_stop()
-        return
-
     root = _common.repo_root(payload)
-    if not root.is_dir():
-        _common.pass_stop()
-        return
-
+    state_dir = _common.state_dir(payload)
     stop_hook_active = _stop_hook_active(payload)
     config = _config.load_config(root)
 
     if config is None or not _config.has_verification_signal(config):
         if _has_been_prompted(state_dir, stop_hook_active):
-            _common.pass_stop()
+            _common.allow()
             return
         _mark_prompted(state_dir)
-        _common.continue_turn(_first_run_reason(root))
+        _common.block(_first_run_reason(root))
         return
 
     branch = _common.current_branch(root)
     command = _config.resolve_verify_command(root, branch, config)
-    if command is None:
-        _common.pass_stop()
+    if command is None:  # pragma: no cover - has_verification_signal implies one
+        _common.allow()
         return
 
+    # A command already on disk that cannot be run as configured (most
+    # often: compound) is a configuration fault, caught before
+    # `subprocess.run` ever sees it -- never reported as a failing check.
+    # See docs/plan.md §07 and `_config.verify_command_problem`'s
+    # docstring for why this must not read like a red suite.
     problem = _config.verify_command_problem(command)
     if problem is not None:
         source = _config.verify_command_source(root, branch, config)
@@ -222,17 +287,27 @@ def main() -> None:
         )
         return
 
-    result = _common.run_command(command, cwd=root, timeout=_VERIFY_TIMEOUT_SECONDS)
-    if result.passed:
+    result = _common.run_command(root, command, _VERIFY_TIMEOUT_SECONDS)
+    passed, detail, configuration_fault = (
+        result.passed,
+        result.detail,
+        result.configuration_fault,
+    )
+    if passed:
         _write_refusal_count(state_dir, 0)
         _common.log_decision(root, "stop.py", "allow", reason=f"`{command}` passed")
-        _common.pass_stop()
+        _common.allow()
         return
 
-    if result.configuration_fault:
+    if configuration_fault:
+        # Discovered only at execution time -- typically the named
+        # binary is not on `PATH`. Same treatment as the pre-check
+        # above and for the same reason: this is not evidence about the
+        # repository's own tests, so it must not burn the refusal
+        # budget or read like one did.
         source = _config.verify_command_source(root, branch, config)
         _handle_configuration_fault(
-            root, state_dir, stop_hook_active, command, source, result.detail
+            root, state_dir, stop_hook_active, command, source, detail
         )
         return
 
@@ -243,15 +318,14 @@ def main() -> None:
             root,
             "stop.py",
             "allow",
-            reason=_give_up_reason(state_dir, refusals, result.detail),
+            reason=_give_up_reason(state_dir, refusals, detail),
         )
-        _common.pass_stop()
+        _common.allow()
         return
-
     _write_refusal_count(state_dir, refusals)
-    _common.log_decision(root, "stop.py", "continue", reason=result.detail)
-    _common.continue_turn(result.detail)
+    _common.log_decision(root, "stop.py", "block", reason=detail)
+    _common.block(detail)
 
 
 if __name__ == "__main__":
-    main()
+    _common.fail_open(main)()

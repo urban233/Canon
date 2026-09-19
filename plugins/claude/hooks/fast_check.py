@@ -85,7 +85,7 @@ import _config
 # docs/codex-hook-surface.md records as unconfirmed, and two hooks on one
 # event disagreeing about whether to act on it would be worse than either
 # answer.
-_EDIT_TOOL_NAMES = (None, "Edit", "Write", "apply_patch")
+_EDIT_TOOL_NAMES = (None, *_common.EDIT_TOOL_NAMES)
 
 _FAST_CHECK_TIMEOUT_SECONDS = 60
 # Neither is a config key, on purpose -- see the module docstring.

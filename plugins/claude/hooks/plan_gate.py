@@ -33,7 +33,7 @@ silent no-op. See docs/decisions/0001-what-inert-means.md for why
 `stop.py` and `session_start.py` are the two exceptions.
 
 Recognises an edit under any of the tool names a supported platform uses
-for one -- `Edit`/`Write` (Claude Code) and `apply_patch` (also offered by
+for one -- `Edit`/`Write` (Claude Code), `apply_patch` (also offered by
 Codex) -- and a shell command under `Bash` (both platforms use this same
 name, confirmed directly for Codex rather than assumed from its docs).
 """
@@ -47,7 +47,7 @@ import _common
 import _config
 import plan_header
 
-_EDIT_TOOL_NAMES = ("Edit", "Write", "apply_patch")
+_EDIT_TOOL_NAMES = _common.EDIT_TOOL_NAMES
 _SHELL_TOOL_NAMES = ("Bash",)
 
 _BRANCH_CREATION_PATTERN = re.compile(

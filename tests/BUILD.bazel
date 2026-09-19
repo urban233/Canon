@@ -47,6 +47,7 @@ load("@rules_python//python:defs.bzl", "py_test")
         data = [
             "//plugins/canon-companion:eval_sources",
             "//plugins/claude:eval_sources",
+            "//plugins/antigravity:eval_sources",
         ],
     )
     for src in glob(["test_evals_*.py"])
@@ -59,6 +60,18 @@ load("@rules_python//python:defs.bzl", "py_test")
         deps = ["//plugins/codex/hooks:hooks_lib"],
     )
     for src in glob(["test_codex_hooks_*.py"])
+]
+
+# Antigravity's own group, for the same runfiles-collision reason the
+# comment at the top of this file gives: plugins/antigravity/hooks
+# defines the same top-level module names as the other two.
+[
+    py_test(
+        name = src[:-3],
+        srcs = [src, "__init__.py"],
+        deps = ["//plugins/antigravity/hooks:hooks_lib"],
+    )
+    for src in glob(["test_antigravity_hooks_*.py"])
 ]
 
 [

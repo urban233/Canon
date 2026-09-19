@@ -1,6 +1,6 @@
 ---
 name: testing-craft
-description: Provides Google-derived testing strategy, test-writing craft, and test-suite health reference, distilled from Software Engineering at Google (the Flamingo book), the Google Testing Blog, and Google's published testing-infrastructure research. Canon's reviewer skill reads the writing-craft and strategy references as review criteria. Invoke directly to design a test strategy, audit an existing suite's health, or triage a flaky or brittle test.
+description: Provides Google-derived testing strategy, test-writing craft, and test-suite health reference, distilled from Software Engineering at Google (the Flamingo book), the Google Testing Blog, and Google's published testing-infrastructure research. Canon's `reviewer` subagent reads the writing-craft and strategy references as review criteria. Invoke directly to design a test strategy, audit an existing suite's health, or triage a flaky or brittle test.
 ---
 
 # Testing Craft
@@ -16,7 +16,7 @@ skill or agent is already producing.
 
 Use this skill in two situations:
 
-- **As a prerequisite.** Canon's `reviewer` skill reads
+- **As a prerequisite.** Canon's `reviewer` subagent reads
   `references/writing-tests.md` and `references/test-strategy.md` as its
   review criteria for a change's tests. That's a read, not a full
   invocation of this skill -- continue in the calling agent's own
@@ -44,30 +44,30 @@ content before treating that content as done.
 ## When invoked directly
 
 1. Identify which of three cases applies: a new or revised test strategy,
-    a health audit of an existing suite, or triage of one specific flaky or
-    brittle test. Ask if the developer's request is ambiguous between them
-    -- the three use different references and produce different output.
+   a health audit of an existing suite, or triage of one specific flaky or
+   brittle test. Ask if the developer's request is ambiguous between them
+   -- the three use different references and produce different output.
 2. **New or revised strategy.** Gather the change's actual risk and shape
-    (new component, size, blast radius, existing coverage) from the
-    developer's request and the repository itself. Apply
-    `references/test-strategy.md` to produce a size/scope recommendation, a
-    test-doubles approach, and a list of any larger tests that earn their
-    cost -- with the reasoning, not just the list. Hand the result back
-    into the calling skill's own artifact if one is open; otherwise present
-    it directly.
+   (new component, size, blast radius, existing coverage) from the
+   developer's request and the repository itself. Apply
+   `references/test-strategy.md` to produce a size/scope recommendation, a
+   test-doubles approach, and a list of any larger tests that earn their
+   cost -- with the reasoning, not just the list. Hand the result back
+   into the calling skill's own artifact if one is open; otherwise present
+   it directly.
 3. **Suite health audit.** Inspect the existing suite's structure, runtime,
-    and recent CI or test-run history if available. Apply
-    `references/test-suite-health.md`'s checklist (hermeticity, flake
-    signal, pyramid shape) and `references/writing-tests.md`'s brittleness
-    signals. Report findings ranked by how much trust they erode, each with
-    specific evidence (a flaky test's failure history, a brittle test's
-    coupling to an internal method) -- do not silently rewrite tests as
-    part of an audit; that is separate, explicitly-requested work once the
-    developer accepts a finding.
+   and recent CI or test-run history if available. Apply
+   `references/test-suite-health.md`'s checklist (hermeticity, flake
+   signal, pyramid shape) and `references/writing-tests.md`'s brittleness
+   signals. Report findings ranked by how much trust they erode, each with
+   specific evidence (a flaky test's failure history, a brittle test's
+   coupling to an internal method) -- do not silently rewrite tests as
+   part of an audit; that is separate, explicitly-requested work once the
+   developer accepts a finding.
 4. **Flaky or brittle triage.** Apply `references/test-suite-health.md`'s
-    triage decision tree to the specific test named. Recommend one of
-    fix-now, quarantine-and-ticket, or delete, with the reasoning, not a
-    default.
+   triage decision tree to the specific test named. Recommend one of
+   fix-now, quarantine-and-ticket, or delete, with the reasoning, not a
+   default.
 
 ## Handoff
 

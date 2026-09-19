@@ -1,0 +1,36 @@
+load("@rules_python//python:defs.bzl", "py_library")
+
+# imports = ["."] makes this directory the package root, so both Bazel
+# tests and a hook invoked directly by Antigravity resolve the same
+# module the same way. Antigravity runs a hook with its working
+# directory set to the directory holding `hooks.json` -- the plugin root
+# after install -- and the command in `hooks.json` is `python3
+# hooks/<name>.py`, so the hook's own directory is what lands on
+# `sys.path`, exactly as on the other two platforms.
+py_library(
+    name = "hooks_lib",
+    srcs = [
+        "_common.py",
+        "_config.py",
+        "stop.py",
+        "normalize_plan.py",
+        "session_start.py",
+        "capture_review.py",
+        "check_scope.py",
+        "fast_check.py",
+        "plan_gate.py",
+        "git_guard.py",
+        "plan_header.py",
+        "__init__.py",
+    ],
+    imports = ["."],
+    visibility = ["//tests:__pkg__"],
+)
+
+# Exposes this package's own .py files to the root package's lint/typecheck
+# targets -- see plugins/claude/hooks/BUILD.bazel's py_sources.
+filegroup(
+    name = "py_sources",
+    srcs = glob(["*.py"]),
+    visibility = ["//:__pkg__"],
+)

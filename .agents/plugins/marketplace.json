@@ -12,6 +12,13 @@
       }
     },
     {
+      "name": "antigravity",
+      "source": {
+        "source": "local",
+        "path": "./plugins/antigravity"
+      }
+    },
+    {
       "name": "canon-companion",
       "source": {
         "source": "local",

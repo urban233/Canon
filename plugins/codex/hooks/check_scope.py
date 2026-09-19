@@ -47,7 +47,7 @@ import plan_header
 _COUNTER_NAME = "consecutive_scope_departures"
 _SUSTAINED_THRESHOLD = 3
 
-_EDIT_TOOL_NAMES = (None, "Edit", "Write", "apply_patch")
+_EDIT_TOOL_NAMES = (None, *_common.EDIT_TOOL_NAMES)
 
 
 def _match_parts(pattern_parts: list[str], path_parts: list[str]) -> bool:

@@ -1,6 +1,6 @@
 # SPDX-License-Identifier: BSD-3-Clause
 """Deriving a saved plan's header from its body -- shared by every
-platform's plan-persistence hook (Antigravity port).
+platform's plan-persistence hook.
 
 Every supported platform ends up with the same on-disk contract: a plan
 lands at `.canon/plans/<branch>.md` (or `.canon/plans/features/<slug>.md`
@@ -8,14 +8,14 @@ for a feature plan) as a small derived `---`-delimited header followed by
 the plan body verbatim (see docs/plan.md §06). What differs per platform is
 *how* the hook learns an approval happened and gets hold of the body text
 in the first place -- Claude Code's `ExitPlanMode` tool call hands it over
-directly; Codex and Antigravity have no such tool, so their hooks instead
-react to the agent writing the file itself and re-derive the header from
-whatever body is already on disk. That trigger-and-body-acquisition step is
-platform-specific and lives in each plugin's own `save_plan.py` (Claude/Antigravity)
-or `normalize_plan.py` (Codex). Everything downstream of "I have a body of
-plan markdown, and possibly a repository root and branch to derive from"
-is identical, and lives here so a fix to how `## Scope` is parsed, say,
-lands on every platform in one commit.
+directly; Codex has no such tool, so its hook instead reacts to the agent
+writing the file itself and re-derives the header from whatever body is
+already on disk. That trigger-and-body-acquisition step is platform-specific
+and lives in each plugin's own `save_plan.py` (Claude) or `normalize_plan.py`
+(Codex). Everything downstream of "I have a body of plan markdown, and
+possibly a repository root and branch to derive from" is identical, and
+lives here so a fix to how `## Scope` is parsed, say, lands on every
+platform in one commit.
 
 The header fills in only what's genuinely derivable and leaves the rest
 blank rather than inventing it -- per docs/plan.md §06's own rule.
@@ -68,18 +68,10 @@ a convention anyone reaches for by accident.
 from __future__ import annotations
 
 import re
-import sys
 from pathlib import Path
 from typing import NamedTuple
 
-_hooks_dir = str(Path(__file__).resolve().parent)
-if _hooks_dir not in sys.path:
-    sys.path.insert(0, _hooks_dir)
-
-try:
-    import _common_agy as _common
-except ImportError:
-    import _common  # type: ignore[no-redef]
+import _common
 
 _PLANS_DIR_RELATIVE = ".canon/plans"
 _FEATURE_PLANS_DIR_RELATIVE = ".canon/plans/features"
