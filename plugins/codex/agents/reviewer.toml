@@ -12,6 +12,18 @@
 # model id is worse than inheriting whatever the session is already
 # using, unlike the Claude Code brief this was ported from, which pins
 # `opus`.
+#
+# This brief no longer mirrors plugins/claude/agents/reviewer.md, on
+# purpose. That one now takes its findings from Claude Code's built-in
+# review, run as a subprocess. The same move is not available here: a
+# nested `codex exec` from inside a Codex session fails to start at all
+# (`failed to initialize in-process app-server client: Operation not
+# permitted`), confirmed under both `read-only` and `workspace-write` --
+# see docs/codex-hook-surface.md. Codex's own `/review` is reachable
+# only in-session, and whether it runs in its own thread and fires
+# `SubagentStop` with an `agent_type` `capture_review.py` matches are
+# both unanswered. Until an interactive probe settles them, this
+# reviewer keeps reading the diff itself, which is worse but honest.
 
 name = "reviewer"
 description = "Read-only independent reviewer for one exact code change. The default reviewer, always dispatched before a change is presented as ready for a human."
