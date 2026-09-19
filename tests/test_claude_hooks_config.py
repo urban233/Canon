@@ -378,7 +378,66 @@ class ShellMetacharacterTests(unittest.TestCase):
         self.assertIsNotNone(_config.shell_metacharacter("cmd '&&'"))
 
 
+class ShellWrapperTests(unittest.TestCase):
+    """`sh -c "a && b"` -- the workaround the compound refusal teaches.
+
+    `shell_metacharacter` cannot catch this and must not try: its rule
+    is that a token made entirely of operator characters is an
+    operator, which is exactly what keeps `pytest -k "a and b"` legal.
+    Quoting hides the operators, so the sequence reaches a real shell --
+    the thing ADR 0005 exists to rule out. An eval run on 2026-09-19
+    found a model writing this form into `.canon/config.json` one turn
+    after correctly explaining why the bare compound was refused.
+    """
+
+    def test_sh_dash_c_is_a_shell_wrapper(self) -> None:
+        self.assertEqual(
+            _config.shell_wrapper(["sh", "-c", "ruff check . && pytest"]), "sh"
+        )
+
+    def test_an_absolute_shell_path_is_still_a_shell(self) -> None:
+        self.assertEqual(_config.shell_wrapper(["/bin/sh", "-c", "pytest"]), "sh")
+
+    def test_a_clustered_short_option_carrying_c_is_caught(self) -> None:
+        self.assertEqual(_config.shell_wrapper(["sh", "-lc", "a; b"]), "sh")
+        self.assertEqual(_config.shell_wrapper(["bash", "-ec", "a; b"]), "bash")
+
+    def test_every_known_shell_is_recognised(self) -> None:
+        for shell in ("sh", "bash", "zsh", "dash", "ksh", "fish"):
+            with self.subTest(shell=shell):
+                self.assertEqual(_config.shell_wrapper([shell, "-c", "pytest"]), shell)
+
+    def test_a_shell_running_a_script_is_the_recommended_wrapper(self) -> None:
+        """The fix Canon actively proposes -- never refused."""
+        self.assertIsNone(_config.shell_wrapper(["bash", "scripts/verify.sh"]))
+        self.assertIsNone(_config.shell_wrapper(["sh", "-e", "scripts/verify.sh"]))
+
+    def test_a_double_dash_ends_option_parsing(self) -> None:
+        self.assertIsNone(_config.shell_wrapper(["sh", "--", "script.sh"]))
+
+    def test_a_non_shell_interpreter_is_left_alone(self) -> None:
+        """`python -c` runs Python, not a shell -- no operator grammar."""
+        self.assertIsNone(_config.shell_wrapper(["python", "-c", "import x"]))
+        self.assertIsNone(_config.shell_wrapper(["node", "-e", "1"]))
+
+    def test_an_empty_argv_is_not_a_shell(self) -> None:
+        self.assertIsNone(_config.shell_wrapper([]))
+
+
 class VerifyCommandProblemTests(unittest.TestCase):
+    def test_a_shell_wrapped_sequence_is_a_problem(self) -> None:
+        problem = _config.verify_command_problem('sh -c "ruff check . && pytest"')
+        assert problem is not None
+        self.assertIn("sh", problem)
+        self.assertIn("directly", problem)
+
+    def test_a_shell_wrapped_single_command_is_still_a_problem(self) -> None:
+        """Even without an operator: the point is that a shell parses it."""
+        self.assertIsNotNone(_config.verify_command_problem('bash -c "pytest"'))
+
+    def test_a_committed_script_is_not_a_problem(self) -> None:
+        self.assertIsNone(_config.verify_command_problem("bash scripts/verify.sh"))
+
     def test_plain_command_has_no_problem(self) -> None:
         self.assertIsNone(_config.verify_command_problem("pytest"))
 
