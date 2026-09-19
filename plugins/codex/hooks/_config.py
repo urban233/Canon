@@ -19,7 +19,7 @@ from __future__ import annotations
 import json
 import re
 import shlex
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from typing import Any
 
 import _common
@@ -353,6 +353,85 @@ def shell_metacharacter(command: str) -> str | None:
     return None
 
 
+# Programs whose job is to interpret a command *string*. Names only --
+# `PurePosixPath(...).name` strips any directory, so `/bin/sh` and `sh`
+# are the same entry.
+_SHELL_PROGRAMS = frozenset(
+    {
+        "sh",
+        "bash",
+        "zsh",
+        "dash",
+        "ksh",
+        "ksh93",
+        "mksh",
+        "ash",
+        "csh",
+        "tcsh",
+        "fish",
+    }
+)
+
+
+def shell_wrapper(argv: list[str]) -> str | None:
+    """The shell `argv` asks to interpret a command string, or None.
+
+    `shell_metacharacter` cannot catch this one and should not try. Its
+    rule is that a token made *entirely* of operator characters is an
+    operator, which is what keeps a legitimately quoted argument -- the
+    `"a and b"` in `pytest -k "a and b"`, a regex with a `|` in it --
+    from being mistaken for one. But quoting is exactly what hides the
+    operator in `sh -c "ruff check . && pytest"`: `shlex.split` yields
+    `['sh', '-c', 'ruff check . && pytest']`, no token is all operator
+    characters, and the string sails through to be handed to a real
+    shell -- precisely what
+    docs/decisions/0005-verify-command-never-runs-through-a-shell.md
+    exists to rule out.
+
+    So this is a second, separate fault rather than a widening of the
+    first: not "the command contains an operator" but "the command *is*
+    a shell, invoked to parse something". An eval run on 2026-09-19
+    found a model reaching for this form unprompted, one turn after
+    correctly explaining why the compound command it replaces was
+    refused -- the refusal it had just relayed taught it the shape of
+    the workaround.
+
+    Only the `-c` family is refused. A shell running a *script* --
+    `bash scripts/verify.sh` -- is the wrapper Canon actively
+    recommends, exits with that script's status, and is left alone: the
+    ambiguity this guards against comes from operator grammar inside an
+    inline string, not from the interpreter being a shell.
+
+    Not caught: an indirection that puts the shell somewhere other than
+    `argv[0]`, such as `env sh -c ...` or `busybox sh -c ...`. Those are
+    left to `suggest_verify_command`'s conventions and to review rather
+    than chased here, on the same "name the characters, not the tokens"
+    reasoning as `shell_metacharacter`'s message -- an enumeration of
+    every indirection would drift out of date faster than it earned.
+    """
+    if not argv:
+        return None
+    program = PurePosixPath(argv[0]).name
+    if program not in _SHELL_PROGRAMS:
+        return None
+    for argument in argv[1:]:
+        # `--` ends option parsing; what follows is a script path.
+        if argument == "--":
+            return None
+        # A bare `-` is stdin, and the first non-option argument is the
+        # script -- neither is an inline command string.
+        if argument == "-" or not argument.startswith("-"):
+            return None
+        if argument.startswith("--"):
+            if argument == "--command":
+                return program
+            continue
+        # Short options cluster: `-lc` and `-ec` carry `-c` with them.
+        if "c" in argument[1:]:
+            return program
+    return None
+
+
 def verify_command_problem(command: str) -> str | None:
     """Why `command` cannot be run the way Canon runs it -- directly, via
     `shlex.split`, with no shell -- or None when it can.
@@ -380,6 +459,21 @@ def verify_command_problem(command: str) -> str | None:
         return f"could not parse this command: {exc}"
     if not argv:
         return "this command is empty"
+    shell = shell_wrapper(argv)
+    if shell is not None:
+        return (
+            f"this command hands its work to `{shell}` to interpret. Canon "
+            "runs the configured command directly, with no shell, so "
+            f'wrapping a sequence in `{shell} -c "..."` does not make it '
+            "runnable -- it just moves the shell inside the string, where "
+            "the same ambiguity this refusal exists to prevent comes back "
+            "with nothing able to see it. The fix is a named command that "
+            "exits once, with one status: a Justfile recipe, an npm "
+            "script, or a shell script committed to the repository, with "
+            "that single command configured here. Propose it to the "
+            "developer rather than writing it -- editing this "
+            "repository's build configuration is not Canon's job."
+        )
     metacharacter = shell_metacharacter(command)
     if metacharacter is None:
         return None
