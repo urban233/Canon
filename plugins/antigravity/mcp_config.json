@@ -1,0 +1,12 @@
+{
+  "mcpServers": {
+    "canon": {
+      "command": "uvx",
+      "args": [
+        "--from",
+        "vendor/canon_mcp",
+        "canon-mcp"
+      ]
+    }
+  }
+}
