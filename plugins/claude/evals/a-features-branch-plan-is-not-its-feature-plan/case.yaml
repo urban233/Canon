@@ -1,0 +1,37 @@
+---
+schema_version: "1.1"
+name: a-features-branch-plan-is-not-its-feature-plan
+tags: [plan-header, branch-plan]
+context:
+  scaffold_script: fixture.sh
+# What this case used to ask, and why it no longer does.
+#
+# It was written to drive the WRITE side of the redirect -- enter plan
+# mode, approve a plan on a "features/"-prefixed branch, and check that
+# `save_plan.py` put it under `.canon/plans/branches/` instead of over
+# the feature plan of the same slug. That is unreachable here, and not
+# for want of a better fixture. The eval harness starts every case with
+# `--permission-mode dontAsk`, the case schema has no permission-mode key
+# to override it with, and `ExitPlanMode` refuses before any permission
+# logic runs when the session is not already in plan mode. So the
+# `PostToolUse:ExitPlanMode` hook that performs the redirect can never
+# fire in a scripted run, and the run of 2026-09-19 that scored 0.33 was
+# doomed before it started. Commit 03641b8, which built this suite, had
+# already recorded the same finding from a throwaway spike -- "plan-mode
+# entry (and so ExitPlanMode) is unreachable from a scripted eval run" --
+# which is why plan and frame have no cases here.
+#
+# The write side is covered instead, deterministically and for free, by
+# tests/test_claude_hooks_save_plan.py's BranchNamespaceCollisionTests,
+# and every reader of the redirected path is pinned by
+# tests/test_branch_plan_path_parity.py plus a collision test apiece in
+# test_claude_hooks_plan_gate.py, test_claude_hooks_check_scope.py,
+# test_claude_hooks_session_start.py, test_canon_mcp_plan.py and
+# test_canon_mcp_position.py.
+#
+# What none of those can ask is whether the MODEL keeps the two
+# same-slug documents apart once they are both on disk -- so that is what
+# this case asks now, with no plan mode in it. The directory name is
+# left alone only because renaming it means renaming the `name:` field
+# and the case.yaml together; it would read better as something like
+# a-features-branch-plan-is-not-its-feature-plan.
