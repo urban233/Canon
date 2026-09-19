@@ -538,3 +538,99 @@ the model-visible skills list are all confirmed directly against the real
 CLI; whether a session in practice picks the skill and completes the
 workflow correctly was not exercised, and is a smaller, cheaper gap than
 "does it install at all" was before this branch.
+
+## Part 7: can Codex host Canon's review the way Claude Code now does?
+
+Claude Code's reviewer subagent now takes its findings from the built-in
+`/code-review`, run as a subprocess (`claude -p "/code-review low"
+--output-format json`). This part records what happened when the same
+shape was probed against Codex, because it is the reason
+`plugins/codex/agents/reviewer.toml` deliberately no longer mirrors its
+Claude counterpart. **Codex CLI version: `codex-cli 0.154.0`**, same
+machine and caveats as Part 1.
+
+### A nested `codex exec` cannot start from inside a Codex session -- confirmed
+
+A `codex exec` session was asked to run `codex exec` itself. Both
+attempts failed identically, and the failure is in process startup, not
+in the model:
+
+```text
+WARNING: proceeding, even though we could not create PATH aliases: Operation not permitted (os error 1)
+Error: failed to initialize in-process app-server client: Operation not permitted (os error 1)
+```
+
+Confirmed under `--sandbox read-only` **and** under `--sandbox
+workspace-write`, so it is not a matter of loosening the write policy.
+The contrast matters: `claude -p` nested inside a Claude Code session
+works, which is exactly what makes the subprocess design viable there and
+not here. Whether a `sandbox_permissions` setting can lift this was not
+tested; requiring one of every Canon user would be its own problem.
+
+### `codex exec review` takes a target **or** custom instructions, never both
+
+`--base <BRANCH>`, `--commit <SHA>` and `--uncommitted` are each mutually
+exclusive with the `[PROMPT]` argument:
+
+```text
+error: the argument '--base <BRANCH>' cannot be used with '[PROMPT]'
+```
+
+So the built-in review cannot be pointed at `base..HEAD` *and* given
+Canon's own review brief in one invocation. A Canon-authored review on
+Codex would have to use plain `codex exec` with a prompt that derives the
+range itself -- which is blocked by the nesting failure above anyway.
+
+### `--output-schema` is strictly enforced
+
+Worth recording because it is the one place Codex's contract is stronger
+than Claude Code's. `codex exec --output-schema <FILE>` was given a
+deliberately adversarial prompt -- "answer as a friendly prose paragraph
+in plain English. Do not output JSON under any circumstances." -- and
+still returned schema-conforming JSON:
+
+```json
+{"findings":[{"file":"calc.py","line":2,"blocking":true,"summary":"..."}],"verdict":"CHANGES REQUIRED"}
+```
+
+The `verdict` value came from an `enum` in the supplied schema. Claude
+Code's `--json-schema` flag does **not** compose with a slash command by
+comparison: `claude -p "/code-review low" --json-schema <schema>` returns
+`"Command completed"` and the findings are lost entirely.
+
+### A project-level `.codex/agents/*.toml` did not produce a dispatch
+
+A throwaway repo with `.codex/agents/reviewer.toml` and a prompt
+instructing delegation produced an agent message claiming to delegate,
+followed by a collaboration tool call with **no receivers**:
+
+```json
+{"type":"collab_tool_call","tool":"wait","receiver_thread_ids":[],"agents_states":{}}
+```
+
+Not proof the mechanism is broken -- the agent may need to live in
+`~/.codex/agents/`, the prompt may have been wrong, or `codex exec` may
+not support delegation at all. But it did not work on first contact, in
+the exact shape this plugin ships, which is a reason not to build a
+review fan-out on top of it.
+
+### Still not confirmed
+
+The two questions that decide whether Canon's Codex reviewer can consume
+`/review` instead of reading the diff itself. Neither is answerable from
+a non-interactive session, and both need a human at an interactive Codex
+prompt:
+
+1. **Does `/review` run in its own thread**, seeing the diff rather than
+   the conversation that produced it? If it inherits the session's
+   context, it is the writer grading itself and Invariant III is gone.
+2. **Does it fire `SubagentStop`** with an `agent_type` that
+   `capture_review.py` matches? If not, no verdict is captured and
+   `canon_ship` blocks forever.
+
+Note that (2) is a narrower form of the `agent_type` question Part 1's
+"Not confirmed" section already left open, and it is still open for the
+same reason: confirming it needs hook trust, and the only non-interactive
+route to that is `--dangerously-bypass-hook-trust`, which this session's
+own tooling policy declined -- the same boundary Part 1 recorded, and
+respected again rather than routed around.
