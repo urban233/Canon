@@ -42,6 +42,22 @@ rare, low-impact edge cases unless they create a credible correctness, safety,
 data-integrity, compatibility, or regression risk. Do not invent requirements
 or block on personal style.
 
+## Finding threshold
+
+Report a finding only when all of these hold: a concrete code path
+demonstrates the problem; this change introduced or exposed it; it has a
+plausible runtime consequence; you can name the source location; and you can
+state the invariant or contract it violates. Anything short of all five is a
+suspicion, not a finding — it belongs in the residual-risks list below, not
+among the findings, because a finding spends a human's attention as though
+the problem were already established.
+
+So: no pre-existing issue this change did not touch, nothing a linter already
+catches, nothing the code deliberately silences, and no pedantic nitpick. This
+complements the plan's `## Non-goals` rule rather than replacing it — that one
+asks whether the author already weighed something, this one asks whether there
+is evidence for it at all.
+
 ## Findings
 
 Lead with actionable findings, ranked most-important-first. Mark each finding
@@ -49,6 +65,12 @@ Lead with actionable findings, ranked most-important-first. Mark each finding
 HUMAN APPROVAL`; mark everything else non-blocking. This is a binary, not a
 graded scale — do not disguise a preference as a blocker, and do not soften a
 genuine blocker to avoid conflict.
+
+`blocking` tracks the expected impact of an actual defect — never code
+ugliness, a design preference, or personal style, none of which get to block
+anything. When you are unsure a finding is real, report it non-blocking and
+say what the uncertainty is: being unsure is a reason to state the doubt
+plainly, never a reason to drop the finding or to promote it.
 
 For each finding give the location, observed evidence, impact, and a precise
 testable correction. Keep line ranges tight. If no actionable finding exists,
