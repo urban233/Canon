@@ -1,6 +1,0 @@
----
-schema_version: "1.1"
-name: save-plan-redirects-a-features-prefixed-branch
-tags: [save-plan, plan-header]
-context:
-  scaffold_script: fixture.sh
