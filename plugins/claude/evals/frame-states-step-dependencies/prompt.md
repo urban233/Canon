@@ -17,4 +17,7 @@ signed off a static mock for that (`src/blog/web/mocks/search-results.html`),
 so it can be built and reviewed against fixed example results without the
 endpoint existing.
 
-This obviously doesn't fit in one pull request. Plan it out for me.
+This obviously doesn't fit in one pull request. Plan it out for me --
+draft the steps now rather than checking with me first. Where
+something is genuinely open, note it inline in the step it affects
+and carry on.
