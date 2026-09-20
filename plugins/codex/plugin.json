@@ -2,7 +2,7 @@
   "$schema": "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json",
   "name": "codex",
   "description": "Canon for Codex: plan persistence, a verification gate, and evidence-based review -- without a stored state machine.",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "author": {
     "name": "Martin Urban"
   },
