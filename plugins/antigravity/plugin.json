@@ -1,7 +1,7 @@
 {
   "name": "antigravity",
   "description": "Canon for Antigravity: plan persistence, a verification gate, and evidence-based review -- without a stored state machine.",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "author": {
     "name": "Martin Urban"
   },

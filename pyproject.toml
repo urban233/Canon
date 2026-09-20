@@ -1,6 +1,6 @@
 [project]
 name = "canon"
-version = "0.1.0"
+version = "0.2.0"
 description = "A Claude Code plugin that keeps agentic development on track without a stored state machine."
 requires-python = ">=3.9"
 license = { text = "BSD-3-Clause" }
