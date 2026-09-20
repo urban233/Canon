@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import tempfile
 import unittest
 from pathlib import Path
 from unittest import mock
@@ -140,6 +141,75 @@ class ChangedPathsTests(unittest.TestCase):
         completed = mock.Mock(returncode=128, stdout="")
         with mock.patch("subprocess.run", return_value=completed):
             self.assertIsNone(_git.changed_paths(Path("/repo"), "abc1234"))
+
+
+class AdoptRootsTests(unittest.TestCase):
+    """The workspace root an MCP client hands over via `roots/list`.
+
+    This is the only source that works on Antigravity, which substitutes
+    no workspace variable into an `mcp_config.json` and spawns the server
+    in the *plugin* directory -- so both the env var and `git rev-parse`
+    answer about the wrong tree there. See
+    docs/decisions/0007-how-canon-mcp-learns-its-workspace-on-antigravity.md.
+
+    The end-to-end half of this -- that a real client's answer actually
+    reaches `repo_root()` through the SDK's resolver, and that a client
+    which declares no `roots` capability does not make every tool raise
+    -- is `tools/check_mcp_roots.py`, which needs `uvx` and cannot run
+    hermetically. These cover the parsing and the policy.
+    """
+
+    def test_adopts_the_first_usable_directory(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            adopted = _git.adopt_roots([Path(directory).as_uri()])
+            self.assertEqual(adopted, Path(directory))
+            self.assertEqual(_git.repo_root(), Path(directory))
+        _git.set_client_root(None)
+
+    def test_a_client_root_beats_the_environment(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            _git.adopt_roots([Path(directory).as_uri()])
+            with mock.patch.dict(
+                "os.environ", {"CLAUDE_PROJECT_DIR": "/some/other/repo"}
+            ):
+                self.assertEqual(_git.repo_root(), Path(directory))
+        _git.set_client_root(None)
+
+    def test_skips_a_non_file_scheme(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            adopted = _git.adopt_roots(
+                ["https://example.com/repo", Path(directory).as_uri()]
+            )
+            self.assertEqual(adopted, Path(directory))
+        _git.set_client_root(None)
+
+    def test_skips_a_root_that_is_not_a_directory(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            missing = Path(directory) / "nope"
+            adopted = _git.adopt_roots([missing.as_uri(), Path(directory).as_uri()])
+            self.assertEqual(adopted, Path(directory))
+        _git.set_client_root(None)
+
+    def test_decodes_a_percent_encoded_path(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            spaced = Path(directory) / "my repo"
+            spaced.mkdir()
+            self.assertIn("%20", spaced.as_uri())
+            self.assertEqual(_git.adopt_roots([spaced.as_uri()]), spaced)
+        _git.set_client_root(None)
+
+    def test_an_empty_answer_clears_a_previous_root(self) -> None:
+        # A client that stops offering a workspace must not leave the
+        # server answering confidently about a stale one.
+        with tempfile.TemporaryDirectory() as directory:
+            _git.adopt_roots([Path(directory).as_uri()])
+            self.assertIsNotNone(_git.client_root())
+            self.assertIsNone(_git.adopt_roots([]))
+            self.assertIsNone(_git.client_root())
+
+    def test_an_unusable_answer_leaves_no_root_recorded(self) -> None:
+        self.assertIsNone(_git.adopt_roots(["https://example.com/repo"]))
+        self.assertIsNone(_git.client_root())
 
 
 if __name__ == "__main__":

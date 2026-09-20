@@ -29,14 +29,22 @@ itself and run by default; `llm` graders are reported as UNJUDGED unless
 ## Permissions
 
 `agy` in `--print` mode cannot prompt, so a tool needing permission is
-auto-denied and the case fails for a reason that says nothing about the
-instructions. Grant the case's tools once, narrowly, in
+auto-denied and the turn produces **no output at all**. Graded naively
+that reads as an instruction failure, which is the most expensive
+mistake this runner could make: it would send someone rewriting skill
+text that was working. Grant the case's tools once in
 `~/.gemini/antigravity-cli/settings.json`:
 
-    {"permissions": {"allow": ["read_file(*)", "write_file(*)"]}}
+    {"permissions": {"allow": ["read_file(*)", "write_file(*)", "mcp(*)"]}}
 
-`--check-permissions` (the default) refuses to run without that file
-rather than producing a suite of meaningless failures.
+`mcp(*)` matters as much as the file rules -- Canon's `review` and
+`ship` skills open by calling a `canon_*` tool, so a case exercising
+them is denied on `mcp` before it reads a single file.
+
+Two guards, because one was not enough. `--check-permissions` (the
+default) refuses to start without that file; and every case is checked
+after the fact for the auto-deny signature, and reported CONFOUNDED
+rather than graded if it is found.
 
 Usage:
 
@@ -64,6 +72,14 @@ _FRONTMATTER = re.compile(r"\A---\n(.*?)\n---\n(.*)\Z", re.DOTALL)
 
 _DETERMINISTIC = frozenset({"regex", "files", "tool_used"})
 _KNOWN_TYPES = _DETERMINISTIC | frozenset({"llm"})
+
+# What `agy --print` says when it hits a permission it cannot prompt
+# for. The turn produces no output, so a `not_contains` grader passes
+# vacuously and an `llm` grader fails on an empty reply -- a result that
+# looks like a verdict on the instructions and is nothing of the kind.
+# docs/decisions/0003 makes this point about paid runs; the same applies
+# to a run that was paid for and then wasted.
+_AUTO_DENIED = "headless mode cannot prompt"
 
 
 class Grader(NamedTuple):
@@ -232,6 +248,17 @@ def run_case(directory: Path, *, judge: bool, dry_run: bool) -> list[Outcome]:
         if dry_run:
             return [Outcome("(dry-run)", "UNJUDGED", f"scaffolded at {workspace}")]
         reply, trace = _run_case(workspace, prompt, timeout)
+        if _AUTO_DENIED in trace:
+            tool = re.search(r'required the "([^"]+)" permission', trace)
+            missing = tool.group(1) if tool else "a tool"
+            return [
+                Outcome(
+                    "(not run)",
+                    "CONFOUNDED",
+                    f"auto-denied on the {missing!r} permission -- this says "
+                    f"nothing about the instructions; grant it and re-run",
+                )
+            ]
         outcomes: list[Outcome] = []
         for grader in graders:
             kind = grader.fields.get("type", "")
@@ -294,21 +321,30 @@ def main(argv: list[str]) -> int:
             return 2
 
     failed = 0
+    confounded = 0
     for directory in cases:
         print(f"\n=== {directory.name} ===")
         try:
             outcomes = run_case(directory, judge=args.judge, dry_run=args.dry_run)
         except (subprocess.SubprocessError, OSError) as error:
-            print(f"  ERROR  could not run: {error}")
+            print(f"  ERROR      could not run: {error}")
             failed += 1
             continue
         for outcome in outcomes:
-            print(f"  {outcome.verdict:<8} {outcome.grader}: {outcome.detail}")
-        if any(outcome.verdict == "FAIL" for outcome in outcomes):
+            print(f"  {outcome.verdict:<10} {outcome.grader}: {outcome.detail}")
+        if any(outcome.verdict == "CONFOUNDED" for outcome in outcomes):
+            confounded += 1
+        elif any(outcome.verdict == "FAIL" for outcome in outcomes):
             failed += 1
 
-    print(f"\n{len(cases) - failed}/{len(cases)} case(s) clean")
-    return 1 if failed else 0
+    clean = len(cases) - failed - confounded
+    print(f"\n{clean}/{len(cases)} case(s) clean")
+    if confounded:
+        print(
+            f"{confounded} case(s) could not be run and were NOT graded. "
+            f"Nothing here is evidence about the instructions until they are."
+        )
+    return 1 if (failed or confounded) else 0
 
 
 if __name__ == "__main__":

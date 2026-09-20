@@ -34,7 +34,10 @@ from __future__ import annotations
 
 import os
 import subprocess
+from collections.abc import Iterable
 from pathlib import Path
+from urllib.parse import unquote, urlparse
+from urllib.request import url2pathname
 
 _GIT_TIMEOUT_SECONDS = 10
 
@@ -43,6 +46,38 @@ _GIT_TIMEOUT_SECONDS = 10
 # called from every tool and threading it through would change five
 # signatures to carry something only one platform supplies.
 _client_root: Path | None = None
+
+
+def adopt_roots(uris: Iterable[str]) -> Path | None:
+    """Record the first usable workspace root from a `roots/list` answer.
+
+    Takes the raw `file://` URIs rather than the SDK's `Root` objects, so
+    the parsing and the policy live here -- in the typechecked, tested
+    part of the package -- rather than in `server.py`, which is excluded
+    from typecheck because it imports the MCP SDK.
+
+    "First usable" means: a `file://` URI naming a directory that exists.
+    A client may legitimately offer several roots, or offer a file rather
+    than a directory, or offer none at all; none of those is an error
+    worth failing a tool call over. Returns the adopted root, or None
+    when nothing in `uris` qualifies -- in which case the previously
+    recorded root is cleared, so a client that stops offering a workspace
+    does not leave the server answering about a stale one.
+    """
+    for uri in uris:
+        if not isinstance(uri, str) or not uri.startswith("file://"):
+            continue
+        # urlparse + url2pathname rather than a manual prefix strip:
+        # a root path can contain percent-encoded characters, and a
+        # Windows root arrives as file:///C:/... which a naive strip
+        # would leave with a leading slash.
+        parsed = urlparse(uri)
+        candidate = Path(url2pathname(unquote(parsed.path)))
+        if candidate.is_dir():
+            set_client_root(candidate)
+            return candidate
+    set_client_root(None)
+    return None
 
 
 def set_client_root(root: Path | None) -> None:

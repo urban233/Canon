@@ -96,30 +96,37 @@ rather than papered over. There is a candidate fix -- every payload
 carries `transcriptPath` -- but the transcript format is unverified, so it
 is tracked as future work rather than implemented on a guess.
 
-### `canon-mcp`'s five tools do not yet work here
+### `canon-mcp` now asks the client, and waits on one answer
 
-Antigravity substitutes `${PLUGIN_ROOT}` in `mcp_config.json`, which is how
-the vendored server is found, but it substitutes **no** workspace variable
-and spawns the server with its working directory set to the plugin
-directory. `canon_position`, `canon_plan`, `canon_review`, `canon_evidence`
-and `canon_ship` therefore have no way to learn which repository they are
-serving, and should be treated as unavailable on this platform. Every
-hook, skill and reviewer subagent works independently of them.
+`canon-mcp` has to know which repository it is answering about. On
+Antigravity it cannot learn that from the environment: `mcp_config.json`
+substitutes `${PLUGIN_ROOT}` and `${PLUGIN_DATA}` and **no workspace
+variable**, and the server is spawned with its working directory set to
+the plugin directory, so `git rev-parse` answers about the wrong tree.
 
-The options and the measurements behind them are written up in
+So it asks, through the protocol's own `roots/list`. Every tool takes a
+`workspace` parameter the model never supplies, filled by a resolver
+that asks the client -- but only after checking the client declared the
+capability, because the SDK *raises* at one that did not, which would
+have turned all five tools into errors on Claude Code. Both arms are
+verified end to end by `just check-mcp-roots` against a real server:
+a client offering a root gets answers about that root; a client offering
+nothing is not asked and does not error.
+
+**What is still unresolved is whether Antigravity populates it.** Its
+client advertises `roots` with `listChanged: true`, but answered
+`{"roots": []}` in every `agy --print` session measured -- exactly as
+`workspacePaths` did. If the IDE populates either, the five tools work
+here now. Until someone confirms that in a real IDE session, treat
+`canon_position`, `canon_plan`, `canon_review`, `canon_evidence` and
+`canon_ship` as unavailable on this platform. Every hook, skill and
+reviewer subagent works without them.
+
+The options considered, and why this one, are in
 [ADR 0007](../../docs/decisions/0007-how-canon-mcp-learns-its-workspace-on-antigravity.md).
-In short: Antigravity's MCP client *does* advertise the protocol's own
-`roots` capability, which is the principled answer -- but `roots` is
-deprecated as of protocol revision 2026-07-28, it answered with an empty
-list in every session that could be measured, and the SDK raises rather
-than degrades when a client has not declared it, so wiring it in
-unguarded would break Claude Code. The seam is in place
-(`canon_mcp._git.set_client_root`), so whichever option is chosen is a
-change at one call site; the choice itself is deliberately not made yet.
-
-This is the same shape of problem the Codex port has with intermittent MCP
-connectivity, and it is recorded the same way: as a known limitation with
-its cause named, not as a caveat buried in a comment.
+Note that `roots` is deprecated as of protocol revision 2026-07-28, so
+this is expected to need replacing; `canon_mcp._git.set_client_root` is
+the seam that keeps that a one-call-site change.
 
 ### The reviewer reads the diff itself
 
@@ -146,9 +153,19 @@ cannot drive this one. `just eval-antigravity` runs the cases under
 `case.yaml`/`prompt.md`/`graders/` layout so a case stays portable
 between platforms. It needs allow-rules in
 `~/.gemini/antigravity-cli/settings.json`, because `agy --print` cannot
-prompt for tool permission; the runner refuses to start without them
-rather than producing a suite of failures that say nothing about the
-instructions. Like `just eval`, it is never part of `just ci`.
+prompt for tool permission:
+
+```json
+{"permissions": {"allow": ["read_file(*)", "write_file(*)", "command(*)", "mcp(*)"]}}
+```
+
+`mcp(*)` matters as much as the file rules -- `review` and `ship` open
+by calling a `canon_*` tool, so a case exercising them is denied before
+it reads anything. A denied turn produces *no output*, which grades as
+an instruction failure and is nothing of the kind, so the runner both
+refuses to start without that file and re-checks every finished case for
+the auto-deny signature, reporting CONFOUNDED rather than grading it.
+Like `just eval`, it is never part of `just ci`.
 
 ### Session context arrives one step later
 

@@ -40,6 +40,7 @@ filegroup(
     name = "tool_py_sources",
     srcs = [
         "tools/check_antigravity_plugin.py",
+        "tools/check_mcp_roots.py",
         "tools/check_versions.py",
         "tools/eval_antigravity.py",
         "tools/sync_manifests.py",

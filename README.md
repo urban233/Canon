@@ -198,12 +198,14 @@ this one. `agy plugin uninstall antigravity` removes it.
 Two things are genuinely weaker on this platform and are worth knowing
 before you install it. Antigravity fires no event when a subagent finishes,
 so a reviewer's verdict is not captured from the reviewer's own message the
-way it is elsewhere -- the `review` skill quotes it in-session instead. And
-Antigravity substitutes no workspace variable into an MCP server's
-configuration, so `canon_position`, `canon_plan`, `canon_review`,
-`canon_evidence` and `canon_ship` cannot tell which repository they are
-serving and should be treated as unavailable. Every hook, skill and reviewer
-subagent works without them.
+way it is elsewhere -- the `review` skill quotes it in-session instead. And Antigravity
+substitutes no workspace variable into an MCP server's configuration, so
+`canon-mcp` now asks the client instead, through the protocol's own
+`roots/list` -- which works, but which Antigravity answered empty in
+every session measured so far, so `canon_position`, `canon_plan`,
+`canon_review`, `canon_evidence` and `canon_ship` should still be
+treated as unavailable there. Every hook, skill and reviewer subagent
+works without them.
 
 Full install steps, both limitations with their causes, and the probe
 findings the port was built from are in

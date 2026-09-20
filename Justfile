@@ -279,6 +279,14 @@ eval *args:
         --mocks off \
         {{args}}
 
+# End-to-end check that canon-mcp asks the MCP client for its workspace
+# root, and that it does NOT ask a client which never declared the
+# capability (which the SDK turns into a hard error -- see ADR 0007).
+# Needs uvx to launch the real server, so it is not a Bazel test and not
+# part of `ci`; it costs nothing but a process.
+check-mcp-roots:
+    python3 tools/check_mcp_roots.py src/canon_mcp
+
 # Run Canon's eval suite against the Antigravity plugin. Same cases,
 # same case.yaml/graders format as `eval` above; a different runner
 # because `claude plugin eval` cannot drive an Antigravity plugin. Also

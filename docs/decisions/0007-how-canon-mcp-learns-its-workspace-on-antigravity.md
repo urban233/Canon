@@ -4,8 +4,8 @@ Date: 2026-09-20
 
 ## Status
 
-Proposed. The measurement is settled; the choice is not, because two of
-the three options trade against an invariant and one is deprecated.
+Accepted. Option A, guarded, is implemented and tested end to end
+against a real server on both arms.
 
 ## Context
 
@@ -81,33 +81,63 @@ bearing.
 
 ## Decision
 
-Not yet taken. What this ADR settles is that the choice is a real one
-and must be made deliberately rather than by whichever mechanism someone
-reaches for first.
+**A, guarded.** Every tool takes a `workspace` parameter filled by the
+`_workspace_roots` resolver, which asks via `roots/list` -- but only
+after checking `ctx.client_capabilities.roots`, degrading to an empty
+result otherwise. `canon_mcp._git.adopt_roots()` takes the answer,
+records the first `file://` URI naming a directory that exists, and
+`repo_root()` prefers it over every environment source.
 
-What has been done already is to put the seam in place:
-`canon_mcp._git.set_client_root()` records a workspace root from any
-source, and `repo_root()` prefers it over every environment guess. Each
-option above then becomes a small, isolated change at one call site
-rather than a rewrite of five tools.
+It is the only option that neither invents a mechanism nor adds a
+question the developer does not already answer, and the deprecation is
+survivable because `set_client_root()` keeps replacing it a one-call-site
+change.
 
-The recommendation is **A, guarded** -- ask via `roots/list`, but only
-when the client has declared the capability, falling back to today's
-behaviour otherwise. It is the only option that does not invent a
-mechanism or add a question, and the deprecation is survivable because
-the seam makes replacing it cheap. It should not be merged without an
-end-to-end test against a real IDE session, because the one measurement
-available returned an empty list and a guarded resolver that silently
-resolves to nothing is indistinguishable from the bug it fixes.
+The guard is not a nicety. Without it the SDK raises
+`MISSING_REQUIRED_CLIENT_CAPABILITY` at any client that has not declared
+`roots`, which would turn all five tools into errors on Claude Code --
+fixing the platform where they do not work by breaking the one where
+they do.
+
+An empty answer **clears** the recorded root rather than leaving the
+previous one. A client that stops offering a workspace must not make the
+server answer confidently about a stale repository; that is the
+"wrong-but-plausible is worse than absent" rule applied to this seam.
+
+### Verified
+
+`tools/check_mcp_roots.py`, against a real `uvx`-launched server:
+
+- **Arm A** -- a client declaring `roots` and answering with a temp
+  repository on branch `feature/from-roots`: `canon_position` reported
+  `feature/from-roots`, not the server's own cwd.
+- **Arm B** -- a client declaring no capabilities at all: the call
+  returned normally, no `MISSING_REQUIRED_CLIENT_CAPABILITY`, falling
+  through to the environment sources.
+
+The parsing and policy half (`file://` decoding, skipping a
+non-directory, clearing on empty) is covered hermetically in
+`tests/test_canon_mcp_git.py::AdoptRootsTests`.
+
+### Still open
+
+Whether Antigravity's client populates `roots/list` with anything. It
+answered `{"roots": []}` in every `agy --print` session, exactly as
+`workspacePaths` did. If the IDE populates it, `canon-mcp` works there
+now; if nothing does, the fallbacks below apply and the tools stay
+unavailable on that platform. This is the measurement this change is
+waiting on, and it is why the plugin README still lists the tools as
+unavailable rather than claiming a fix.
 
 ## Consequences
 
-- Until this is decided and tested, `canon_position`, `canon_plan`,
-  `canon_review`, `canon_evidence` and `canon_ship` are documented as
-  unavailable on Antigravity. Every hook, skill and reviewer subagent
-  works without them.
-- `set_client_root()` is dead code on Claude Code and Codex, and stays
-  that way. It is a seam, not a feature, and it is cheaper than the
-  alternative of threading a root through five tool signatures later.
-- If A is taken and `roots` is removed from the protocol, the fallback
-  is B or C, at the same one call site.
+- `canon_position`, `canon_plan`, `canon_review`, `canon_evidence` and
+  `canon_ship` now work on **any** host whose MCP client populates
+  `roots` -- which is a broader fix than the Antigravity one this began
+  as. They remain documented as unavailable on Antigravity until a real
+  IDE session shows its client populating them.
+- On Claude Code and Codex the resolver returns an empty result and
+  nothing changes; `CLAUDE_PROJECT_DIR` still wins as it always did.
+  Arm B of `tools/check_mcp_roots.py` is the guard on that.
+- When `roots` is eventually removed from the protocol, B or C replaces
+  it at the same one call site.
