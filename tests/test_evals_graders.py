@@ -40,11 +40,7 @@ from pathlib import Path
 # and the test would read the working tree no matter what Bazel
 # delivered -- which would make the vacuity guard below a no-op.
 _REPO_ROOT = Path(__file__).parent.parent
-_EVAL_SUITES = (
-    "plugins/claude/evals",
-    "plugins/canon-companion/evals",
-    "plugins/antigravity/evals",
-)
+_EVAL_SUITES = ("plugins/claude/evals", "plugins/canon-companion/evals")
 # Directories the eval CLI owns rather than cases anyone wrote.
 # `claude plugin eval` writes its results under `<eval dir>/results/`
 # (already gitignored) and reads recorded mocks from `<eval dir>/mocks/`.

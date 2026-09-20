@@ -145,27 +145,21 @@ approved plan itself and a `PostToolUse` hook (`normalize_plan.py`,
 shared with Codex) derives the file's header afterwards. A header the
 agent wrote itself is overwritten, per docs/plan.md §06.
 
-### Evals run through a different runner
+### It carries no eval cases, on purpose
 
-`just eval` drives `claude plugin eval` against the Claude plugin and
-cannot drive this one. `just eval-antigravity` runs the cases under
-[`evals/`](evals) through `agy` instead, reading the same
-`case.yaml`/`prompt.md`/`graders/` layout so a case stays portable
-between platforms. It needs allow-rules in
-`~/.gemini/antigravity-cli/settings.json`, because `agy --print` cannot
-prompt for tool permission:
+Canon's eval suite lives with the Claude Code plugin and stays there.
+`claude plugin eval` is a Claude Code CLI feature -- it scaffolds the
+fixture, runs the turn, applies the graders and supplies the judge model
+-- and the cases are written in Claude Code's tool vocabulary. This port
+carrying none is complete, not outstanding; see
+[ADR 0008](../../docs/decisions/0008-the-eval-suite-belongs-to-the-claude-code-plugin.md).
 
-```json
-{"permissions": {"allow": ["read_file(*)", "write_file(*)", "command(*)", "mcp(*)"]}}
-```
-
-`mcp(*)` matters as much as the file rules -- `review` and `ship` open
-by calling a `canon_*` tool, so a case exercising them is denied before
-it reads anything. A denied turn produces *no output*, which grades as
-an instruction failure and is nothing of the kind, so the runner both
-refuses to start without that file and re-checks every finished case for
-the auto-deny signature, reporting CONFOUNDED rather than grading it.
-Like `just eval`, it is never part of `just ci`.
+What keeps this plugin's instruction text trustworthy instead is that
+most of it is not its own. `decide`, `review-change`, `ship` and
+`testing-craft` are byte-identical to the Claude plugin's copies, which
+`just sync-check` enforces, so the Claude suite covers them here
+transitively. Only `frame`, `plan`, `review` and the two reviewer briefs
+diverge, each for a reason given on this page.
 
 ### Session context arrives one step later
 

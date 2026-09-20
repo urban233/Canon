@@ -287,20 +287,6 @@ eval *args:
 check-mcp-roots:
     python3 tools/check_mcp_roots.py src/canon_mcp
 
-# Run Canon's eval suite against the Antigravity plugin. Same cases,
-# same case.yaml/graders format as `eval` above; a different runner
-# because `claude plugin eval` cannot drive an Antigravity plugin. Also
-# never wired into `ci`, for the same reason and the same ADR -- the
-# cost argument in 0003 is about a billed model-backed run, not about
-# which vendor sends the bill.
-#
-# Needs allow-rules in ~/.gemini/antigravity-cli/settings.json, because
-# `agy --print` cannot prompt; the runner refuses rather than producing
-# a suite of meaningless failures. `--judge` additionally grades the
-# `llm` graders, at one more turn each.
-eval-antigravity *args:
-    python3 tools/eval_antigravity.py {{args}}
-
 # Run the opt-in code-quality skill evals. These are model-backed and remain a
 # local, on-demand check for the same cost and credential reasons as `eval`.
 eval-companion *args:

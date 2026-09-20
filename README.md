@@ -184,28 +184,61 @@ about this port from the Claude plugin are in
 ### Antigravity
 
 Requires [Antigravity](https://antigravity.google), with its `agy` CLI on
-`PATH`.
+`PATH` (it ships at `~/.gemini/bin/agy`).
+
+**Globally, for every project** -- from a checkout of this repository:
 
 ```sh
 agy plugin install ./plugins/antigravity
 ```
 
-`agy plugin install` copies the plugin into `~/.gemini/config/plugins/`, so
-this is a global install; for a project-scoped one, copy the directory to
-that project's `.agents/plugins/` or point its `.agents/plugins.json` at
-this one. `agy plugin uninstall antigravity` removes it.
+`agy plugin install` **copies** the plugin directory into
+`~/.gemini/config/plugins/antigravity/`, the same way Claude Code's and
+Codex's plugin managers do, so the installed copy does not track your
+checkout: re-run the command after pulling a change. Whether the plugin
+is enabled is recorded in your own `~/.gemini/config/config.json`, never
+inside the plugin, so that choice survives reinstalling or updating it
+(`agy plugin disable antigravity` and `agy plugin enable antigravity`
+flip it without uninstalling).
+
+Check what was picked up with:
+
+```sh
+agy plugin validate ./plugins/antigravity
+```
+
+which should report 7 skills, 2 agents, 1 MCP server and 5 hooks.
+
+**Scoped to one project:** Antigravity has no install-scope flag, so
+copy this directory to that project's `.agents/plugins/antigravity/`, or
+leave it where it is and register it from that project's
+`.agents/plugins.json`:
+
+```json
+{ "entries": [ { "path": "path/to/Canon/plugins/antigravity" } ] }
+```
+
+A path that is not absolute and does not begin with `~/` resolves
+against the repository root, so a committed `.agents/plugins.json` gives
+everyone who clones the project the same plugin without each person
+installing it.
+
+**To remove it:** `agy plugin uninstall antigravity`, which deletes the
+copied directory and leaves no entry behind in `config.json`. For a
+project-scoped install, delete the copied directory or the
+`.agents/plugins.json` entry that points at it.
 
 Two things are genuinely weaker on this platform and are worth knowing
-before you install it. Antigravity fires no event when a subagent finishes,
-so a reviewer's verdict is not captured from the reviewer's own message the
-way it is elsewhere -- the `review` skill quotes it in-session instead. And Antigravity
-substitutes no workspace variable into an MCP server's configuration, so
-`canon-mcp` now asks the client instead, through the protocol's own
-`roots/list` -- which works, but which Antigravity answered empty in
-every session measured so far, so `canon_position`, `canon_plan`,
-`canon_review`, `canon_evidence` and `canon_ship` should still be
-treated as unavailable there. Every hook, skill and reviewer subagent
-works without them.
+before you install it. Antigravity fires no event when a subagent
+finishes, so a reviewer's verdict is not captured from the reviewer's
+own message the way it is elsewhere -- the `review` skill quotes it
+in-session instead. And Antigravity substitutes no workspace variable
+into an MCP server's configuration, so `canon-mcp` asks the client
+instead, through the protocol's own `roots/list` -- which works, but
+which Antigravity answered empty in every session measured so far, so
+`canon_position`, `canon_plan`, `canon_review`, `canon_evidence` and
+`canon_ship` should still be treated as unavailable there. Every hook,
+skill and reviewer subagent works without them.
 
 Full install steps, both limitations with their causes, and the probe
 findings the port was built from are in
@@ -262,6 +295,36 @@ own runtime, resolved from source on first use rather than built by Bazel
 (see `docs/plan.md` §05). See the [`Justfile`](Justfile). [GitHub
 Actions](.github/workflows/ci.yml) runs the same checks on every pull
 request and on `main`.
+
+**Working on a plugin.** Hook logic has one canonical copy, under
+[`src/canon_hooks/`](src/canon_hooks), vendored byte-for-byte into all
+three plugins -- a hook runs via bare `python3` with only its own
+directory on `sys.path`, so it cannot import a sibling package at
+runtime. Never hand-edit a vendored copy: fix `src/canon_hooks/` and run
+`just sync-hooks`. The same holds for `src/canon_mcp` (`just sync-mcp`)
+and for the four skills shared with the Claude plugin
+(`just sync-skills`). `just sync-check`, part of `just ci`, fails if any
+copy has drifted, and also fails on a skill directory that is in neither
+the shared nor the divergent list -- a skill nobody classified would
+otherwise sync silently forever.
+
+**Checking a plugin.** `just validate-plugin` runs `claude plugin
+validate --strict` for the Claude plugins and
+[`tools/check_antigravity_plugin.py`](tools/check_antigravity_plugin.py)
+for the Antigravity one. That script is a portable floor, not a
+replacement for `agy plugin validate ./plugins/antigravity`, which is
+the real loader and worth running locally when you have `agy` -- it is
+an IDE-bundled binary with no install path on a CI runner, which is why
+`just ci` cannot use it. `just check-mcp-roots` exercises `canon-mcp`
+against a real client on both capability arms; it needs `uvx` and is
+deliberately not a Bazel test.
+
+**Eval cases live with the Claude Code plugin only** -- `just eval` is
+the one model-backed check, and a port carrying no cases is complete
+rather than outstanding. See
+[ADR 0008](docs/decisions/0008-the-eval-suite-belongs-to-the-claude-code-plugin.md)
+for why, and for what keeps a port's instruction text trustworthy
+instead.
 
 Cutting a release is written up in [`docs/releasing.md`](docs/releasing.md):
 two human gates -- merging the release pull request, and pressing Publish on
