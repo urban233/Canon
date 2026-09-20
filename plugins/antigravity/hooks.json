@@ -1,0 +1,72 @@
+{
+  "canon-plan-gate": {
+    "PreToolUse": [
+      {
+        "matcher": "write_to_file|replace_file_content|multi_replace_file_content|edit_file|notebook_edit|run_command",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 hooks/plan_gate.py",
+            "timeout": 30
+          }
+        ]
+      }
+    ]
+  },
+  "canon-git-guard": {
+    "PreToolUse": [
+      {
+        "matcher": "run_command",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 hooks/git_guard.py",
+            "timeout": 30
+          }
+        ]
+      }
+    ]
+  },
+  "canon-check-scope": {
+    "PostToolUse": [
+      {
+        "matcher": "write_to_file|replace_file_content|multi_replace_file_content|edit_file|notebook_edit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 hooks/check_scope.py",
+            "timeout": 30
+          },
+          {
+            "type": "command",
+            "command": "python3 hooks/normalize_plan.py",
+            "timeout": 30
+          },
+          {
+            "type": "command",
+            "command": "python3 hooks/fast_check.py",
+            "timeout": 90
+          }
+        ]
+      }
+    ]
+  },
+  "canon-session-context": {
+    "PostInvocation": [
+      {
+        "type": "command",
+        "command": "python3 hooks/session_start.py",
+        "timeout": 30
+      }
+    ]
+  },
+  "canon-stop": {
+    "Stop": [
+      {
+        "type": "command",
+        "command": "python3 hooks/stop.py",
+        "timeout": 330
+      }
+    ]
+  }
+}

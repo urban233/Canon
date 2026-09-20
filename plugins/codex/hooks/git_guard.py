@@ -97,7 +97,7 @@ from typing import Any
 import _common
 import _config
 
-_SHELL_TOOL_NAMES = ("Bash",)
+_SHELL_TOOL_NAMES = ("Bash", "run_command")
 
 # A newline is a segment boundary, same as `|`/`;`/`&` -- a flag on one
 # line of a multi-line command must not excuse an unrelated command on
@@ -343,6 +343,20 @@ def _strip_attribution(command: str) -> str | None:
 
 
 def _allow_with_updated_command(tool_input: dict[str, Any], command: str) -> None:
+    """Let the call through, but with the rewritten command.
+
+    Antigravity spells this `overwrite`, a shallow top-level merge into
+    the tool call's own arguments, so it is keyed by that tool's real
+    argument name (`CommandLine`) rather than by the snake_case view
+    `read_payload` synthesizes. Claude Code and Codex take the whole
+    input back under `updatedInput`.
+    """
+    if _common.host() == _common.HOST_ANTIGRAVITY:
+        json.dump(
+            {"decision": "allow", "overwrite": {"CommandLine": command}},
+            sys.stdout,
+        )
+        sys.exit(0)
     json.dump(
         {
             "hookSpecificOutput": {

@@ -41,6 +41,17 @@ lock-check:
 # this to propagate it.
 _SHARED_HOOK_FILES := "_common.py _config.py capture_review.py check_scope.py fast_check.py git_guard.py plan_gate.py plan_header.py session_start.py stop.py"
 
+# Every platform whose plugin carries the shared hook core.
+_HOOK_PLUGINS := "claude codex antigravity"
+
+# A platform with no plan-mode-exit trigger writes its plan through the
+# skill and has the header derived afterwards, by a PostToolUse hook
+# scoped to .canon/plans/ -- see normalize_plan.py's own docstring.
+# Claude Code has ExitPlanMode and uses save_plan.py instead, which is
+# why this is a second, smaller list rather than a line in the one above.
+_PLANLESS_HOOK_FILES := "normalize_plan.py"
+_PLANLESS_PLUGINS := "codex antigravity"
+
 # Vendor src/canon_hooks/*.py into both plugins/*/hooks -- a hook runs via
 # bare `python3` with only its own directory on sys.path, so it cannot
 # import a sibling package at runtime; this is the mechanical alternative.
@@ -48,8 +59,14 @@ sync-hooks:
     #!/usr/bin/env bash
     set -euo pipefail
     for f in {{_SHARED_HOOK_FILES}}; do
-        cp "src/canon_hooks/$f" "plugins/claude/hooks/$f"
-        cp "src/canon_hooks/$f" "plugins/codex/hooks/$f"
+        for plugin in {{_HOOK_PLUGINS}}; do
+            cp "src/canon_hooks/$f" "plugins/$plugin/hooks/$f"
+        done
+    done
+    for f in {{_PLANLESS_HOOK_FILES}}; do
+        for plugin in {{_PLANLESS_PLUGINS}}; do
+            cp "src/canon_hooks/$f" "plugins/$plugin/hooks/$f"
+        done
     done
 
 # canon-mcp is resolved via `uvx --from <path>`, and that path used to
@@ -69,7 +86,7 @@ _CANON_MCP_SRC := "src/canon_mcp"
 sync-mcp:
     #!/usr/bin/env bash
     set -euo pipefail
-    for plugin in claude codex; do
+    for plugin in {{_HOOK_PLUGINS}}; do
         dest="plugins/$plugin/vendor/canon_mcp"
         rm -rf "$dest"
         mkdir -p "$dest"
@@ -92,6 +109,10 @@ _SHARED_SKILL_DIRS := "decide review-change ship testing-craft"
 # .github/workflows/ci.yml already learned this lesson about once.
 _DIVERGENT_SKILL_DIRS := "frame plan review"
 
+# Every plugin that receives the shared skills. plugins/claude is the
+# source, so it is not a target.
+_SKILL_TARGET_PLUGINS := "codex antigravity"
+
 # Copy the four shared skills from plugins/claude/skills into
 # plugins/codex/skills. plugins/claude/skills is the source of truth: it's
 # the copy the eval suite actually exercises, so the tested copy is the
@@ -101,9 +122,11 @@ sync-skills:
     #!/usr/bin/env bash
     set -euo pipefail
     for s in {{_SHARED_SKILL_DIRS}}; do
-        rm -rf "plugins/codex/skills/$s"
-        cp -R "plugins/claude/skills/$s" "plugins/codex/skills/$s"
-        find "plugins/codex/skills/$s" -name '__pycache__' -type d -exec rm -rf {} +
+        for plugin in {{_SKILL_TARGET_PLUGINS}}; do
+            rm -rf "plugins/$plugin/skills/$s"
+            cp -R "plugins/claude/skills/$s" "plugins/$plugin/skills/$s"
+            find "plugins/$plugin/skills/$s" -name '__pycache__' -type d -exec rm -rf {} +
+        done
     done
 
 # canon-companion is a skills-only plugin with nothing platform-specific in
@@ -138,14 +161,22 @@ sync-check:
     set -euo pipefail
     drifted=0
     for f in {{_SHARED_HOOK_FILES}}; do
-        for plugin in claude codex; do
+        for plugin in {{_HOOK_PLUGINS}}; do
             if ! diff -q "src/canon_hooks/$f" "plugins/$plugin/hooks/$f" > /dev/null; then
                 echo "drifted: plugins/$plugin/hooks/$f (run 'just sync-hooks')" >&2
                 drifted=1
             fi
         done
     done
-    for plugin in claude codex; do
+    for f in {{_PLANLESS_HOOK_FILES}}; do
+        for plugin in {{_PLANLESS_PLUGINS}}; do
+            if ! diff -q "src/canon_hooks/$f" "plugins/$plugin/hooks/$f" > /dev/null; then
+                echo "drifted: plugins/$plugin/hooks/$f (run 'just sync-hooks')" >&2
+                drifted=1
+            fi
+        done
+    done
+    for plugin in {{_HOOK_PLUGINS}}; do
         dest="plugins/$plugin/vendor/canon_mcp"
         if ! diff -q "{{_CANON_MCP_SRC}}/pyproject.toml" "$dest/pyproject.toml" > /dev/null 2>&1 \
             || ! diff -rq -x __pycache__ "{{_CANON_MCP_SRC}}/canon_mcp" "$dest/canon_mcp" > /dev/null 2>&1; then
@@ -154,13 +185,15 @@ sync-check:
         fi
     done
     for s in {{_SHARED_SKILL_DIRS}}; do
-        if ! diff -rq "plugins/claude/skills/$s" "plugins/codex/skills/$s" > /dev/null 2>&1; then
-            echo "drifted: plugins/codex/skills/$s (run 'just sync-skills')" >&2
-            drifted=1
-        fi
+        for plugin in {{_SKILL_TARGET_PLUGINS}}; do
+            if ! diff -rq "plugins/claude/skills/$s" "plugins/$plugin/skills/$s" > /dev/null 2>&1; then
+                echo "drifted: plugins/$plugin/skills/$s (run 'just sync-skills')" >&2
+                drifted=1
+            fi
+        done
     done
     known="{{_SHARED_SKILL_DIRS}} {{_DIVERGENT_SKILL_DIRS}}"
-    for plugin in claude codex; do
+    for plugin in {{_HOOK_PLUGINS}}; do
         for dir in "plugins/$plugin/skills/"*/; do
             [ -d "$dir" ] || continue
             name="$(basename "$dir")"
@@ -199,11 +232,19 @@ sync-check:
 version-check:
     python3 tools/check_versions.py
 
-# Validate the plugin manifest and marketplace. --strict is what CI runs;
+# Validate the plugin manifests and marketplace. --strict is what CI runs;
 # there's no reason to check less strictly locally than CI will.
+#
+# Antigravity is checked by our own script rather than by `agy plugin
+# validate`, which is the real loader and the better check -- but is an
+# IDE-bundled binary with no install path on a CI runner, so wiring it in
+# here turned `just ci` red with `sh: 1: agy: not found`. Run `agy plugin
+# validate ./plugins/antigravity` locally as well when you have it; the
+# script is the portable floor, not a replacement.
 validate-plugin:
     claude plugin validate --strict ./plugins/claude
     claude plugin validate --strict ./plugins/canon-companion
+    python3 tools/check_antigravity_plugin.py plugins/antigravity
 
 # The companion style checker's tests on whatever `python3` is on PATH,
 # outside Bazel on purpose. Bazel pins a hermetic 3.13 (see MODULE.bazel),
@@ -237,6 +278,14 @@ eval *args:
         --allow-tools Bash Write Edit "mcp__plugin_canon_canon__*" \
         --mocks off \
         {{args}}
+
+# End-to-end check that canon-mcp asks the MCP client for its workspace
+# root, and that it does NOT ask a client which never declared the
+# capability (which the SDK turns into a hard error -- see ADR 0007).
+# Needs uvx to launch the real server, so it is not a Bazel test and not
+# part of `ci`; it costs nothing but a process.
+check-mcp-roots:
+    python3 tools/check_mcp_roots.py src/canon_mcp
 
 # Run the opt-in code-quality skill evals. These are model-backed and remain a
 # local, on-demand check for the same cost and credential reasons as `eval`.

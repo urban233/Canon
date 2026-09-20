@@ -1,6 +1,7 @@
 # Canon
 
-Canon is an agentic-development plugin (Claude Code and Codex), not a
+Canon is an agentic-development plugin (Claude Code, Codex and
+Antigravity), not a
 general application -- its own implementation follows the same design it
 ships to others.
 

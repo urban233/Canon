@@ -1,0 +1,15 @@
+{
+  "mcpServers": {
+    "canon": {
+      "command": "uvx",
+      "args": [
+        "--from",
+        "${PLUGIN_ROOT}/vendor/canon_mcp",
+        "canon-mcp"
+      ],
+      "env": {
+        "UV_OFFLINE": "1"
+      }
+    }
+  }
+}

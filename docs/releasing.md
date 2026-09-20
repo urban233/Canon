@@ -31,7 +31,11 @@ git switch main && git pull
 git switch -c chore/release-0-2-0
 ```
 
-Eight files state the version by hand:
+Nine files state the version by hand. This list is a convenience, not
+the authority -- `python3 tools/check_versions.py` **discovers** every
+version-bearing file rather than enumerating them, so run it after
+editing and believe it over this list if the two disagree (a hardcoded
+enumeration is a failure this repository has already hit twice):
 
 ```
 pyproject.toml
@@ -39,12 +43,13 @@ src/canon_mcp/pyproject.toml
 MODULE.bazel
 plugins/claude/.claude-plugin/plugin.json
 plugins/codex/plugin.json
+plugins/antigravity/plugin.json
 plugins/canon-companion/.claude-plugin/plugin.json
 .claude-plugin/marketplace.json          (two entries: claude, canon-companion)
 ```
 
-Three more are generated and must not be hand-edited -- the companion's
-Codex manifest and both vendored `canon_mcp` pyprojects:
+The rest are generated and must not be hand-edited -- the companion's
+Codex manifest and each plugin's vendored `canon_mcp` pyproject:
 
 ```sh
 just sync-manifests
