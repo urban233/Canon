@@ -36,6 +36,11 @@ project-excludes = [
     "tools/run_pyrefly.py",
     "plugins/canon-companion/skills/audit-google-python-style/scripts/check_google_rules.py",
     "src/canon_mcp/canon_mcp/server.py",
+    # canon-relay-server's Slack and HTTP glue, the same reasoning again:
+    # Bolt and aiohttp are resolved by `uvx`, not by a Bazel hub.
+    "src/canon_relay/canon_relay/app.py",
+    "src/canon_relay/canon_relay/web.py",
+    "src/canon_relay/canon_relay/main.py",
 ]
 # 3.9, matching the hooks floor: canon_mcp's pure-logic modules are
 # written to the same floor on purpose (see src/canon_mcp/BUILD.bazel),
@@ -57,6 +62,8 @@ search-path = [
     "plugins/antigravity/hooks",
     "src/canon_hooks",
     "src/canon_mcp",
+    "src/canon_relay",
+    "plugins/canon-relay/hooks",
 ]
 # No runtime dependency exists yet (see docs/plan.md's Non-goals), so
 # skip interpreter discovery rather than depend on whatever venv happens

@@ -264,6 +264,18 @@ It is not ported to Antigravity yet.
 Its first skill, `$audit-google-python-style`, performs a read-only audit and
 requires explicit approval before it applies any remediation.
 
+`canon-relay` is a second opt-in plugin, for Claude Code only. When you're
+away from a local session, its permission prompts and `AskUserQuestion`s
+reach your Slack DM, and your answer goes back to the session. It needs
+one shared server and one Slack app per team. Every failure falls back to
+the normal terminal prompt, and Canon's own gates still run first, so
+nothing Canon refuses can be approved from Slack. Setup and limits are in
+[`plugins/canon-relay/README.md`](plugins/canon-relay/README.md):
+
+```
+/plugin install canon-relay@canon
+```
+
 ## Use
 
 There's nothing to configure up front. The first time a turn in a repository

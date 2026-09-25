@@ -6,6 +6,12 @@ Paragraphs here are deliberately written as single long lines rather than wrappe
 
 Versions before 1.0.0 may change behaviour a plugin install depends on. Canon is usable now; the interfaces below are not yet frozen.
 
+## [Unreleased]
+
+### Added
+
+- **`canon-relay`, an opt-in Claude Code plugin that carries a local session's questions to your Slack DM** while you're away, and your answer back: Allow, Deny, or Deny with a reason for a permission prompt; a picked or typed answer for `AskUserQuestion`; and a "waiting for you" note once a session has gone idle. You say `away` and `back` in Slack, and while you're present the relay stays out of the way and the terminal prompt appears as usual. Every failure — unreachable server, revoked device, expiry — prints nothing, so Claude Code shows its own prompt, and anything Canon's git guard refuses is refused before a permission prompt exists, so it never reaches Slack. What leaves the machine is redacted in the hook: a tool name, a truncated Bash command, a path or URL, never a file body or the transcript. One shared server, `canon-relay-server` (`src/canon_relay/`, run with `uvx`), owns the team's single Slack app over Socket Mode and holds pending requests only in memory. Reasoning in `docs/decisions/0009-the-slack-relay-is-an-opt-in-sibling-plugin.md`, including why replying in Slack cannot yet continue an idle session.
+
 ## [0.2.0] - 2026-09-20
 
 Canon now ships for a third platform, [Antigravity](https://antigravity.google), alongside Claude Code and Codex — built from a probe of what that platform actually does rather than from what its documentation implies, and honest in the README about the two things that are weaker there. The reviewer also stops hunting bugs itself on Claude Code and consumes the host's own code review instead, and a `verify` command can no longer smuggle a shell in through `sh -c`.

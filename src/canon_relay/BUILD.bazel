@@ -1,0 +1,31 @@
+# canon-relay-server: the shared service behind plugins/canon-relay. Run
+# with `uvx` (see pyproject.toml and canon_relay/main.py), not built as a
+# Bazel wheel -- the same delivery as src/canon_mcp, and the same nested
+# package layout, which is what hatchling's zero-config packaging finds.
+
+load("@rules_python//python:defs.bzl", "py_library")
+
+# Only the stdlib-only modules. app.py, web.py and main.py import Slack
+# Bolt and aiohttp, resolved by `uvx` at run time rather than by any Bazel
+# hub -- the same line canon-mcp draws around its server.py.
+py_library(
+    name = "canon_relay_lib",
+    srcs = [
+        "canon_relay/__init__.py",
+        "canon_relay/api.py",
+        "canon_relay/commands.py",
+        "canon_relay/pending.py",
+        "canon_relay/render.py",
+        "canon_relay/store.py",
+    ],
+    imports = ["."],
+    visibility = ["//tests:__pkg__"],
+)
+
+# Every .py file in the package, glue included, for the root package's
+# lint and format targets -- see //src/canon_mcp:py_sources.
+filegroup(
+    name = "py_sources",
+    srcs = glob(["canon_relay/*.py"]),
+    visibility = ["//:__pkg__"],
+)

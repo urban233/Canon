@@ -53,10 +53,12 @@ _PY_SOURCES = [
     "//:tool_py_sources",
     "//plugins/claude/hooks:py_sources",
     "//plugins/canon-companion:py_sources",
+    "//plugins/canon-relay/hooks:py_sources",
     "//plugins/codex/hooks:py_sources",
     "//plugins/antigravity/hooks:py_sources",
     "//src/canon_hooks:py_sources",
     "//src/canon_mcp:py_sources",
+    "//src/canon_relay:py_sources",
     "//tests:py_sources",
 ]
 
