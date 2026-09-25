@@ -29,6 +29,17 @@
       },
       "license": "BSD-3-Clause",
       "homepage": "https://github.com/urban233/Canon"
+    },
+    {
+      "name": "canon-relay",
+      "source": "canon-relay",
+      "description": "Opt-in Canon relay: when you are away, a local Claude Code session's permission prompts and questions reach your Slack DM, and your answer comes back.",
+      "version": "0.2.0",
+      "author": {
+        "name": "Martin Urban"
+      },
+      "license": "BSD-3-Clause",
+      "homepage": "https://github.com/urban233/Canon"
     }
   ]
 }

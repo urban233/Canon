@@ -1,0 +1,24 @@
+load("@rules_python//python:defs.bzl", "py_library")
+
+# Same shape as //plugins/claude/hooks:hooks_lib -- imports = ["."] makes
+# this directory the package root, so a Bazel test and a hook run by
+# Claude Code resolve `import _common` the same way. `_common.py` is
+# vendored from src/canon_hooks by `just sync-hooks`, never hand-edited.
+py_library(
+    name = "hooks_lib",
+    srcs = [
+        "__init__.py",
+        "_common.py",
+        "relay.py",
+    ],
+    imports = ["."],
+    visibility = ["//tests:__pkg__"],
+)
+
+# Exposes this package's own .py files to the root package's lint and
+# typecheck targets -- see //plugins/claude/hooks:py_sources.
+filegroup(
+    name = "py_sources",
+    srcs = glob(["*.py"]),
+    visibility = ["//:__pkg__"],
+)

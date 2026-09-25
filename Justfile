@@ -52,6 +52,13 @@ _HOOK_PLUGINS := "claude codex antigravity"
 _PLANLESS_HOOK_FILES := "normalize_plan.py"
 _PLANLESS_PLUGINS := "codex antigravity"
 
+# canon-relay reuses only `_common.py` -- payload parsing, repo root,
+# branch, and `fail_open` -- and none of Canon's gates, which stay in the
+# `claude` plugin. A third, one-file list, for the same reason as the one
+# above.
+_RELAY_HOOK_FILES := "_common.py"
+_RELAY_PLUGINS := "canon-relay"
+
 # Vendor src/canon_hooks/*.py into both plugins/*/hooks -- a hook runs via
 # bare `python3` with only its own directory on sys.path, so it cannot
 # import a sibling package at runtime; this is the mechanical alternative.
@@ -65,6 +72,11 @@ sync-hooks:
     done
     for f in {{_PLANLESS_HOOK_FILES}}; do
         for plugin in {{_PLANLESS_PLUGINS}}; do
+            cp "src/canon_hooks/$f" "plugins/$plugin/hooks/$f"
+        done
+    done
+    for f in {{_RELAY_HOOK_FILES}}; do
+        for plugin in {{_RELAY_PLUGINS}}; do
             cp "src/canon_hooks/$f" "plugins/$plugin/hooks/$f"
         done
     done
@@ -176,6 +188,14 @@ sync-check:
             fi
         done
     done
+    for f in {{_RELAY_HOOK_FILES}}; do
+        for plugin in {{_RELAY_PLUGINS}}; do
+            if ! diff -q "src/canon_hooks/$f" "plugins/$plugin/hooks/$f" > /dev/null; then
+                echo "drifted: plugins/$plugin/hooks/$f (run 'just sync-hooks')" >&2
+                drifted=1
+            fi
+        done
+    done
     for plugin in {{_HOOK_PLUGINS}}; do
         dest="plugins/$plugin/vendor/canon_mcp"
         if ! diff -q "{{_CANON_MCP_SRC}}/pyproject.toml" "$dest/pyproject.toml" > /dev/null 2>&1 \
@@ -244,6 +264,7 @@ version-check:
 validate-plugin:
     claude plugin validate --strict ./plugins/claude
     claude plugin validate --strict ./plugins/canon-companion
+    claude plugin validate --strict ./plugins/canon-relay
     python3 tools/check_antigravity_plugin.py plugins/antigravity
 
 # The companion style checker's tests on whatever `python3` is on PATH,

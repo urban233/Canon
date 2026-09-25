@@ -61,6 +61,27 @@ load("@rules_python//python:defs.bzl", "py_test")
     for src in glob(["test_codex_hooks_*.py"])
 ]
 
+# canon-relay's hook, in its own group: plugins/canon-relay/hooks carries
+# its own vendored `_common`, the same module-name collision as above.
+[
+    py_test(
+        name = src[:-3],
+        srcs = [src, "__init__.py"],
+        deps = ["//plugins/canon-relay/hooks:hooks_lib"],
+    )
+    for src in glob(["test_relay_hooks_*.py"])
+]
+
+# canon-relay-server's stdlib core -- store, pending, api, commands, render.
+[
+    py_test(
+        name = src[:-3],
+        srcs = [src, "__init__.py"],
+        deps = ["//src/canon_relay:canon_relay_lib"],
+    )
+    for src in glob(["test_canon_relay_*.py"])
+]
+
 # Antigravity's own group, for the same runfiles-collision reason the
 # comment at the top of this file gives: plugins/antigravity/hooks
 # defines the same top-level module names as the other two.

@@ -13,8 +13,9 @@ no such dependency to fail.
 
 This is the one canonical copy, at `src/canon_hooks/_common.py`. `just
 sync-hooks` vendors it byte-for-byte into `plugins/claude/hooks/`,
-`plugins/codex/hooks/` and `plugins/antigravity/hooks/`, because a hook
-runs via bare `python3` with only
+`plugins/codex/hooks/` and `plugins/antigravity/hooks/` -- and into
+`plugins/canon-relay/hooks/`, whose one hook reuses this module and none
+of Canon's gates -- because a hook runs via bare `python3` with only
 its own directory on `sys.path` and cannot import a sibling package at
 runtime. `just sync-check` fails if a vendored copy has drifted from this
 one. A bug fixed here is fixed on every platform Canon ships for, in one
