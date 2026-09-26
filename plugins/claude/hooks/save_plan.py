@@ -8,16 +8,25 @@ readable by a hook. This hook closes that gap the moment the developer
 approves a plan: it saves it, verbatim, to `.canon/plans/<branch>.md`
 with a small derived header (see docs/plan.md §06).
 
-Confirmed directly from this project's own `ExitPlanMode` tool results
-(not just documentation, which does not specify this at the needed
-precision): an approved call's `tool_response` contains the literal
-marker `"## Approved Plan:"` followed by the plan body, and usually a
-`"Your plan has been saved to: <path>"` line pointing at the exact file
-the developer approved on screen. This hook requires that marker before
-doing anything -- its absence (declined, or "keep planning") makes the
-hook a silent no-op, which is what keeps it correct regardless of
-whether `PostToolUse` fires on every `ExitPlanMode` call or only on
+Confirmed from recorded Claude Code sessions (2.1.266 through 2.1.282),
+not just documentation, which does not specify this at the needed
+precision: the hook's `tool_response` is the tool's *structured* output,
+not the text the model reads. An approved call yields an object
+`{"plan": <body>, "isAgent": false, "filePath": <path>}`, `filePath`
+being the exact file the developer approved on screen; a declined call
+("keep planning") yields a plain error string instead. So an object
+carrying a non-empty `plan` string is the approval signal, and anything
+else makes the hook a silent no-op -- which keeps it correct regardless
+of whether `PostToolUse` fires on every `ExitPlanMode` call or only on
 approved ones.
+
+The model-facing text -- the literal marker `"## Approved Plan:"`
+followed by the body, and a `"Your plan has been saved to: <path>"`
+line -- is still accepted when `tool_response` arrives as a string. The
+hook originally recognised *only* that form, mistaking the transcript's
+tool-result text for the hook payload, and so silently saved nothing on
+every real approval; the string form stays as a fallback rather than
+the primary path.
 
 Header derivation (what's genuinely derivable vs. left blank, the
 `verify:` field's asymmetry with `.canon/config.json`, the one-time ask
@@ -67,17 +76,37 @@ def _embedded_plan_body(tool_response: str) -> str | None:
     return tool_response[index + len(_APPROVED_MARKER) :].strip("\n")
 
 
-def _plan_body(tool_response: str) -> str | None:
+def _structured_plan(
+    tool_response: dict[str, object],
+) -> tuple[str, Path | None] | None:
+    plan = tool_response.get("plan")
+    if not isinstance(plan, str) or not plan.strip():
+        return None
+    file_path = tool_response.get("filePath")
+    return plan, Path(file_path) if isinstance(file_path, str) and file_path else None
+
+
+def _plan_body(tool_response: object) -> str | None:
     """The approved plan's markdown, or None if this wasn't an approval.
 
-    Prefers reading the file the developer actually approved on screen;
-    falls back to the copy embedded in `tool_response` if that path is
-    missing or unreadable.
+    Accepts the structured object Claude Code actually sends, or the
+    model-facing string form (see the module docstring). Prefers reading
+    the file the developer actually approved on screen; falls back to the
+    copy embedded in `tool_response` if that path is missing or
+    unreadable.
     """
-    embedded = _embedded_plan_body(tool_response)
-    if embedded is None:
+    if isinstance(tool_response, dict):
+        structured = _structured_plan(tool_response)
+        if structured is None:
+            return None
+        embedded, saved_path = structured
+    elif isinstance(tool_response, str):
+        embedded = _embedded_plan_body(tool_response)
+        if embedded is None:
+            return None
+        saved_path = _saved_plan_path(tool_response)
+    else:
         return None
-    saved_path = _saved_plan_path(tool_response)
     if saved_path is not None:
         try:
             return saved_path.read_text(encoding="utf-8")
@@ -92,10 +121,7 @@ def main() -> None:
         return
     if payload.get("tool_name") not in (None, "ExitPlanMode"):
         return
-    tool_response = payload.get("tool_response")
-    if not isinstance(tool_response, str):
-        return
-    body = _plan_body(tool_response)
+    body = _plan_body(payload.get("tool_response"))
     if body is None:
         return
 

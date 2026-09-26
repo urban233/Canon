@@ -4,7 +4,9 @@
 Covers reading the approved plan (preferring the on-disk file over the
 embedded copy), the derived header (`status`, `base`, `verify` filled in;
 `scope`/`done`/`parent` left blank), the missing-required-section notes,
-the silent no-op on anything that isn't an approval, (`FeaturePlanTests`)
+the silent no-op on anything that isn't an approval,
+(`StructuredToolResponseTests`) the object-shaped `tool_response` Claude
+Code actually sends, (`FeaturePlanTests`)
 the feature-plan path a non-empty `## Steps` section triggers instead, and
 (`BranchNamespaceCollisionTests`) the "features/"-prefixed branch that
 would otherwise collide with that same feature-plan namespace.
@@ -365,6 +367,95 @@ class MainTests(unittest.TestCase):
 
             _invoke_main(
                 {"cwd": str(root), "tool_name": "Edit", "tool_response": response}
+            )
+
+            self.assertFalse((root / ".canon").exists())
+
+
+def _structured_tool_response(
+    plan_text: str, file_path: Path | None
+) -> dict[str, object]:
+    """The shape Claude Code actually sends a `PostToolUse:ExitPlanMode`
+    hook, as recorded in real sessions -- not the model-facing text that
+    `_approved_tool_response` mirrors."""
+    response: dict[str, object] = {"plan": plan_text, "isAgent": False}
+    if file_path is not None:
+        response["filePath"] = str(file_path)
+    return response
+
+
+class StructuredToolResponseTests(unittest.TestCase):
+    """Regression: the hook once accepted only a string `tool_response`,
+    so every real approval -- which arrives as an object -- was silently
+    dropped and no plan was ever saved."""
+
+    def test_real_approval_payload_writes_the_plan(self) -> None:
+        with tempfile.TemporaryDirectory() as root_str:
+            root = Path(root_str)
+            _init_repo(root, "feature/widget")
+            saved = root / "approved.md"
+            saved.write_text(PLAN_WITH_SECTIONS, encoding="utf-8")
+
+            _invoke_main(
+                {
+                    "cwd": str(root),
+                    "hook_event_name": "PostToolUse",
+                    "tool_name": "ExitPlanMode",
+                    "tool_input": {"plan": PLAN_WITH_SECTIONS},
+                    "tool_response": _structured_tool_response(
+                        PLAN_WITH_SECTIONS, saved
+                    ),
+                }
+            )
+
+            plan_path = root / ".canon" / "plans" / "feature/widget.md"
+            self.assertTrue(plan_path.exists())
+            content = plan_path.read_text(encoding="utf-8")
+            self.assertIn("status: approved", content)
+            self.assertIn("Do the thing.", content)
+
+    def test_file_path_preferred_over_embedded_plan(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            saved = Path(tmp) / "plan.md"
+            saved.write_text("the real, on-disk plan", encoding="utf-8")
+            response = _structured_tool_response("a stale embedded copy", saved)
+            self.assertEqual(save_plan._plan_body(response), "the real, on-disk plan")
+
+    def test_falls_back_to_embedded_plan_when_file_path_unreadable(self) -> None:
+        response = _structured_tool_response(
+            PLAN_WITH_SECTIONS, Path("/nonexistent/plan.md")
+        )
+        self.assertEqual(save_plan._plan_body(response), PLAN_WITH_SECTIONS)
+
+    def test_embedded_plan_used_without_file_path(self) -> None:
+        response = _structured_tool_response(PLAN_WITH_SECTIONS, file_path=None)
+        self.assertEqual(save_plan._plan_body(response), PLAN_WITH_SECTIONS)
+
+    def test_object_without_a_plan_is_not_an_approval(self) -> None:
+        responses: list[dict[str, object]] = [
+            {},
+            {"plan": ""},
+            {"plan": "   \n"},
+            {"plan": None},
+        ]
+        for response in responses:
+            with self.subTest(response=response):
+                self.assertIsNone(save_plan._plan_body(response))
+
+    def test_declined_call_is_a_noop(self) -> None:
+        """A "keep planning" answer arrives as an error string, as recorded."""
+        with tempfile.TemporaryDirectory() as root_str:
+            root = Path(root_str)
+            _init_repo(root, "feature/widget")
+
+            _invoke_main(
+                {
+                    "cwd": str(root),
+                    "tool_name": "ExitPlanMode",
+                    "tool_response": (
+                        "Error: User chose to stay in plan mode and continue planning"
+                    ),
+                }
             )
 
             self.assertFalse((root / ".canon").exists())
