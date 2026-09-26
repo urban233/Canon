@@ -6,7 +6,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "python3 ${CLAUDE_PLUGIN_ROOT}/hooks/plan_gate.py"
+            "command": "python3 \"${CLAUDE_PLUGIN_ROOT}/hooks/plan_gate.py\""
           }
         ]
       },
@@ -15,7 +15,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "python3 ${CLAUDE_PLUGIN_ROOT}/hooks/git_guard.py"
+            "command": "python3 \"${CLAUDE_PLUGIN_ROOT}/hooks/git_guard.py\""
           }
         ]
       }
@@ -25,7 +25,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "python3 ${CLAUDE_PLUGIN_ROOT}/hooks/stop.py"
+            "command": "python3 \"${CLAUDE_PLUGIN_ROOT}/hooks/stop.py\""
           }
         ]
       }
@@ -36,7 +36,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "python3 ${CLAUDE_PLUGIN_ROOT}/hooks/save_plan.py"
+            "command": "python3 \"${CLAUDE_PLUGIN_ROOT}/hooks/save_plan.py\""
           }
         ]
       },
@@ -45,11 +45,11 @@
         "hooks": [
           {
             "type": "command",
-            "command": "python3 ${CLAUDE_PLUGIN_ROOT}/hooks/check_scope.py"
+            "command": "python3 \"${CLAUDE_PLUGIN_ROOT}/hooks/check_scope.py\""
           },
           {
             "type": "command",
-            "command": "python3 ${CLAUDE_PLUGIN_ROOT}/hooks/fast_check.py"
+            "command": "python3 \"${CLAUDE_PLUGIN_ROOT}/hooks/fast_check.py\""
           }
         ]
       }
@@ -59,7 +59,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "python3 ${CLAUDE_PLUGIN_ROOT}/hooks/session_start.py"
+            "command": "python3 \"${CLAUDE_PLUGIN_ROOT}/hooks/session_start.py\""
           }
         ]
       }
@@ -70,7 +70,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "python3 ${CLAUDE_PLUGIN_ROOT}/hooks/capture_review.py"
+            "command": "python3 \"${CLAUDE_PLUGIN_ROOT}/hooks/capture_review.py\""
           }
         ]
       },
@@ -79,7 +79,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "python3 ${CLAUDE_PLUGIN_ROOT}/hooks/capture_review.py"
+            "command": "python3 \"${CLAUDE_PLUGIN_ROOT}/hooks/capture_review.py\""
           }
         ]
       }

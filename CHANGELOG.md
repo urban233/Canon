@@ -6,6 +6,12 @@ Paragraphs here are deliberately written as single long lines rather than wrappe
 
 Versions before 1.0.0 may change behaviour a plugin install depends on. Canon is usable now; the interfaces below are not yet frozen.
 
+## [Unreleased]
+
+### Fixed
+
+- **An approved plan is now actually saved on Claude Code.** `save_plan.py` recognised an approval only when the hook's `tool_response` was the text the model reads (`"## Approved Plan:"` followed by the body), but Claude Code hands a `PostToolUse` hook the tool's structured output instead, `{"plan", "isAgent", "filePath"}`. Every real approval therefore failed the hook's string check and was dropped silently, and `.canon/plans/` was never written. The hook now reads that object, still preferring the file at `filePath` that the developer approved on screen, and keeps the string form as a fallback. `StructuredToolResponseTests` pins the recorded payload shape.
+
 ## [0.2.0] - 2026-09-20
 
 Canon now ships for a third platform, [Antigravity](https://antigravity.google), alongside Claude Code and Codex — built from a probe of what that platform actually does rather than from what its documentation implies, and honest in the README about the two things that are weaker there. The reviewer also stops hunting bugs itself on Claude Code and consumes the host's own code review instead, and a `verify` command can no longer smuggle a shell in through `sh -c`.
