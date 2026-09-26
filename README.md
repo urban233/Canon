@@ -125,6 +125,19 @@ This writes the marketplace and the enabled-plugin entry into
 config. Commit that file, and anyone who clones the project and trusts
 the folder gets Canon enabled automatically -- nothing to run themselves.
 
+**To update it** to the latest release -- refresh the marketplace, then
+the plugin:
+
+```sh
+claude plugin marketplace update canon
+claude plugin update claude@canon
+```
+
+(or from inside a session: `/plugin`, then Marketplaces → `canon` →
+Update.) Add `--scope project` to `plugin update` for a project-scoped
+install. The new version takes effect in sessions started afterwards, so
+restart any that are already open.
+
 **To remove it:** `claude plugin uninstall claude@canon` (add `--scope
 project` to remove the project-scoped install instead of the global one),
 then `claude plugin marketplace remove canon` with the same `--scope` if
