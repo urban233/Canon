@@ -6,11 +6,14 @@ Paragraphs here are deliberately written as single long lines rather than wrappe
 
 Versions before 1.0.0 may change behaviour a plugin install depends on. Canon is usable now; the interfaces below are not yet frozen.
 
-## [Unreleased]
+## [0.2.1] - 2026-09-26
+
+A hotfix for Claude Code. Plan persistence — the feature the rest of Canon's position-tracking reads from — never worked there: an approved plan was never written into the repository, and nothing said so. Codex and Antigravity are unaffected; they save plans by a different route. Update the plugin and approve a plan once to confirm `.canon/plans/<branch>.md` appears.
 
 ### Fixed
 
 - **An approved plan is now actually saved on Claude Code.** `save_plan.py` recognised an approval only when the hook's `tool_response` was the text the model reads (`"## Approved Plan:"` followed by the body), but Claude Code hands a `PostToolUse` hook the tool's structured output instead, `{"plan", "isAgent", "filePath"}`. Every real approval therefore failed the hook's string check and was dropped silently, and `.canon/plans/` was never written. The hook now reads that object, still preferring the file at `filePath` that the developer approved on screen, and keeps the string form as a fallback. `StructuredToolResponseTests` pins the recorded payload shape.
+- **Hook commands survive a plugin path containing a space.** Every command in the Claude Code plugin's `hooks.json` now quotes `${CLAUDE_PLUGIN_ROOT}`; unquoted, a space in the install path split the command and broke every hook. Claude Code 2.1.283's `claude plugin validate --strict` rejects the unquoted form.
 
 ## [0.2.0] - 2026-09-20
 
@@ -70,5 +73,6 @@ First public release, for [Claude Code](https://claude.com/claude-code) and [Cod
 - **Codex cannot bundle a subagent,** so the two reviewer briefs ship as TOML files with a one-time manual copy into `.codex/agents/`. See `plugins/codex/README.md`.
 - **The eval suite is Claude-only** and is deliberately not a CI gate. See `docs/decisions/0003-eval-suite-is-not-a-ci-gate.md`.
 
+[0.2.1]: https://github.com/urban233/Canon/releases/tag/v0.2.1
 [0.2.0]: https://github.com/urban233/Canon/releases/tag/v0.2.0
 [0.1.0]: https://github.com/urban233/Canon/releases/tag/v0.1.0
