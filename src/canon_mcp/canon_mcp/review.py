@@ -17,10 +17,25 @@ that actually matters).
 Each verdict comes from `.canon/hooks/decisions.jsonl`, written by the
 `SubagentStop` hook (`capture_review.py`) directly from a reviewer
 subagent's own final message -- never from the main session's
-retelling of it. When more than one reviewer is called for, their
+retelling of it -- and only from records captured on the current
+branch. Without that, a branch stacked on a reviewed parent step
+inherits the parent's verdict as if it were its own. When more than one reviewer is called for, their
 verdicts are combined worst-first into the single `verdict`/`stale`
 shape every existing consumer (`position.py`, `ship.py`) already reads,
 so neither of them needs to change for this.
+
+`rounds` counts, per reviewer, the CHANGES REQUIRED verdicts captured on
+this branch (see `_belongs_here` for records written before records
+carried a branch). The review skill stops and asks the developer after two;
+deriving the count from the log, rather than holding it in the
+conversation, is what lets that rule survive a compaction. It is still
+not a gate -- `canon_ship` never reads it.
+
+`models` names the model `.canon/config.json` configures for a called-for
+reviewer (`{"reviewers": {"reviewer": {"model": "sonnet"}}}`), so the
+choice lives in the repository instead of in whoever dispatches. An
+unconfigured reviewer is absent and runs on its agent definition's own
+`model:`.
 """
 
 from __future__ import annotations
@@ -28,14 +43,17 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
-from ._decisions import last_decision
+from ._config import load_config, reviewer_models
+from ._decisions import decisions_for
 from ._git import (
     changed_paths,
-    default_branch,
+    commits_since,
+    current_branch,
     file_at_revision,
     head_sha,
     merge_base,
 )
+from ._stack import base_ref
 from ._notebook import (
     changed_code_cells,
     code_cell_sources,
@@ -58,8 +76,9 @@ _RISK_SURFACE_KEYWORDS: dict[str, list[str]] = {
     ],
     "data": ["migration", "alembic", "schema", "backfill", "model"],
 }
+_CHANGES_REQUIRED = "CHANGES REQUIRED"
 _SEVERITY_ORDER = [
-    "CHANGES REQUIRED",
+    _CHANGES_REQUIRED,
     "BLOCKED BY MISSING EVIDENCE",
     "READY FOR HUMAN APPROVAL",
 ]
@@ -186,22 +205,52 @@ def _combine(
     }, stale
 
 
+def _belongs_here(record: dict[str, Any], on_branch: set[str] | None) -> bool:
+    """Whether a record already scoped by `decisions_for` belongs to this
+    branch.
+
+    A record stamped with a branch was matched on that stamp. One written
+    before records carried a branch matches every branch there, so it is
+    narrowed here by ancestry instead: it counts only when the commit it
+    was captured against is in `base..HEAD`. Without this an upgraded log
+    reports the parent step's verdict as this branch's, and counts every
+    CHANGES REQUIRED the repository ever saw as this branch's rounds -- 14
+    of them, measured on the field repository this was written for.
+    When the range can't be determined, the record is kept.
+    """
+    if record.get("branch") is not None or on_branch is None:
+        return True
+    head = record.get("head")
+    if not isinstance(head, str) or not head:
+        return False
+    return any(sha.startswith(head) for sha in on_branch)
+
+
 def build_review(root: Path) -> dict[str, Any]:
     """The reviewers this diff calls for, and the combined captured
     verdict against the current HEAD, if every called-for reviewer has
     produced one."""
     current_head = head_sha(root)
-    base = merge_base(root, default_branch(root))
+    branch = current_branch(root)
+    # A stacked step is reviewed against its parent step, not the whole
+    # stack -- see `_stack.stacked_on`.
+    base = merge_base(root, base_ref(root, branch))
     paths = changed_paths(root, base) if base else None
     reviewers = _reviewers_called_for(paths)
     notebooks = _notebooks(root, base, paths)
 
+    on_branch = commits_since(root, base)
     per_reviewer: dict[str, dict[str, Any] | None] = {}
+    rounds: dict[str, int] = {}
     for name in reviewers:
-        record = last_decision(root, name)
-        if record is None:
+        history = [
+            r for r in decisions_for(root, name, branch) if _belongs_here(r, on_branch)
+        ]
+        rounds[name] = sum(1 for r in history if r.get("decision") == _CHANGES_REQUIRED)
+        if not history:
             per_reviewer[name] = None
             continue
+        record = history[-1]
         recorded_head = record.get("head")
         per_reviewer[name] = {
             "decision": record.get("decision"),
@@ -211,11 +260,16 @@ def build_review(root: Path) -> dict[str, Any]:
             "stale": recorded_head != current_head,
         }
 
+    configured = reviewer_models(load_config(root))
+    models = {name: configured[name] for name in reviewers if name in configured}
+
     combined, stale = _combine(per_reviewer)
     if combined is None:
         return {
             "reviewers_called_for": reviewers,
             "verdicts": per_reviewer,
+            "rounds": rounds,
+            "models": models,
             "verdict": None,
             "current_head": current_head,
             "notebooks": notebooks,
@@ -224,6 +278,8 @@ def build_review(root: Path) -> dict[str, Any]:
     return {
         "reviewers_called_for": reviewers,
         "verdicts": per_reviewer,
+        "rounds": rounds,
+        "models": models,
         "verdict": combined,
         "current_head": current_head,
         "notebooks": notebooks,

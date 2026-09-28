@@ -461,6 +461,51 @@ class StructuredToolResponseTests(unittest.TestCase):
             self.assertFalse((root / ".canon").exists())
 
 
+class StackedBranchHeaderTests(unittest.TestCase):
+    """Regression: every step of a stacked feature was saved with `base`
+    at the stack root -- `199825dd1` on all thirteen plans in the field."""
+
+    def test_a_stacked_step_records_its_parent_and_forks_from_it(self) -> None:
+        with tempfile.TemporaryDirectory() as root_str:
+            root = Path(root_str)
+            _init_repo(root, "a")
+            _run_git(root, "checkout", "-q", "-b", "b")
+            _run_git(
+                root,
+                "-c",
+                "user.email=canon@example.com",
+                "-c",
+                "user.name=Canon Tests",
+                "commit",
+                "--allow-empty",
+                "-m",
+                "step b",
+            )
+            fork = subprocess.run(
+                ["git", "rev-parse", "a"],
+                cwd=root,
+                capture_output=True,
+                text=True,
+                check=True,
+            ).stdout.strip()[:9]
+
+            _invoke_main(_approved_payload(root, PLAN_WITH_SECTIONS))
+
+            content = (root / ".canon" / "plans" / "b.md").read_text(encoding="utf-8")
+            self.assertIn('stacked_on: "a"', content)
+            self.assertIn(f'base: "{fork}"', content)
+
+    def test_a_step_cut_from_the_default_has_a_blank_stacked_on(self) -> None:
+        with tempfile.TemporaryDirectory() as root_str:
+            root = Path(root_str)
+            _init_repo(root, "feature/widget")
+            _invoke_main(_approved_payload(root, PLAN_WITH_SECTIONS))
+            content = (root / ".canon" / "plans" / "feature/widget.md").read_text(
+                encoding="utf-8"
+            )
+            self.assertIn("\nstacked_on:\n", content)
+
+
 class FeaturePlanTests(unittest.TestCase):
     def test_saves_to_the_features_directory_with_a_slugified_title(self) -> None:
         with tempfile.TemporaryDirectory() as root_str:

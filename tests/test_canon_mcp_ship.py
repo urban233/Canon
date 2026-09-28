@@ -192,5 +192,50 @@ class BuildShipTests(unittest.TestCase):
         self.assertEqual(len(result["missing"]), 3)
 
 
+class ShipEvidenceReadinessTests(unittest.TestCase):
+    """docs/decisions/0010-ship-evidence-is-verified-not-stored.md."""
+
+    def _ship(self, ship_evidence: dict[str, object] | None) -> dict[str, object]:
+        evidence: dict[str, object] = {"green": True}
+        if ship_evidence is not None:
+            evidence["ship_evidence"] = ship_evidence
+        with (
+            mock.patch("canon_mcp.ship.current_branch", return_value="feature/x"),
+            mock.patch("canon_mcp.ship.read_plan_file", return_value=_APPROVED_PLAN),
+            mock.patch("canon_mcp.ship.build_evidence", return_value=evidence),
+            mock.patch(
+                "canon_mcp.ship.build_review",
+                return_value={
+                    "verdict": {"decision": "READY FOR HUMAN APPROVAL"},
+                    "stale": False,
+                },
+            ),
+        ):
+            return ship.build_ship(Path("/repo"))
+
+    def test_undeclared_ship_evidence_changes_nothing(self) -> None:
+        self.assertTrue(self._ship(None)["ready"])
+
+    def test_passed_ship_evidence_is_ready(self) -> None:
+        self.assertTrue(self._ship({"status": "passed"})["ready"])
+
+    def test_stale_ship_evidence_is_not_ready_and_says_what_to_run(self) -> None:
+        result = self._ship(
+            {
+                "status": "stale",
+                "detail": "it was produced for a different tree than HEAD's",
+                "command": "just evidence",
+            }
+        )
+        self.assertFalse(result["ready"])
+        self.assertEqual(
+            result["missing"],
+            [
+                "ship evidence is stale: it was produced for a different tree "
+                "than HEAD's -- run `just evidence`"
+            ],
+        )
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -223,13 +223,13 @@ class RecentCommitsTests(unittest.TestCase):
 class LastVerificationTests(unittest.TestCase):
     def test_none_when_nothing_logged(self) -> None:
         with tempfile.TemporaryDirectory() as root:
-            self.assertIsNone(session_start._last_verification(Path(root)))
+            self.assertIsNone(session_start._last_verification(Path(root), "main"))
 
     def test_formats_the_most_recent_stop_record(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             _common.log_decision(root, "stop.py", "allow", reason="`just test` passed")
-            verification = session_start._last_verification(root)
+            verification = session_start._last_verification(root, "main")
             assert verification is not None
             self.assertIn("allow at", verification)
             self.assertIn("`just test` passed", verification)
@@ -560,6 +560,106 @@ class NotebookSetupCheckTests(unittest.TestCase):
             self._repo(root, track_notebook=False)
             (root / "scratch.ipynb").write_text("{}", encoding="utf-8")
             self.assertIsNone(session_start._notebook_setup_note(root))
+
+
+class StackedBranchTests(unittest.TestCase):
+    """Regression: every step of a stack reported its diff against the
+    default branch -- 326 files for one step's change, in the field."""
+
+    def test_a_stacked_step_reports_its_diff_against_the_parent(self) -> None:
+        with tempfile.TemporaryDirectory() as root_str:
+            root = Path(root_str)
+
+            def git(*args: str) -> None:
+                subprocess.run(
+                    ["git", *args], cwd=root, check=True, capture_output=True
+                )
+
+            def commit(name: str) -> None:
+                (root / name).write_text(name, encoding="utf-8")
+                git("add", name)
+                git(
+                    "-c",
+                    "user.email=canon@example.com",
+                    "-c",
+                    "user.name=Canon Tests",
+                    "commit",
+                    "-q",
+                    "-m",
+                    name,
+                )
+
+            git("init", "-q")
+            git("symbolic-ref", "HEAD", "refs/heads/main")
+            commit("init.txt")
+            git("switch", "-q", "-c", "a")
+            commit("a1.txt")
+            commit("a2.txt")
+            git("switch", "-q", "-c", "b")
+            commit("b.txt")
+
+            context = _invoke_main({"cwd": str(root)})
+
+        self.assertIn("Diff vs `a`: 1 file changed", context)
+
+
+class DecisionsLogNoteTests(unittest.TestCase):
+    """Regression: in the field the log was tracked and had to be left
+    out of every commit by hand."""
+
+    def _git(self, root: Path, *args: str) -> None:
+        subprocess.run(["git", *args], cwd=root, check=True, capture_output=True)
+
+    def _log(self, root: Path) -> None:
+        path = root / ".canon" / "hooks" / "decisions.jsonl"
+        path.parent.mkdir(parents=True)
+        path.write_text("{}\n", encoding="utf-8")
+
+    def test_a_tracked_log_names_both_fixes(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            self._git(root, "init", "-q")
+            self._log(root)
+            self._git(root, "add", ".canon/hooks/decisions.jsonl")
+            note = session_start._decisions_log_note(root)
+        assert note is not None
+        self.assertIn("is tracked", note)
+        self.assertIn("git rm --cached .canon/hooks/decisions.jsonl", note)
+
+    def _configure_verify(self, root: Path) -> None:
+        (root / ".canon").mkdir(exist_ok=True)
+        (root / ".canon" / "config.json").write_text(
+            '{"verify": "true"}\n', encoding="utf-8"
+        )
+
+    def test_an_unignored_directory_is_reported(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            self._git(root, "init", "-q")
+            self._configure_verify(root)
+            note = session_start._decisions_log_note(root)
+        assert note is not None
+        self.assertIn("is not gitignored", note)
+
+    def test_silent_about_an_unignored_directory_when_inert(self) -> None:
+        # No verification signal: no hook writes the log, so there is
+        # nothing that could land in a commit.
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            self._git(root, "init", "-q")
+            self.assertIsNone(session_start._decisions_log_note(root))
+
+    def test_silent_when_ignored(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            self._git(root, "init", "-q")
+            (root / ".gitignore").write_text(".canon/hooks/\n", encoding="utf-8")
+            self._log(root)
+            self.assertIsNone(session_start._decisions_log_note(root))
+
+    def test_silent_outside_a_git_repository(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            self.assertIsNone(session_start._decisions_log_note(Path(tmp)))
 
 
 if __name__ == "__main__":

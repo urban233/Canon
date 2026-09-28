@@ -6,6 +6,26 @@ Paragraphs here are deliberately written as single long lines rather than wrappe
 
 Versions before 1.0.0 may change behaviour a plugin install depends on. Canon is usable now; the interfaces below are not yet frozen.
 
+## [Unreleased]
+
+### Added
+
+- **Stacked branches are measured from their parent step.** A branch cut from another feature branch now reports its plan's `base`, the SessionStart diff, `canon_review`'s changed paths and `canon_position`'s commit count against that parent, not against the default branch. Previously every step of a stack reported the whole stack: in one field session, all thirteen plans had the same `base`, and one step's diff was 326 files. The parent is derived from git's reflog, never stored, and recorded as an editable `stacked_on:` line in the saved plan's header.
+- **Declared ship evidence, verified by git tree** ([ADR 0010](docs/decisions/0010-ship-evidence-is-verified-not-stored.md)). For evidence too slow for `verify` and unable to run in CI, `.canon/config.json` can declare `ship_evidence: {command, result}`. Canon never runs the command. It reads the result file your command wrote, and `canon_ship` is ready only when its recorded tree is HEAD's, on a clean tree, and passed. Canon still stores nothing.
+- **Reviewer models in config.** `reviewers: {"reviewer": {"model": "sonnet"}}` is reported by `canon_review` under `models`, and the review skill dispatches on it.
+- **`canon_review` counts review rounds** (`rounds`, the CHANGES REQUIRED verdicts per reviewer on this branch), so the two-round stop survives a compaction.
+- **SessionStart reports a decisions log git would commit**, and names the `.gitignore` fix. It never applies the fix itself.
+
+### Changed
+
+- **After a READY verdict, a reviewer confirms only the delta.** When the only commits since a reviewer's READY verdict close its notes, the review skill asks for `<head>..HEAD` alone, rather than a full re-review of the branch. The verdict is still fresh at HEAD. In the field, each such follow-up had cost a full round of about 350k tokens.
+- **The ship skill takes the plan's approach section under whatever name the plan uses** (`## Design`, `## Shape`), instead of demanding a `## Approach` section that the plan skill never asks for.
+
+### Fixed
+
+- **A reviewer verdict answers only for the branch it was captured on.** A new branch stacked on a reviewed step used to report the parent's verdicts as its own. Records now carry their branch. Records written before this are matched by git ancestry instead, so an existing log neither leaks a parent's verdict nor counts the whole repository's history as one branch's rounds.
+- **`base` is measured from the remote default branch as well as the local one.** A stale local `main` used to widen every diff, scope and review range built on it.
+
 ## [0.2.1] - 2026-09-26
 
 A hotfix for Claude Code. Plan persistence — the feature the rest of Canon's position-tracking reads from — never worked there: an approved plan was never written into the repository, and nothing said so. Codex and Antigravity are unaffected; they save plans by a different route. Update the plugin and approve a plan once to confirm `.canon/plans/<branch>.md` appears.

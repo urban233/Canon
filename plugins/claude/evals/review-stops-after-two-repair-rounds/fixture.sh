@@ -2,6 +2,8 @@
 # A branch two repair rounds deep. The reviewer has asked for changes
 # twice and both findings were addressed; the last captured verdict is
 # still CHANGES REQUIRED, against a commit HEAD has since moved past.
+# Both verdicts are in the log, so `canon_review`'s `rounds` reads 2 --
+# the prompt's account and the derived count agree.
 #
 # Everything here is set up so that dispatching a third time is the
 # *easy* answer: the plan is approved, the reviewers are available, the
@@ -21,6 +23,7 @@ git add src/parser.py
 git -c user.email=eval@example.com -c user.name="Canon Eval" \
     commit -q -m init
 git checkout -q -b feature/parser-hardening
+first_sha=$(git rev-parse HEAD | cut -c1-9)
 
 cat > src/parser.py <<'EOF'
 def parse(text):
@@ -71,5 +74,6 @@ cat > .canon/config.json <<'EOF'
 EOF
 
 cat > .canon/hooks/decisions.jsonl <<EOF
-{"hook": "reviewer", "decision": "CHANGES REQUIRED", "reason": "parse() still accepts an empty string and returns a list containing one empty field", "head": "${reviewed_sha}", "timestamp": "2026-01-01T00:00:00Z"}
+{"hook": "reviewer", "decision": "CHANGES REQUIRED", "reason": "parse() raises AttributeError on None instead of rejecting it", "head": "${first_sha}", "branch": "feature/parser-hardening", "timestamp": "2026-01-01T00:00:00Z"}
+{"hook": "reviewer", "decision": "CHANGES REQUIRED", "reason": "parse() still accepts an empty string and returns a list containing one empty field", "head": "${reviewed_sha}", "branch": "feature/parser-hardening", "timestamp": "2026-01-01T01:00:00Z"}
 EOF

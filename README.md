@@ -295,6 +295,46 @@ independent review, and opening the pull request once `canon_ship` reports
 the change is actually ready. Canon never merges, approves, or opens a
 pull request on `main` itself -- that's always a human's call.
 
+**Keep Canon's local log out of git.** Canon's hooks write a local log to
+`.canon/hooks/decisions.jsonl`; add `.canon/hooks/` to your `.gitignore`.
+The rest of `.canon/` -- `config.json` and the saved plans -- is meant to
+be committed. Canon mentions it at session start if the directory isn't
+ignored, and never edits `.gitignore` itself.
+
+**Stacked branches.** A branch cut from another feature branch (step two
+of a feature while step one is still open) is measured from that parent
+step, not from the default branch: its plan's `base`, the diff reported at
+session start, and the range handed to reviewers all cover only that
+step. Canon works out the parent from git's reflog and records it as
+`stacked_on:` in the saved plan's header. If that's wrong, or empty
+because the branch was fetched rather than created here, edit the field;
+naming the default branch there means "not stacked".
+
+**Optional settings** in `.canon/config.json`, next to `verify`:
+
+```json
+{
+  "verify": "just lint",
+  "reviewers": {
+    "reviewer": {"model": "sonnet"},
+    "risk-reviewer": {"model": "opus"}
+  },
+  "ship_evidence": {
+    "command": "just evidence",
+    "result": "build/canon-evidence.json"
+  }
+}
+```
+
+- `reviewers` picks the model each reviewer subagent is dispatched on;
+  unset, both run on their agent definition's default.
+- `ship_evidence` is for evidence too slow for `verify` and unable to
+  run in CI (a display-bound run, say). Canon never runs `command`; your
+  command writes `result` (a gitignored path) as
+  `{"tree": "<git rev-parse HEAD^{tree}>", "dirty": false, "passed": true}`,
+  and `canon_ship` is ready only when that tree is HEAD's. See
+  [ADR 0010](docs/decisions/0010-ship-evidence-is-verified-not-stored.md).
+
 The full design -- evidence, invariants, architecture, every settled
 question -- is written up at [`docs/plan.md`](docs/plan.md).
 

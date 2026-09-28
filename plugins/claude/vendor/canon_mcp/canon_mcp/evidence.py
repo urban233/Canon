@@ -23,6 +23,7 @@ configured yet" -- `green: None` plus a `message` -- rather than as
 
 from __future__ import annotations
 
+import json
 import shlex
 import subprocess
 from pathlib import Path
@@ -32,11 +33,12 @@ from ._config import (
     has_verification_signal,
     load_config,
     resolve_verify_command,
+    ship_evidence_config,
     verify_command_problem,
     verify_command_source,
 )
 from ._gh import ci_runs_for_commit
-from ._git import current_branch, full_head_sha, is_pushed
+from ._git import current_branch, full_head_sha, head_tree, is_pushed
 
 _VERIFY_TIMEOUT_SECONDS = 300
 _OUTPUT_TAIL_CHARS = 4000
@@ -101,7 +103,78 @@ def _latest_run(runs: list[dict[str, Any]]) -> dict[str, Any] | None:
 def build_evidence(root: Path) -> dict[str, Any]:
     """Whether the current HEAD is green, and where that was
     established: CI for a pushed commit, a fresh local re-run for one
-    that isn't."""
+    that isn't -- plus, when the repository declares one, whether its
+    ship evidence was produced for exactly this tree."""
+    evidence = _build_head_evidence(root)
+    ship = ship_evidence(root, load_config(root))
+    if ship is not None:
+        evidence["ship_evidence"] = ship
+    return evidence
+
+
+def ship_evidence(root: Path, config: dict[str, Any] | None) -> dict[str, Any] | None:
+    """The declared ship-evidence result, checked against HEAD's tree, or
+    None when the repository declares none.
+
+    docs/decisions/0010-ship-evidence-is-verified-not-stored.md: Canon
+    never runs `command` -- the evidence it names is too slow, or needs a
+    display, which is exactly why neither CI nor the `Stop` hook covers
+    it. It reads the file the repository's command wrote and checks the
+    binding: the recorded `tree` must be HEAD's tree, the run must not
+    have been on a dirty tree, and it must have passed. `status` is one
+    of `passed`, `missing`, `malformed`, `stale`, `dirty` or `failed`.
+    What this verifies is the binding, not the honesty -- a hand-written
+    file passes too; see the record's Consequences.
+    """
+    spec = ship_evidence_config(config)
+    if spec is None:
+        return None
+    if "problem" in spec:
+        return {"status": "malformed", "detail": spec["problem"]}
+    report: dict[str, Any] = {"command": spec["command"], "result": spec["result"]}
+
+    def verdict(status: str, detail: str) -> dict[str, Any]:
+        return {**report, "status": status, "detail": detail}
+
+    try:
+        raw = (root / spec["result"]).read_text(encoding="utf-8")
+    except OSError:
+        return verdict("missing", f"`{spec['result']}` does not exist yet")
+    except UnicodeDecodeError:
+        return verdict("malformed", f"`{spec['result']}` is not UTF-8 JSON")
+    try:
+        data = json.loads(raw)
+    except (json.JSONDecodeError, ValueError):
+        return verdict("malformed", f"`{spec['result']}` is not JSON")
+    if not isinstance(data, dict):
+        return verdict("malformed", f"`{spec['result']}` is not a JSON object")
+    tree, dirty, passed = data.get("tree"), data.get("dirty"), data.get("passed")
+    if (
+        not isinstance(tree, str)
+        or not tree
+        or not isinstance(dirty, bool)
+        or not isinstance(passed, bool)
+    ):
+        return verdict(
+            "malformed",
+            f"`{spec['result']}` needs a string `tree` and booleans `dirty` "
+            "and `passed`",
+        )
+    report["tree"] = tree
+    if isinstance(data.get("checks"), list):
+        report["checks"] = data["checks"]
+    current = head_tree(root)
+    report["head_tree"] = current
+    if current is None or len(tree) < 7 or not current.startswith(tree):
+        return verdict("stale", "it was produced for a different tree than HEAD's")
+    if dirty:
+        return verdict("dirty", "it was produced on a working tree with changes")
+    if not passed:
+        return verdict("failed", "it ran against HEAD's tree and did not pass")
+    return verdict("passed", "it ran against HEAD's tree and passed")
+
+
+def _build_head_evidence(root: Path) -> dict[str, Any]:
     sha = full_head_sha(root)
     if sha is not None and is_pushed(root, sha):
         runs = ci_runs_for_commit(root, sha) or []

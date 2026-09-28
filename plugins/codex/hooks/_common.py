@@ -24,7 +24,10 @@ maintained twice.
 Every Canon gate fails open (see `fail_open`): a guardrail that errors must
 never block work. And Canon writes no repository state -- the one file this
 module writes, `.canon/hooks/decisions.jsonl`, is a gitignored local
-diagnostic that is never read back to make a decision. The single permitted
+log. It is read back in exactly two places: `canon_review` (canon_mcp's
+`review.py`) takes each reviewer's verdict from it, which `canon_ship`
+gates on, and `session_start.py` recaps the last verification from it
+after a compaction. No hook gates on it. The single permitted
 exception is session-scoped counter state under `state_dir` -- used by
 `stop.py`'s consecutive-refusal counter and `check_scope.py`'s
 consecutive-departure counter, each documented on its own hook rather than
@@ -310,10 +313,26 @@ def default_branch(root: Path) -> str:
     return "main"
 
 
-def merge_base(root: Path, default_branch_name: str) -> str | None:
-    """The short SHA where the current branch diverged from
-    `default_branch_name`, or None if that can't be determined."""
-    sha = _run_git(root, "merge-base", "HEAD", default_branch_name)
+def merge_base(root: Path, ref: str) -> str | None:
+    """The short SHA where the current branch diverged from `ref`, or
+    None if that can't be determined.
+
+    Measured against both the local `ref` and `origin/<ref>`, whichever
+    exist, and the latest fork point from either wins (`git merge-base`
+    with several commits does exactly this). A local default branch is
+    routinely behind its remote -- nobody pulls `main` into a checkout
+    that only ever branches from `origin/main` -- and measuring from the
+    stale local copy silently widens every diff, scope and review range
+    built on this base.
+    """
+    candidates = [
+        candidate
+        for candidate in (ref, f"origin/{ref}")
+        if _run_git(root, "rev-parse", "--verify", "-q", f"{candidate}^{{commit}}")
+    ]
+    if not candidates:
+        return None
+    sha = _run_git(root, "merge-base", "HEAD", *candidates)
     return sha[:9] if sha else None
 
 
@@ -538,9 +557,11 @@ def log_decision(
     `extra` merges additional fields into the record (e.g. the HEAD SHA a
     review verdict was captured against) without those fields colliding
     with the base ones -- see `capture_review.py`'s use of `extra={"head":
-    ...}`. Never raises: a broken log must never change a hook's own
-    allow/ask/deny behavior, and this file is never read back by any hook
-    to decide anything -- see the module docstring's no-stored-state rule.
+    ...}`. Every record carries the branch it was written on, so a reader
+    can scope to it: a verdict captured on a parent step must not answer
+    for the branch stacked on it. Never raises: a broken log must never
+    change a hook's own allow/ask/deny behavior, and no hook reads this
+    file back to decide anything -- see the module docstring.
     """
     try:
         record: dict[str, Any] = {
@@ -549,6 +570,9 @@ def log_decision(
             "decision": decision,
             "reason": reason,
         }
+        branch = current_branch(root)
+        if branch is not None:
+            record["branch"] = branch
         if extra:
             record.update(extra)
         path = root / _DECISIONS_LOG_RELATIVE
@@ -559,14 +583,16 @@ def log_decision(
         pass
 
 
-def last_decision(root: Path, hook_name: str) -> dict[str, Any] | None:
+def last_decision(
+    root: Path, hook_name: str, branch: str | None = None
+) -> dict[str, Any] | None:
     """The most recently logged decision for `hook_name`, or None.
 
-    Reads `_DECISIONS_LOG_RELATIVE` back for **display only** -- the one
-    sanctioned exception to this module's "never read back to decide
-    anything" rule (see the module docstring). A hook may surface this as
-    informational context (e.g. a post-compaction recap of the last
-    verification result); nothing may gate on it.
+    With `branch`, a record written on a different branch is skipped. A
+    record with no `branch` field predates branch scoping and still
+    matches, so an existing log keeps answering. A hook may surface this
+    as informational context (e.g. a post-compaction recap of the last
+    verification result); no hook may gate on it.
     """
     path = root / _DECISIONS_LOG_RELATIVE
     try:
@@ -578,9 +604,18 @@ def last_decision(root: Path, hook_name: str) -> dict[str, Any] | None:
             record = json.loads(line)
         except (json.JSONDecodeError, ValueError):
             continue
-        if isinstance(record, dict) and record.get("hook") == hook_name:
+        if (
+            isinstance(record, dict)
+            and record.get("hook") == hook_name
+            and _on_branch(record, branch)
+        ):
             return record
     return None
+
+
+def _on_branch(record: dict[str, Any], branch: str | None) -> bool:
+    recorded = record.get("branch")
+    return branch is None or recorded is None or recorded == branch
 
 
 _SECTION_HEADING_PATTERN = re.compile(r"^## (.+?)\s*$", re.MULTILINE)

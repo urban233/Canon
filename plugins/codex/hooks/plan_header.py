@@ -331,16 +331,14 @@ def derive_branch_header(
     """The `---`-delimited header for a branch plan, derived from `body`
     and the repository's current git state.
 
-    `branch` is only used to look up `_common.default_branch`/
-    `_common.merge_base`'s inputs indirectly via `root` -- callers that
-    already know the branch pass it for clarity; it does not otherwise
-    change what is derived. Returns the header text plus the list of
+    `branch` decides what `base` is measured from: its parent step when
+    `stacked_on` finds one (recorded as `stacked_on:`), otherwise the
+    default branch. Returns the header text plus the list of
     required sections that were missing, so a caller can decide whether to
     surface `missing_sections_message`.
     """
-    del branch  # kept in the signature for callers' clarity; derived below
-    default_branch = _common.default_branch(root)
-    base = _common.merge_base(root, default_branch)
+    parent_branch = stacked_on(root, branch)
+    base = _common.merge_base(root, parent_branch or _common.default_branch(root))
 
     missing = missing_required_sections(body)
     notes = [
@@ -353,6 +351,7 @@ def derive_branch_header(
         "---",
         "status: approved",
         _header_line("base", base),
+        _header_line("stacked_on", parent_branch),
         _header_line(
             "scope",
             (
@@ -425,6 +424,112 @@ def branch_plan_path(root: Path, branch: str) -> Path:
     # `.canon/plans/<branch>.md` -- see `branch_plan_relative` and the
     # module docstring for why.
     return root / branch_plan_relative(branch)
+
+
+_CREATED_FROM_PREFIX = "branch: Created from "
+_MOVING_FROM_PREFIX = "checkout: moving from "
+
+
+def stacked_on(root: Path, branch: str | None) -> str | None:
+    """The local branch `branch` is stacked on, or None if it is cut from
+    the default branch -- derived, never stored.
+
+    docs/plan.md §12 has Canon ask "stack on this branch, or branch from
+    the default?" and never assume; this is what makes the answer stick
+    afterwards, so a step's base, diff and review range measure from its
+    parent step rather than from the whole stack. In order:
+
+    1. the saved plan header's `stacked_on:` -- human-editable, and the
+       only source that travels with the plan to another machine. Naming
+       the default branch there says "not stacked" and ends the search;
+    2. the branch's own reflog, `branch: Created from <X>`;
+    3. when that says `HEAD` (`git switch -c` with no start point), the
+       oldest HEAD-reflog entry `checkout: moving from <X> to <branch>`.
+
+    A candidate counts only if it is an existing local branch, is neither
+    `branch` nor the default branch, and is a real parent: HEAD's fork
+    point from it is strictly newer than -- a descendant of -- HEAD's
+    fork point from the default branch. An older fork point is a stale
+    candidate (a squash-merged parent still checked out locally after
+    this branch was rebased, or a branch name reused), and measuring
+    from it would widen the diff rather than narrow it. Anything else --
+    including every git failure -- is None, which is exactly today's
+    behaviour of measuring from the default branch.
+    """
+    if not branch or branch == "HEAD":
+        return None
+    default = _common.default_branch(root)
+    if branch == default:
+        return None
+    declared = _declared_stacked_on(root, branch)
+    if declared == default:
+        return None
+    default_fork = _common.merge_base(root, default)
+    for candidate in (declared, _reflog_parent(root, branch)):
+        if candidate and _is_parent(root, branch, candidate, default, default_fork):
+            return candidate
+    return None
+
+
+def base_ref(root: Path, branch: str | None) -> str:
+    """The ref `branch`'s base is measured from: its parent step when it
+    is stacked, otherwise the default branch."""
+    return stacked_on(root, branch) or _common.default_branch(root)
+
+
+def _declared_stacked_on(root: Path, branch: str) -> str | None:
+    try:
+        text = branch_plan_path(root, branch).read_text(encoding="utf-8")
+    except OSError:
+        return None
+    header, _ = _common.plan_header_and_body(text)
+    value = header.get("stacked_on", "").strip()
+    return value or None
+
+
+def _reflog_parent(root: Path, branch: str) -> str | None:
+    created = _common._run_git(
+        root, "reflog", "show", "--format=%gs", f"refs/heads/{branch}", "--"
+    )
+    if created:
+        oldest = created.splitlines()[-1]
+        if oldest.startswith(_CREATED_FROM_PREFIX):
+            source = oldest[len(_CREATED_FROM_PREFIX) :].strip()
+            source = source.removeprefix("refs/heads/")
+            if source != "HEAD":
+                return source
+    moves = _common._run_git(root, "reflog", "show", "--format=%gs", "HEAD", "--")
+    if not moves:
+        return None
+    suffix = f" to {branch}"
+    for entry in reversed(moves.splitlines()):
+        if entry.startswith(_MOVING_FROM_PREFIX) and entry.endswith(suffix):
+            return entry[len(_MOVING_FROM_PREFIX) : -len(suffix)].strip() or None
+    return None
+
+
+def _is_parent(
+    root: Path,
+    branch: str,
+    candidate: str,
+    default: str,
+    default_fork: str | None,
+) -> bool:
+    if candidate in (branch, default):
+        return False
+    if not _common._run_git(
+        root, "rev-parse", "--verify", "-q", f"refs/heads/{candidate}"
+    ):
+        return False
+    fork = _common.merge_base(root, candidate)
+    if fork is None or fork == default_fork:
+        return False
+    if default_fork is None:
+        return True
+    # A real parent's fork point descends from the default fork point;
+    # an older one would widen the range rather than narrow it.
+    common = _common._run_git(root, "merge-base", default_fork, fork)
+    return common is not None and common.startswith(default_fork)
 
 
 def feature_plan_path(root: Path, slug: str) -> Path:

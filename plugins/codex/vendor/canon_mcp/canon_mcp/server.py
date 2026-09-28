@@ -102,7 +102,9 @@ def canon_review(workspace: Workspace) -> dict[str, Any]:
 
 @server.tool(structured_output=True)
 def canon_evidence(workspace: Workspace) -> dict[str, Any]:
-    """Whether this commit is green, and where that was established."""
+    """Whether this commit is green, and where that was established --
+    and, when the repository declares ship evidence, whether it was
+    produced for exactly this tree."""
     return build_evidence(_root(workspace))
 
 

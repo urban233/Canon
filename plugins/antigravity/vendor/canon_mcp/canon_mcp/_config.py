@@ -221,3 +221,66 @@ def interaction_mode(config: dict[str, Any] | None) -> str:
         return _DEFAULT_MODE
     mode = config.get("mode")
     return mode if mode in _VALID_MODES else _DEFAULT_MODE
+
+
+def ship_evidence_config(config: dict[str, Any] | None) -> dict[str, str] | None:
+    """The declared ship-evidence result, per
+    docs/decisions/0010-ship-evidence-is-verified-not-stored.md.
+
+    None when the key is absent -- the repository declares no ship
+    evidence and nothing about `canon_ship` changes. Otherwise
+    `{"command": ..., "result": ...}` when well-formed, or
+    `{"problem": ...}` naming what is wrong with it, so a malformed key
+    is reported rather than silently ignored or raised.
+
+    `result` must be a relative path that stays inside the repository:
+    Canon reads a file the repository's own command wrote, and nothing
+    else.
+    """
+    if config is None or "ship_evidence" not in config:
+        return None
+    declared = config.get("ship_evidence")
+    if not isinstance(declared, dict):
+        return {"problem": "`ship_evidence` must be an object"}
+    command = declared.get("command")
+    result = declared.get("result")
+    if not isinstance(command, str) or not command.strip():
+        return {"problem": "`ship_evidence.command` must name a command"}
+    if not isinstance(result, str) or not result.strip():
+        return {"problem": "`ship_evidence.result` must name a file"}
+    # Validate the path exactly as it will be read: checking the
+    # unstripped value would let " ../x" or " /etc/x" pass and then
+    # resolve outside the repository once stripped.
+    result = result.strip()
+    relative = Path(result)
+    if relative.is_absolute() or ".." in relative.parts:
+        return {
+            "problem": "`ship_evidence.result` must be a path inside the "
+            "repository, relative to its root"
+        }
+    return {"command": command.strip(), "result": result}
+
+
+def reviewer_models(config: dict[str, Any] | None) -> dict[str, str]:
+    """The model each reviewer should be dispatched on, where
+    `.canon/config.json` names one:
+    `{"reviewers": {"reviewer": {"model": "sonnet"}}}`.
+
+    Only well-formed entries are returned; an unconfigured reviewer runs
+    on its agent definition's own `model:`. The value is passed through
+    as given -- an alias or a full model ID -- since which names the host
+    accepts is the host's to decide, not Canon's.
+    """
+    if config is None:
+        return {}
+    reviewers = config.get("reviewers")
+    if not isinstance(reviewers, dict):
+        return {}
+    models: dict[str, str] = {}
+    for name, settings in reviewers.items():
+        if not isinstance(name, str) or not isinstance(settings, dict):
+            continue
+        model = settings.get("model")
+        if isinstance(model, str) and model.strip():
+            models[name] = model.strip()
+    return models

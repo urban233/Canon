@@ -377,8 +377,45 @@ def _notebook_setup_note(root: Path) -> str | None:
     )
 
 
+_DECISIONS_LOG = _common._DECISIONS_LOG_RELATIVE
+
+
+def _decisions_log_note(root: Path) -> str | None:
+    """Say so, with the fix, when Canon's local log would land in a
+    commit.
+
+    The log is written into `.canon/hooks/` and every hook assumes that
+    directory is gitignored, but only Canon's own repository ignores it.
+    In the field it was tracked, showed as modified after every hook,
+    and had to be left out of every commit by hand. Reported, never
+    fixed: editing a repository's `.gitignore` or index is the
+    developer's call, the same rule as the notebook note above. Any git
+    failure means silence, and so does an inert Canon: without a
+    verification signal no hook writes the log, so an unignored
+    `.canon/hooks/` costs nothing and is not worth a note every session.
+    """
+    if _common._run_git(root, "rev-parse", "--is-inside-work-tree") != "true":
+        return None
+    if _common._run_git(root, "ls-files", "--error-unmatch", _DECISIONS_LOG):
+        return (
+            f"Canon's local log `{_DECISIONS_LOG}` is tracked by git here, so it "
+            "shows as modified after every hook. Suggest adding `.canon/hooks/` to "
+            f"`.gitignore` and running `git rm --cached {_DECISIONS_LOG}` -- never "
+            "do either without asking."
+        )
+    if not _config.has_verification_signal(_config.load_config(root)):
+        return None
+    if _common._run_git(root, "check-ignore", _DECISIONS_LOG):
+        return None
+    return (
+        "`.canon/hooks/` is not gitignored here, so Canon's local log will show up "
+        "as an untracked file. Suggest adding `.canon/hooks/` to `.gitignore` -- "
+        "never do it without asking."
+    )
+
+
 def _position_line(
-    root: Path, branch: str, default_branch: str, base: str | None
+    root: Path, branch: str, measured_from: str, base: str | None
 ) -> str:
     parts = [f"Canon position: branch `{branch}`."]
     parts.append(f"Plan: {_plan_status(root, branch)}.")
@@ -387,12 +424,12 @@ def _position_line(
 
     diff = _diff_summary(root, base)
     if diff is not None:
-        parts.append(f"Diff vs `{default_branch}`: {diff}.")
+        parts.append(f"Diff vs `{measured_from}`: {diff}.")
 
     parts.append(f"PR: {_pr_status(root)}.")
-    note = _notebook_setup_note(root)
-    if note is not None:
-        parts.append(note)
+    for note in (_notebook_setup_note(root), _decisions_log_note(root)):
+        if note is not None:
+            parts.append(note)
     return " ".join(parts)
 
 
@@ -416,8 +453,8 @@ def _recent_commits(root: Path, base: str | None) -> str | None:
     return log.replace("\n", "; ") if log else None
 
 
-def _last_verification(root: Path) -> str | None:
-    record = _common.last_decision(root, "stop.py")
+def _last_verification(root: Path, branch: str) -> str | None:
+    record = _common.last_decision(root, "stop.py", branch)
     if record is None:
         return None
     decision = record.get("decision", "unknown")
@@ -433,15 +470,15 @@ def _open_questions(root: Path, branch: str) -> str | None:
 
 
 def _compaction_recap(
-    root: Path, branch: str, default_branch: str, base: str | None
+    root: Path, branch: str, measured_from: str, base: str | None
 ) -> str:
     lines = [
         "Post-compaction recap (this survives the summariser because it "
         "was never only in the transcript):"
     ]
     commits = _recent_commits(root, base)
-    lines.append(f"Decisions since `{default_branch}`: {commits or 'none yet'}")
-    verification = _last_verification(root)
+    lines.append(f"Decisions since `{measured_from}`: {commits or 'none yet'}")
+    verification = _last_verification(root, branch)
     lines.append(f"Last verification: {verification or 'none logged yet'}")
     open_questions = _open_questions(root, branch)
     if open_questions:
@@ -468,12 +505,14 @@ def main() -> None:
 
     root = _common.repo_root(payload)
     branch = _common.current_branch(root) or "unknown"
-    default_branch = _common.default_branch(root)
-    base = _common.merge_base(root, default_branch)
+    # A stacked step measures from its parent step, not from the default
+    # branch -- otherwise every step of a stack reports the whole stack.
+    measured_from = plan_header.base_ref(root, branch)
+    base = _common.merge_base(root, measured_from)
 
-    message = _position_line(root, branch, default_branch, base)
+    message = _position_line(root, branch, measured_from, base)
     if payload is not None and payload.get("source") == "compact":
-        message += "\n\n" + _compaction_recap(root, branch, default_branch, base)
+        message += "\n\n" + _compaction_recap(root, branch, measured_from, base)
 
     _common.context("SessionStart", message)
 

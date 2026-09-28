@@ -297,6 +297,36 @@ class LastDecisionTests(unittest.TestCase):
             log_path.write_text("not json\n", encoding="utf-8")
             self.assertIsNone(_common.last_decision(root, "stop.py"))
 
+    def test_records_are_stamped_with_the_branch(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            with mock.patch.object(_common, "current_branch", return_value="b"):
+                _common.log_decision(root, "stop.py", "allow")
+            record = _common.last_decision(root, "stop.py")
+            assert record is not None
+            self.assertEqual(record["branch"], "b")
+
+    def test_a_record_from_another_branch_is_skipped(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            with mock.patch.object(_common, "current_branch", return_value="a"):
+                _common.log_decision(root, "stop.py", "block", reason="parent")
+            self.assertIsNone(_common.last_decision(root, "stop.py", "b"))
+            record = _common.last_decision(root, "stop.py", "a")
+            assert record is not None
+            self.assertEqual(record["reason"], "parent")
+
+    def test_a_record_without_a_branch_matches_any_branch(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            log_path = root / ".canon" / "hooks" / "decisions.jsonl"
+            log_path.parent.mkdir(parents=True)
+            log_path.write_text(
+                json.dumps({"hook": "stop.py", "decision": "allow"}) + "\n",
+                encoding="utf-8",
+            )
+            self.assertIsNotNone(_common.last_decision(root, "stop.py", "b"))
+
 
 _SAVED_PLAN = """---
 status: approved
