@@ -378,7 +378,7 @@ def _notebook_setup_note(root: Path) -> str | None:
 
 
 def _position_line(
-    root: Path, branch: str, default_branch: str, base: str | None
+    root: Path, branch: str, measured_from: str, base: str | None
 ) -> str:
     parts = [f"Canon position: branch `{branch}`."]
     parts.append(f"Plan: {_plan_status(root, branch)}.")
@@ -387,7 +387,7 @@ def _position_line(
 
     diff = _diff_summary(root, base)
     if diff is not None:
-        parts.append(f"Diff vs `{default_branch}`: {diff}.")
+        parts.append(f"Diff vs `{measured_from}`: {diff}.")
 
     parts.append(f"PR: {_pr_status(root)}.")
     note = _notebook_setup_note(root)
@@ -433,14 +433,14 @@ def _open_questions(root: Path, branch: str) -> str | None:
 
 
 def _compaction_recap(
-    root: Path, branch: str, default_branch: str, base: str | None
+    root: Path, branch: str, measured_from: str, base: str | None
 ) -> str:
     lines = [
         "Post-compaction recap (this survives the summariser because it "
         "was never only in the transcript):"
     ]
     commits = _recent_commits(root, base)
-    lines.append(f"Decisions since `{default_branch}`: {commits or 'none yet'}")
+    lines.append(f"Decisions since `{measured_from}`: {commits or 'none yet'}")
     verification = _last_verification(root, branch)
     lines.append(f"Last verification: {verification or 'none logged yet'}")
     open_questions = _open_questions(root, branch)
@@ -468,12 +468,14 @@ def main() -> None:
 
     root = _common.repo_root(payload)
     branch = _common.current_branch(root) or "unknown"
-    default_branch = _common.default_branch(root)
-    base = _common.merge_base(root, default_branch)
+    # A stacked step measures from its parent step, not from the default
+    # branch -- otherwise every step of a stack reports the whole stack.
+    measured_from = plan_header.base_ref(root, branch)
+    base = _common.merge_base(root, measured_from)
 
-    message = _position_line(root, branch, default_branch, base)
+    message = _position_line(root, branch, measured_from, base)
     if payload is not None and payload.get("source") == "compact":
-        message += "\n\n" + _compaction_recap(root, branch, default_branch, base)
+        message += "\n\n" + _compaction_recap(root, branch, measured_from, base)
 
     _common.context("SessionStart", message)
 

@@ -107,6 +107,17 @@ py_test(
     ],
 )
 
+# `stacked_on` is duplicated across both libraries the same way, and is
+# pinned the same way -- see test_stacked_on_parity.py.
+py_test(
+    name = "test_stacked_on_parity",
+    srcs = ["test_stacked_on_parity.py", "__init__.py"],
+    deps = [
+        "//src/canon_hooks:canon_hooks_lib",
+        "//src/canon_mcp:canon_mcp_lib",
+    ],
+)
+
 # Exposes this package's own .py files to the root package's lint/typecheck
 # targets -- see plugins/claude/hooks/BUILD.bazel's py_sources for why.
 filegroup(

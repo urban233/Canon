@@ -28,6 +28,7 @@ from ._git import (
     merged_branch_names,
 )
 from ._plan import branch_plan_relative, read_plan_file, resolve_parent
+from ._stack import stacked_on
 from ._steps import annotate, parse_steps, summarize
 from .review import build_review
 
@@ -182,7 +183,9 @@ def build_position(root: Path) -> dict[str, Any]:
     """Where the work stands and the single next step."""
     branch = current_branch(root) or "HEAD"
     default = default_branch(root)
-    base = merge_base(root, default)
+    parent_branch = stacked_on(root, branch)
+    measured_from = parent_branch or default
+    base = merge_base(root, measured_from)
     head = head_sha(root)
     ahead = commits_ahead(root, base)
     plan = read_plan_file(root, branch_plan_relative(branch))
@@ -198,6 +201,7 @@ def build_position(root: Path) -> dict[str, Any]:
     return {
         "branch": branch,
         "default_branch": default,
+        "stacked_on": parent_branch,
         "base": base,
         "head": head,
         "commits_ahead": ahead,
@@ -209,7 +213,7 @@ def build_position(root: Path) -> dict[str, Any]:
         "review": review,
         "next_step": next_step,
         "summary": (
-            f"On {branch}, {ahead_text} commit(s) ahead of {default}."
+            f"On {branch}, {ahead_text} commit(s) ahead of {measured_from}."
             f"{_feature_sentence(feature)} {next_step}"
         ),
     }

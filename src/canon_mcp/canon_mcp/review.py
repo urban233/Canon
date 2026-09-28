@@ -25,7 +25,8 @@ shape every existing consumer (`position.py`, `ship.py`) already reads,
 so neither of them needs to change for this.
 
 `rounds` counts, per reviewer, the CHANGES REQUIRED verdicts captured on
-this branch. The review skill stops and asks the developer after two;
+this branch (see `_belongs_here` for records written before records
+carried a branch). The review skill stops and asks the developer after two;
 deriving the count from the log, rather than holding it in the
 conversation, is what lets that rule survive a compaction. It is still
 not a gate -- `canon_ship` never reads it.
@@ -39,12 +40,13 @@ from typing import Any
 from ._decisions import decisions_for
 from ._git import (
     changed_paths,
+    commits_since,
     current_branch,
-    default_branch,
     file_at_revision,
     head_sha,
     merge_base,
 )
+from ._stack import base_ref
 from ._notebook import (
     changed_code_cells,
     code_cell_sources,
@@ -196,21 +198,47 @@ def _combine(
     }, stale
 
 
+def _belongs_here(record: dict[str, Any], on_branch: set[str] | None) -> bool:
+    """Whether a record already scoped by `decisions_for` belongs to this
+    branch.
+
+    A record stamped with a branch was matched on that stamp. One written
+    before records carried a branch matches every branch there, so it is
+    narrowed here by ancestry instead: it counts only when the commit it
+    was captured against is in `base..HEAD`. Without this an upgraded log
+    reports the parent step's verdict as this branch's, and counts every
+    CHANGES REQUIRED the repository ever saw as this branch's rounds -- 14
+    of them, measured on the field repository this was written for.
+    When the range can't be determined, the record is kept.
+    """
+    if record.get("branch") is not None or on_branch is None:
+        return True
+    head = record.get("head")
+    if not isinstance(head, str) or not head:
+        return False
+    return any(sha.startswith(head) for sha in on_branch)
+
+
 def build_review(root: Path) -> dict[str, Any]:
     """The reviewers this diff calls for, and the combined captured
     verdict against the current HEAD, if every called-for reviewer has
     produced one."""
     current_head = head_sha(root)
-    base = merge_base(root, default_branch(root))
+    branch = current_branch(root)
+    # A stacked step is reviewed against its parent step, not the whole
+    # stack -- see `_stack.stacked_on`.
+    base = merge_base(root, base_ref(root, branch))
     paths = changed_paths(root, base) if base else None
     reviewers = _reviewers_called_for(paths)
     notebooks = _notebooks(root, base, paths)
 
-    branch = current_branch(root)
+    on_branch = commits_since(root, base)
     per_reviewer: dict[str, dict[str, Any] | None] = {}
     rounds: dict[str, int] = {}
     for name in reviewers:
-        history = decisions_for(root, name, branch)
+        history = [
+            r for r in decisions_for(root, name, branch) if _belongs_here(r, on_branch)
+        ]
         rounds[name] = sum(1 for r in history if r.get("decision") == _CHANGES_REQUIRED)
         if not history:
             per_reviewer[name] = None

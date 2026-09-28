@@ -562,5 +562,46 @@ class NotebookSetupCheckTests(unittest.TestCase):
             self.assertIsNone(session_start._notebook_setup_note(root))
 
 
+class StackedBranchTests(unittest.TestCase):
+    """Regression: every step of a stack reported its diff against the
+    default branch -- 326 files for one step's change, in the field."""
+
+    def test_a_stacked_step_reports_its_diff_against_the_parent(self) -> None:
+        with tempfile.TemporaryDirectory() as root_str:
+            root = Path(root_str)
+
+            def git(*args: str) -> None:
+                subprocess.run(
+                    ["git", *args], cwd=root, check=True, capture_output=True
+                )
+
+            def commit(name: str) -> None:
+                (root / name).write_text(name, encoding="utf-8")
+                git("add", name)
+                git(
+                    "-c",
+                    "user.email=canon@example.com",
+                    "-c",
+                    "user.name=Canon Tests",
+                    "commit",
+                    "-q",
+                    "-m",
+                    name,
+                )
+
+            git("init", "-q")
+            git("symbolic-ref", "HEAD", "refs/heads/main")
+            commit("init.txt")
+            git("switch", "-q", "-c", "a")
+            commit("a1.txt")
+            commit("a2.txt")
+            git("switch", "-q", "-c", "b")
+            commit("b.txt")
+
+            context = _invoke_main({"cwd": str(root)})
+
+        self.assertIn("Diff vs `a`: 1 file changed", context)
+
+
 if __name__ == "__main__":
     unittest.main()

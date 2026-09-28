@@ -159,10 +159,26 @@ def default_branch(root: Path) -> str:
     return "main"
 
 
-def merge_base(root: Path, default_branch_name: str) -> str | None:
-    """The short SHA where the current branch diverged from
-    `default_branch_name`, or None if that can't be determined."""
-    sha = _run_git(root, "merge-base", "HEAD", default_branch_name)
+def merge_base(root: Path, ref: str) -> str | None:
+    """The short SHA where the current branch diverged from `ref`, or
+    None if that can't be determined.
+
+    Measured against both the local `ref` and `origin/<ref>`, whichever
+    exist, and the latest fork point from either wins (`git merge-base`
+    with several commits does exactly this). A local default branch is
+    routinely behind its remote -- nobody pulls `main` into a checkout
+    that only ever branches from `origin/main` -- and measuring from the
+    stale local copy silently widens every diff, scope and review range
+    built on this base.
+    """
+    candidates = [
+        candidate
+        for candidate in (ref, f"origin/{ref}")
+        if _run_git(root, "rev-parse", "--verify", "-q", f"{candidate}^{{commit}}")
+    ]
+    if not candidates:
+        return None
+    sha = _run_git(root, "merge-base", "HEAD", *candidates)
     return sha[:9] if sha else None
 
 
@@ -264,6 +280,21 @@ def file_at_revision(root: Path, revision: str, path: str) -> str | None:
     not as an error.
     """
     return _run_git(root, "show", f"{revision}:{path}")
+
+
+def commits_since(root: Path, base_sha: str | None) -> set[str] | None:
+    """The full SHAs of `base_sha..HEAD`, or None if that can't be
+    determined."""
+    if not base_sha:
+        return None
+    listing = _run_git(root, "rev-list", f"{base_sha}..HEAD")
+    if listing is None:
+        # An empty range is a real answer (HEAD is the base), which
+        # `_run_git` reports as None along with every failure.
+        return (
+            set() if _run_git(root, "rev-parse", "--verify", "-q", base_sha) else None
+        )
+    return set(listing.split())
 
 
 def commits_ahead(root: Path, base_sha: str | None) -> int | None:

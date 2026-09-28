@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import json
+import subprocess
 import tempfile
 import unittest
 from pathlib import Path
@@ -309,6 +310,88 @@ class BranchScopingTests(unittest.TestCase):
                 result = review.build_review(root)
         self.assertIsNone(result["verdict"])
         self.assertIsNone(result["verdicts"]["reviewer"])
+
+
+class LegacyRecordTests(unittest.TestCase):
+    """Records written before they carried a branch are narrowed by
+    ancestry: measured on the field repository, leaving them unscoped
+    counted 14 rounds for one branch and reported the parent's verdict."""
+
+    def _stacked_repo(self, root: Path) -> tuple[str, str]:
+        def git(*args: str) -> str:
+            return subprocess.run(
+                ["git", *args], cwd=root, check=True, capture_output=True, text=True
+            ).stdout.strip()
+
+        def commit(message: str) -> str:
+            git(
+                "-c",
+                "user.email=canon@example.com",
+                "-c",
+                "user.name=Canon Tests",
+                "commit",
+                "-q",
+                "--allow-empty",
+                "-m",
+                message,
+            )
+            return git("rev-parse", "HEAD")[:9]
+
+        git("init", "-q")
+        git("symbolic-ref", "HEAD", "refs/heads/main")
+        commit("init")
+        git("switch", "-q", "-c", "a")
+        parent_head = commit("step a")
+        git("switch", "-q", "-c", "b")
+        own_head = commit("step b")
+        return parent_head, own_head
+
+    def test_only_records_captured_in_base_to_head_count(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            parent_head, own_head = self._stacked_repo(root)
+            _write_log(
+                root,
+                [
+                    {
+                        "hook": "reviewer",
+                        "decision": "CHANGES REQUIRED",
+                        "head": "0000000aa",
+                    },
+                    {
+                        "hook": "reviewer",
+                        "decision": "CHANGES REQUIRED",
+                        "head": parent_head,
+                    },
+                    {
+                        "hook": "reviewer",
+                        "decision": "READY FOR HUMAN APPROVAL",
+                        "head": parent_head,
+                    },
+                ],
+            )
+            result = review.build_review(root)
+            self.assertIsNone(result["verdicts"]["reviewer"])
+            self.assertEqual(result["rounds"], {"reviewer": 0})
+
+            _write_log(
+                root,
+                [
+                    {
+                        "hook": "reviewer",
+                        "decision": "READY FOR HUMAN APPROVAL",
+                        "head": parent_head,
+                    },
+                    {
+                        "hook": "reviewer",
+                        "decision": "CHANGES REQUIRED",
+                        "head": own_head,
+                    },
+                ],
+            )
+            result = review.build_review(root)
+            self.assertEqual(result["verdicts"]["reviewer"]["head"], own_head)
+            self.assertEqual(result["rounds"], {"reviewer": 1})
 
 
 class RoundsTests(unittest.TestCase):
