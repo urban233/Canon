@@ -603,5 +603,49 @@ class StackedBranchTests(unittest.TestCase):
         self.assertIn("Diff vs `a`: 1 file changed", context)
 
 
+class DecisionsLogNoteTests(unittest.TestCase):
+    """Regression: in the field the log was tracked and had to be left
+    out of every commit by hand."""
+
+    def _git(self, root: Path, *args: str) -> None:
+        subprocess.run(["git", *args], cwd=root, check=True, capture_output=True)
+
+    def _log(self, root: Path) -> None:
+        path = root / ".canon" / "hooks" / "decisions.jsonl"
+        path.parent.mkdir(parents=True)
+        path.write_text("{}\n", encoding="utf-8")
+
+    def test_a_tracked_log_names_both_fixes(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            self._git(root, "init", "-q")
+            self._log(root)
+            self._git(root, "add", ".canon/hooks/decisions.jsonl")
+            note = session_start._decisions_log_note(root)
+        assert note is not None
+        self.assertIn("is tracked", note)
+        self.assertIn("git rm --cached .canon/hooks/decisions.jsonl", note)
+
+    def test_an_unignored_directory_is_reported(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            self._git(root, "init", "-q")
+            note = session_start._decisions_log_note(root)
+        assert note is not None
+        self.assertIn("is not gitignored", note)
+
+    def test_silent_when_ignored(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            self._git(root, "init", "-q")
+            (root / ".gitignore").write_text(".canon/hooks/\n", encoding="utf-8")
+            self._log(root)
+            self.assertIsNone(session_start._decisions_log_note(root))
+
+    def test_silent_outside_a_git_repository(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            self.assertIsNone(session_start._decisions_log_note(Path(tmp)))
+
+
 if __name__ == "__main__":
     unittest.main()

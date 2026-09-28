@@ -377,6 +377,39 @@ def _notebook_setup_note(root: Path) -> str | None:
     )
 
 
+_DECISIONS_LOG = ".canon/hooks/decisions.jsonl"
+
+
+def _decisions_log_note(root: Path) -> str | None:
+    """Say so, with the fix, when Canon's local log would land in a
+    commit.
+
+    The log is written into `.canon/hooks/` and every hook assumes that
+    directory is gitignored, but only Canon's own repository ignores it.
+    In the field it was tracked, showed as modified after every hook,
+    and had to be left out of every commit by hand. Reported, never
+    fixed: editing a repository's `.gitignore` or index is the
+    developer's call, the same rule as the notebook note above. Any git
+    failure means silence.
+    """
+    if _common._run_git(root, "rev-parse", "--is-inside-work-tree") != "true":
+        return None
+    if _common._run_git(root, "ls-files", "--error-unmatch", _DECISIONS_LOG):
+        return (
+            f"Canon's local log `{_DECISIONS_LOG}` is tracked by git here, so it "
+            "shows as modified after every hook. Suggest adding `.canon/hooks/` to "
+            f"`.gitignore` and running `git rm --cached {_DECISIONS_LOG}` -- never "
+            "do either without asking."
+        )
+    if _common._run_git(root, "check-ignore", _DECISIONS_LOG):
+        return None
+    return (
+        "`.canon/hooks/` is not gitignored here, so Canon's local log will show up "
+        "as an untracked file. Suggest adding `.canon/hooks/` to `.gitignore` -- "
+        "never do it without asking."
+    )
+
+
 def _position_line(
     root: Path, branch: str, measured_from: str, base: str | None
 ) -> str:
@@ -390,9 +423,9 @@ def _position_line(
         parts.append(f"Diff vs `{measured_from}`: {diff}.")
 
     parts.append(f"PR: {_pr_status(root)}.")
-    note = _notebook_setup_note(root)
-    if note is not None:
-        parts.append(note)
+    for note in (_notebook_setup_note(root), _decisions_log_note(root)):
+        if note is not None:
+            parts.append(note)
     return " ".join(parts)
 
 
