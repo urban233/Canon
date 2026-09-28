@@ -6,7 +6,9 @@ Paragraphs here are deliberately written as single long lines rather than wrappe
 
 Versions before 1.0.0 may change behaviour a plugin install depends on. Canon is usable now; the interfaces below are not yet frozen.
 
-## [Unreleased]
+## [0.3.0] - 2026-09-28
+
+Canon now understands stacked branches. It was built from a field session in which an agent took a multi-step feature through Canon one stacked branch at a time, and every claim it made about Canon was checked against the repository before anything changed (`docs/field-reports/2026-09-28-open-protein-platform-movie-export.md`). Each step is now measured from its parent step rather than from `main`. A reviewer's verdict answers only for its own branch. Evidence that neither CI nor the `Stop` hook can run, such as a display-bound suite, can be declared and verified against HEAD's tree. Re-review after a READY verdict costs only the delta. After updating, add `.canon/hooks/` to your `.gitignore` if it isn't already; Canon now tells you at session start when it isn't.
 
 ### Added
 
@@ -93,6 +95,7 @@ First public release, for [Claude Code](https://claude.com/claude-code) and [Cod
 - **Codex cannot bundle a subagent,** so the two reviewer briefs ship as TOML files with a one-time manual copy into `.codex/agents/`. See `plugins/codex/README.md`.
 - **The eval suite is Claude-only** and is deliberately not a CI gate. See `docs/decisions/0003-eval-suite-is-not-a-ci-gate.md`.
 
+[0.3.0]: https://github.com/urban233/Canon/releases/tag/v0.3.0
 [0.2.1]: https://github.com/urban233/Canon/releases/tag/v0.2.1
 [0.2.0]: https://github.com/urban233/Canon/releases/tag/v0.2.0
 [0.1.0]: https://github.com/urban233/Canon/releases/tag/v0.1.0
