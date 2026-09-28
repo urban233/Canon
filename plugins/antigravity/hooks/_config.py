@@ -3,10 +3,10 @@
 
 `.canon/config.json` is the one piece of state a human is meant to read,
 edit, and revert like any other file in the repo -- contrast
-`_common.log_decision`'s gitignored diagnostic log, which is never read
-back to make a decision. This module owns that file plus the predicate a
-later hook (starting with `Stop`) checks before doing anything: per
-docs/plan.md's Invariant III, no verification signal means Canon stays
+`_common.log_decision`'s gitignored local log, which no hook gates on.
+This module owns that file plus the predicate a later hook (starting
+with `Stop`) checks before doing anything: per docs/plan.md's
+Invariant III, no verification signal means Canon stays
 inert rather than operating unverified.
 
 Unlike `_common.py`, nothing here parses a hook payload -- every function

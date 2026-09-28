@@ -21,9 +21,11 @@ Invariant III real: the verdict comes from the reviewer's own final
 message, never from the main session's retelling of it.
 
 Writes through the existing `.canon/hooks/decisions.jsonl` log (see
-`_common.log_decision`) rather than a new storage mechanism -- that
-file is already documented as read-for-display-only, which is exactly
-`canon_review`'s job.
+`_common.log_decision`) rather than a new storage mechanism. That log
+stamps each record with its branch, which is what lets `canon_review`
+answer for this branch alone rather than for whichever branch was
+reviewed last -- a verdict captured on a parent step must never look
+like the stacked child's own. `canon_ship` gates on what it reads.
 
 Inert without a verification signal (docs/plan.md §07, "No signal, no
 Canon"): with no `verify` command in `.canon/config.json` this hook is a

@@ -416,8 +416,8 @@ def _recent_commits(root: Path, base: str | None) -> str | None:
     return log.replace("\n", "; ") if log else None
 
 
-def _last_verification(root: Path) -> str | None:
-    record = _common.last_decision(root, "stop.py")
+def _last_verification(root: Path, branch: str) -> str | None:
+    record = _common.last_decision(root, "stop.py", branch)
     if record is None:
         return None
     decision = record.get("decision", "unknown")
@@ -441,7 +441,7 @@ def _compaction_recap(
     ]
     commits = _recent_commits(root, base)
     lines.append(f"Decisions since `{default_branch}`: {commits or 'none yet'}")
-    verification = _last_verification(root)
+    verification = _last_verification(root, branch)
     lines.append(f"Last verification: {verification or 'none logged yet'}")
     open_questions = _open_questions(root, branch)
     if open_questions:

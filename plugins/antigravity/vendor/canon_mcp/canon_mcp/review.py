@@ -17,10 +17,18 @@ that actually matters).
 Each verdict comes from `.canon/hooks/decisions.jsonl`, written by the
 `SubagentStop` hook (`capture_review.py`) directly from a reviewer
 subagent's own final message -- never from the main session's
-retelling of it. When more than one reviewer is called for, their
+retelling of it -- and only from records captured on the current
+branch. Without that, a branch stacked on a reviewed parent step
+inherits the parent's verdict as if it were its own. When more than one reviewer is called for, their
 verdicts are combined worst-first into the single `verdict`/`stale`
 shape every existing consumer (`position.py`, `ship.py`) already reads,
 so neither of them needs to change for this.
+
+`rounds` counts, per reviewer, the CHANGES REQUIRED verdicts captured on
+this branch. The review skill stops and asks the developer after two;
+deriving the count from the log, rather than holding it in the
+conversation, is what lets that rule survive a compaction. It is still
+not a gate -- `canon_ship` never reads it.
 """
 
 from __future__ import annotations
@@ -28,9 +36,10 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
-from ._decisions import last_decision
+from ._decisions import decisions_for
 from ._git import (
     changed_paths,
+    current_branch,
     default_branch,
     file_at_revision,
     head_sha,
@@ -58,8 +67,9 @@ _RISK_SURFACE_KEYWORDS: dict[str, list[str]] = {
     ],
     "data": ["migration", "alembic", "schema", "backfill", "model"],
 }
+_CHANGES_REQUIRED = "CHANGES REQUIRED"
 _SEVERITY_ORDER = [
-    "CHANGES REQUIRED",
+    _CHANGES_REQUIRED,
     "BLOCKED BY MISSING EVIDENCE",
     "READY FOR HUMAN APPROVAL",
 ]
@@ -196,12 +206,16 @@ def build_review(root: Path) -> dict[str, Any]:
     reviewers = _reviewers_called_for(paths)
     notebooks = _notebooks(root, base, paths)
 
+    branch = current_branch(root)
     per_reviewer: dict[str, dict[str, Any] | None] = {}
+    rounds: dict[str, int] = {}
     for name in reviewers:
-        record = last_decision(root, name)
-        if record is None:
+        history = decisions_for(root, name, branch)
+        rounds[name] = sum(1 for r in history if r.get("decision") == _CHANGES_REQUIRED)
+        if not history:
             per_reviewer[name] = None
             continue
+        record = history[-1]
         recorded_head = record.get("head")
         per_reviewer[name] = {
             "decision": record.get("decision"),
@@ -216,6 +230,7 @@ def build_review(root: Path) -> dict[str, Any]:
         return {
             "reviewers_called_for": reviewers,
             "verdicts": per_reviewer,
+            "rounds": rounds,
             "verdict": None,
             "current_head": current_head,
             "notebooks": notebooks,
@@ -224,6 +239,7 @@ def build_review(root: Path) -> dict[str, Any]:
     return {
         "reviewers_called_for": reviewers,
         "verdicts": per_reviewer,
+        "rounds": rounds,
         "verdict": combined,
         "current_head": current_head,
         "notebooks": notebooks,

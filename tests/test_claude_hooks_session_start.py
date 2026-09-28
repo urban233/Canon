@@ -223,13 +223,13 @@ class RecentCommitsTests(unittest.TestCase):
 class LastVerificationTests(unittest.TestCase):
     def test_none_when_nothing_logged(self) -> None:
         with tempfile.TemporaryDirectory() as root:
-            self.assertIsNone(session_start._last_verification(Path(root)))
+            self.assertIsNone(session_start._last_verification(Path(root), "main"))
 
     def test_formats_the_most_recent_stop_record(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             _common.log_decision(root, "stop.py", "allow", reason="`just test` passed")
-            verification = session_start._last_verification(root)
+            verification = session_start._last_verification(root, "main")
             assert verification is not None
             self.assertIn("allow at", verification)
             self.assertIn("`just test` passed", verification)

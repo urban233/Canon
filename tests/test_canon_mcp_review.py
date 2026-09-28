@@ -138,7 +138,7 @@ class BuildReviewTests(unittest.TestCase):
     def test_no_verdict_captured_yet(self) -> None:
         with (
             mock.patch("canon_mcp.review.head_sha", return_value="abc1234d"),
-            mock.patch("canon_mcp.review.last_decision", return_value=None),
+            mock.patch("canon_mcp.review.decisions_for", return_value=[]),
         ):
             result = review.build_review(Path("/repo"))
         self.assertEqual(result["reviewers_called_for"], ["reviewer"])
@@ -153,7 +153,7 @@ class BuildReviewTests(unittest.TestCase):
         }
         with (
             mock.patch("canon_mcp.review.head_sha", return_value="abc1234d"),
-            mock.patch("canon_mcp.review.last_decision", return_value=record),
+            mock.patch("canon_mcp.review.decisions_for", return_value=[record]),
         ):
             result = review.build_review(Path("/repo"))
         self.assertFalse(result["stale"])
@@ -163,19 +163,23 @@ class BuildReviewTests(unittest.TestCase):
         record = {"decision": "READY FOR HUMAN APPROVAL", "head": "old00000"}
         with (
             mock.patch("canon_mcp.review.head_sha", return_value="new11111"),
-            mock.patch("canon_mcp.review.last_decision", return_value=record),
+            mock.patch("canon_mcp.review.decisions_for", return_value=[record]),
         ):
             result = review.build_review(Path("/repo"))
         self.assertTrue(result["stale"])
 
     def test_two_reviewers_called_for_but_only_one_verdict_captured(self) -> None:
-        def _fake_last_decision(root: Path, name: str) -> dict[str, Any] | None:
+        def _fake_history(
+            root: Path, name: str, branch: str | None = None
+        ) -> list[dict[str, Any]]:
             if name == "reviewer":
-                return {
-                    "decision": "READY FOR HUMAN APPROVAL",
-                    "head": "abc1234d",
-                }
-            return None
+                return [
+                    {
+                        "decision": "READY FOR HUMAN APPROVAL",
+                        "head": "abc1234d",
+                    }
+                ]
+            return []
 
         with (
             mock.patch("canon_mcp.review.head_sha", return_value="abc1234d"),
@@ -183,9 +187,7 @@ class BuildReviewTests(unittest.TestCase):
                 "canon_mcp.review._reviewers_called_for",
                 return_value=["reviewer", "risk-reviewer"],
             ),
-            mock.patch(
-                "canon_mcp.review.last_decision", side_effect=_fake_last_decision
-            ),
+            mock.patch("canon_mcp.review.decisions_for", side_effect=_fake_history),
         ):
             result = review.build_review(Path("/repo"))
         self.assertEqual(result["reviewers_called_for"], ["reviewer", "risk-reviewer"])
@@ -193,18 +195,24 @@ class BuildReviewTests(unittest.TestCase):
         self.assertIsNone(result["verdicts"]["risk-reviewer"])
 
     def test_two_reviewers_worst_of_combined(self) -> None:
-        def _fake_last_decision(root: Path, name: str) -> dict[str, Any] | None:
+        def _fake_history(
+            root: Path, name: str, branch: str | None = None
+        ) -> list[dict[str, Any]]:
             if name == "reviewer":
-                return {
-                    "decision": "READY FOR HUMAN APPROVAL",
-                    "reason": "looks good",
+                return [
+                    {
+                        "decision": "READY FOR HUMAN APPROVAL",
+                        "reason": "looks good",
+                        "head": "abc1234d",
+                    }
+                ]
+            return [
+                {
+                    "decision": "CHANGES REQUIRED",
+                    "reason": "fix the backfill window",
                     "head": "abc1234d",
                 }
-            return {
-                "decision": "CHANGES REQUIRED",
-                "reason": "fix the backfill window",
-                "head": "abc1234d",
-            }
+            ]
 
         with (
             mock.patch("canon_mcp.review.head_sha", return_value="abc1234d"),
@@ -212,14 +220,129 @@ class BuildReviewTests(unittest.TestCase):
                 "canon_mcp.review._reviewers_called_for",
                 return_value=["reviewer", "risk-reviewer"],
             ),
-            mock.patch(
-                "canon_mcp.review.last_decision", side_effect=_fake_last_decision
-            ),
+            mock.patch("canon_mcp.review.decisions_for", side_effect=_fake_history),
         ):
             result = review.build_review(Path("/repo"))
         assert result["verdict"] is not None
         self.assertEqual(result["verdict"]["decision"], "CHANGES REQUIRED")
         self.assertFalse(result["stale"])
+
+
+def _write_log(root: Path, records: list[dict[str, Any]]) -> None:
+    log_path = root / ".canon" / "hooks" / "decisions.jsonl"
+    log_path.parent.mkdir(parents=True, exist_ok=True)
+    log_path.write_text(
+        "".join(json.dumps(r) + "\n" for r in records), encoding="utf-8"
+    )
+
+
+class BranchScopingTests(unittest.TestCase):
+    """Regression: records carried no branch, so a branch stacked on a
+    reviewed parent step inherited the parent's verdicts as its own --
+    observed in the field, where `movie-export` first reported
+    `movie-effects`' verdicts at `fd5fe9cf5`."""
+
+    def test_a_record_from_another_branch_is_skipped(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            _write_log(
+                root,
+                [
+                    {"hook": "reviewer", "decision": "A", "branch": "movie-export"},
+                    {"hook": "reviewer", "decision": "B", "branch": "movie-effects"},
+                ],
+            )
+            record = _decisions.last_decision(root, "reviewer", "movie-export")
+            assert record is not None
+            self.assertEqual(record["decision"], "A")
+            self.assertIsNone(_decisions.last_decision(root, "reviewer", "other"))
+
+    def test_a_record_without_a_branch_matches_any_branch(self) -> None:
+        """A log written before branch scoping keeps answering."""
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            _write_log(root, [{"hook": "reviewer", "decision": "legacy"}])
+            record = _decisions.last_decision(root, "reviewer", "movie-export")
+            assert record is not None
+            self.assertEqual(record["decision"], "legacy")
+
+    def test_decisions_for_is_oldest_first(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            _write_log(
+                root,
+                [
+                    {"hook": "reviewer", "decision": "first", "branch": "b"},
+                    {"hook": "stop.py", "decision": "allow", "branch": "b"},
+                    {"hook": "reviewer", "decision": "second", "branch": "b"},
+                ],
+            )
+            self.assertEqual(
+                [
+                    r["decision"]
+                    for r in _decisions.decisions_for(root, "reviewer", "b")
+                ],
+                ["first", "second"],
+            )
+
+    def test_build_review_does_not_report_the_parent_steps_verdict(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            _write_log(
+                root,
+                [
+                    {
+                        "hook": "reviewer",
+                        "decision": "READY FOR HUMAN APPROVAL",
+                        "head": "fd5fe9cf5",
+                        "branch": "movie-effects",
+                    }
+                ],
+            )
+            with (
+                mock.patch("canon_mcp.review.head_sha", return_value="3d23ac4e4"),
+                mock.patch(
+                    "canon_mcp.review.current_branch", return_value="movie-export"
+                ),
+                mock.patch("canon_mcp.review.merge_base", return_value=None),
+            ):
+                result = review.build_review(root)
+        self.assertIsNone(result["verdict"])
+        self.assertIsNone(result["verdicts"]["reviewer"])
+
+
+class RoundsTests(unittest.TestCase):
+    def test_counts_changes_required_verdicts_on_this_branch_only(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            _write_log(
+                root,
+                [
+                    {"hook": "reviewer", "decision": "CHANGES REQUIRED", "branch": "a"},
+                    {"hook": "reviewer", "decision": "CHANGES REQUIRED", "branch": "b"},
+                    {
+                        "hook": "reviewer",
+                        "decision": "READY FOR HUMAN APPROVAL",
+                        "branch": "b",
+                    },
+                    {"hook": "reviewer", "decision": "CHANGES REQUIRED", "branch": "b"},
+                ],
+            )
+            with (
+                mock.patch("canon_mcp.review.head_sha", return_value="abc"),
+                mock.patch("canon_mcp.review.current_branch", return_value="b"),
+                mock.patch("canon_mcp.review.merge_base", return_value=None),
+            ):
+                result = review.build_review(root)
+        self.assertEqual(result["rounds"], {"reviewer": 2})
+
+    def test_zero_before_any_verdict(self) -> None:
+        with (
+            mock.patch("canon_mcp.review.head_sha", return_value="abc"),
+            mock.patch("canon_mcp.review.decisions_for", return_value=[]),
+        ):
+            result = review.build_review(Path("/repo"))
+        self.assertEqual(result["rounds"], {"reviewer": 0})
 
 
 def _notebook_json(*sources: str) -> str:
