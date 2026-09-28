@@ -30,6 +30,12 @@ carried a branch). The review skill stops and asks the developer after two;
 deriving the count from the log, rather than holding it in the
 conversation, is what lets that rule survive a compaction. It is still
 not a gate -- `canon_ship` never reads it.
+
+`models` names the model `.canon/config.json` configures for a called-for
+reviewer (`{"reviewers": {"reviewer": {"model": "sonnet"}}}`), so the
+choice lives in the repository instead of in whoever dispatches. An
+unconfigured reviewer is absent and runs on its agent definition's own
+`model:`.
 """
 
 from __future__ import annotations
@@ -37,6 +43,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
+from ._config import load_config, reviewer_models
 from ._decisions import decisions_for
 from ._git import (
     changed_paths,
@@ -253,12 +260,16 @@ def build_review(root: Path) -> dict[str, Any]:
             "stale": recorded_head != current_head,
         }
 
+    configured = reviewer_models(load_config(root))
+    models = {name: configured[name] for name in reviewers if name in configured}
+
     combined, stale = _combine(per_reviewer)
     if combined is None:
         return {
             "reviewers_called_for": reviewers,
             "verdicts": per_reviewer,
             "rounds": rounds,
+            "models": models,
             "verdict": None,
             "current_head": current_head,
             "notebooks": notebooks,
@@ -268,6 +279,7 @@ def build_review(root: Path) -> dict[str, Any]:
         "reviewers_called_for": reviewers,
         "verdicts": per_reviewer,
         "rounds": rounds,
+        "models": models,
         "verdict": combined,
         "current_head": current_head,
         "notebooks": notebooks,

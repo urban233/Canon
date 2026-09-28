@@ -428,6 +428,38 @@ class RoundsTests(unittest.TestCase):
         self.assertEqual(result["rounds"], {"reviewer": 0})
 
 
+class ModelsTests(unittest.TestCase):
+    def test_only_configured_called_for_reviewers_are_named(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / ".canon").mkdir()
+            (root / ".canon" / "config.json").write_text(
+                json.dumps(
+                    {
+                        "reviewers": {
+                            "reviewer": {"model": "sonnet"},
+                            "risk-reviewer": {"model": "opus"},
+                            "broken": "opus",
+                        }
+                    }
+                ),
+                encoding="utf-8",
+            )
+            with (
+                mock.patch("canon_mcp.review.head_sha", return_value="abc"),
+                mock.patch("canon_mcp.review.merge_base", return_value=None),
+            ):
+                result = review.build_review(root)
+        self.assertEqual(result["reviewers_called_for"], ["reviewer"])
+        self.assertEqual(result["models"], {"reviewer": "sonnet"})
+
+    def test_empty_without_config(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            with mock.patch("canon_mcp.review.merge_base", return_value=None):
+                result = review.build_review(Path(tmp))
+        self.assertEqual(result["models"], {})
+
+
 def _notebook_json(*sources: str) -> str:
     return json.dumps(
         {
