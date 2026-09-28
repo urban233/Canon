@@ -248,13 +248,17 @@ def ship_evidence_config(config: dict[str, Any] | None) -> dict[str, str] | None
         return {"problem": "`ship_evidence.command` must name a command"}
     if not isinstance(result, str) or not result.strip():
         return {"problem": "`ship_evidence.result` must name a file"}
+    # Validate the path exactly as it will be read: checking the
+    # unstripped value would let " ../x" or " /etc/x" pass and then
+    # resolve outside the repository once stripped.
+    result = result.strip()
     relative = Path(result)
     if relative.is_absolute() or ".." in relative.parts:
         return {
             "problem": "`ship_evidence.result` must be a path inside the "
             "repository, relative to its root"
         }
-    return {"command": command.strip(), "result": result.strip()}
+    return {"command": command.strip(), "result": result}
 
 
 def reviewer_models(config: dict[str, Any] | None) -> dict[str, str]:

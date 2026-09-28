@@ -377,7 +377,7 @@ def _notebook_setup_note(root: Path) -> str | None:
     )
 
 
-_DECISIONS_LOG = ".canon/hooks/decisions.jsonl"
+_DECISIONS_LOG = _common._DECISIONS_LOG_RELATIVE
 
 
 def _decisions_log_note(root: Path) -> str | None:
@@ -390,7 +390,9 @@ def _decisions_log_note(root: Path) -> str | None:
     and had to be left out of every commit by hand. Reported, never
     fixed: editing a repository's `.gitignore` or index is the
     developer's call, the same rule as the notebook note above. Any git
-    failure means silence.
+    failure means silence, and so does an inert Canon: without a
+    verification signal no hook writes the log, so an unignored
+    `.canon/hooks/` costs nothing and is not worth a note every session.
     """
     if _common._run_git(root, "rev-parse", "--is-inside-work-tree") != "true":
         return None
@@ -401,6 +403,8 @@ def _decisions_log_note(root: Path) -> str | None:
             f"`.gitignore` and running `git rm --cached {_DECISIONS_LOG}` -- never "
             "do either without asking."
         )
+    if not _config.has_verification_signal(_config.load_config(root)):
+        return None
     if _common._run_git(root, "check-ignore", _DECISIONS_LOG):
         return None
     return (

@@ -7,7 +7,8 @@ module docstring for why this package and the hooks share no dependency
 edge. That function's docstring holds the reasoning; the order is the
 same here: the saved plan's `stacked_on:` header, then the branch's own
 reflog, then the HEAD reflog, each accepted only when it names an
-existing local branch that is a real parent of HEAD.
+existing local branch that is a real parent of HEAD -- its fork
+point descends from the default branch's.
 tests/test_stacked_on_parity.py pins the two copies to the same answer.
 """
 
@@ -86,4 +87,11 @@ def _is_parent(
     if not _run_git(root, "rev-parse", "--verify", "-q", f"refs/heads/{candidate}"):
         return False
     fork = merge_base(root, candidate)
-    return fork is not None and fork != default_fork
+    if fork is None or fork == default_fork:
+        return False
+    if default_fork is None:
+        return True
+    # A real parent's fork point descends from the default fork point;
+    # an older one would widen the range rather than narrow it.
+    common = _run_git(root, "merge-base", default_fork, fork)
+    return common is not None and common.startswith(default_fork)

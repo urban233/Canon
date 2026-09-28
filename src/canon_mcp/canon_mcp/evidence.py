@@ -140,6 +140,8 @@ def ship_evidence(root: Path, config: dict[str, Any] | None) -> dict[str, Any] |
         raw = (root / spec["result"]).read_text(encoding="utf-8")
     except OSError:
         return verdict("missing", f"`{spec['result']}` does not exist yet")
+    except UnicodeDecodeError:
+        return verdict("malformed", f"`{spec['result']}` is not UTF-8 JSON")
     try:
         data = json.loads(raw)
     except (json.JSONDecodeError, ValueError):
@@ -147,10 +149,16 @@ def ship_evidence(root: Path, config: dict[str, Any] | None) -> dict[str, Any] |
     if not isinstance(data, dict):
         return verdict("malformed", f"`{spec['result']}` is not a JSON object")
     tree, dirty, passed = data.get("tree"), data.get("dirty"), data.get("passed")
-    if not isinstance(tree, str) or not tree or not isinstance(passed, bool):
+    if (
+        not isinstance(tree, str)
+        or not tree
+        or not isinstance(dirty, bool)
+        or not isinstance(passed, bool)
+    ):
         return verdict(
             "malformed",
-            f"`{spec['result']}` needs a string `tree` and a boolean `passed`",
+            f"`{spec['result']}` needs a string `tree` and booleans `dirty` "
+            "and `passed`",
         )
     report["tree"] = tree
     if isinstance(data.get("checks"), list):
@@ -159,7 +167,7 @@ def ship_evidence(root: Path, config: dict[str, Any] | None) -> dict[str, Any] |
     report["head_tree"] = current
     if current is None or len(tree) < 7 or not current.startswith(tree):
         return verdict("stale", "it was produced for a different tree than HEAD's")
-    if dirty is not False:
+    if dirty:
         return verdict("dirty", "it was produced on a working tree with changes")
     if not passed:
         return verdict("failed", "it ran against HEAD's tree and did not pass")

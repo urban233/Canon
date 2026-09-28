@@ -448,9 +448,13 @@ def stacked_on(root: Path, branch: str | None) -> str | None:
 
     A candidate counts only if it is an existing local branch, is neither
     `branch` nor the default branch, and is a real parent: HEAD's fork
-    point from it differs from HEAD's fork point from the default branch.
-    Anything else -- including every git failure -- is None, which is
-    exactly today's behaviour of measuring from the default branch.
+    point from it is strictly newer than -- a descendant of -- HEAD's
+    fork point from the default branch. An older fork point is a stale
+    candidate (a squash-merged parent still checked out locally after
+    this branch was rebased, or a branch name reused), and measuring
+    from it would widen the diff rather than narrow it. Anything else --
+    including every git failure -- is None, which is exactly today's
+    behaviour of measuring from the default branch.
     """
     if not branch or branch == "HEAD":
         return None
@@ -518,7 +522,14 @@ def _is_parent(
     ):
         return False
     fork = _common.merge_base(root, candidate)
-    return fork is not None and fork != default_fork
+    if fork is None or fork == default_fork:
+        return False
+    if default_fork is None:
+        return True
+    # A real parent's fork point descends from the default fork point;
+    # an older one would widen the range rather than narrow it.
+    common = _common._run_git(root, "merge-base", default_fork, fork)
+    return common is not None and common.startswith(default_fork)
 
 
 def feature_plan_path(root: Path, slug: str) -> Path:

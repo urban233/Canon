@@ -147,6 +147,25 @@ class StackedOnTests(unittest.TestCase):
             _write_plan(root, "b", "main")
             self.assertIsNone(_both(root, "b"))
 
+    def test_a_squash_merged_parent_left_behind_is_not_a_parent(self) -> None:
+        """Regression: `a` squash-merged into `main` and still checked
+        out locally, `b` moved onto `main`. `a`'s fork point is now older
+        than `main`'s, so measuring from it would widen every range."""
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            _repo(root)
+            _parent_step(root)
+            _git_run(root, "switch", "-q", "-c", "b")
+            _commit(root, "step b")
+            _git_run(root, "switch", "-q", "main")
+            _commit(root, "step a, squashed")
+            _git_run(root, "switch", "-q", "b")
+            _git_run(root, "reset", "-q", "--hard", "main")
+            _commit(root, "step b, moved onto main")
+            self.assertIsNone(_both(root, "b"))
+            _write_plan(root, "b", "a")
+            self.assertIsNone(_both(root, "b"))
+
     def test_the_default_branch_is_never_stacked(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)

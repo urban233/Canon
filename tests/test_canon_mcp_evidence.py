@@ -325,6 +325,35 @@ class ShipEvidenceTests(unittest.TestCase):
                 "malformed",
             )
 
+    def test_a_padded_result_path_cannot_leave_the_repository(self) -> None:
+        # The path is validated as it will be read: stripped.
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            self._repo(root)
+            for padded in (" ../outside.json", " /etc/hosts"):
+                self.assertEqual(
+                    self._status(
+                        root, {"ship_evidence": {"command": "x", "result": padded}}
+                    ),
+                    "malformed",
+                )
+
+    def test_a_file_that_is_not_utf8_is_malformed_not_a_crash(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            self._repo(root)
+            path = root / "build" / "evidence.json"
+            path.parent.mkdir()
+            path.write_bytes(b"\xff\xfe{")
+            self.assertEqual(self._status(root), "malformed")
+
+    def test_a_missing_dirty_field_is_malformed_not_dirty(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            tree = self._repo(root)
+            self._write(root, {"tree": tree, "passed": True})
+            self.assertEqual(self._status(root), "malformed")
+
     def test_build_evidence_carries_it(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)

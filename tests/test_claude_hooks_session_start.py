@@ -626,13 +626,28 @@ class DecisionsLogNoteTests(unittest.TestCase):
         self.assertIn("is tracked", note)
         self.assertIn("git rm --cached .canon/hooks/decisions.jsonl", note)
 
+    def _configure_verify(self, root: Path) -> None:
+        (root / ".canon").mkdir(exist_ok=True)
+        (root / ".canon" / "config.json").write_text(
+            '{"verify": "true"}\n', encoding="utf-8"
+        )
+
     def test_an_unignored_directory_is_reported(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             self._git(root, "init", "-q")
+            self._configure_verify(root)
             note = session_start._decisions_log_note(root)
         assert note is not None
         self.assertIn("is not gitignored", note)
+
+    def test_silent_about_an_unignored_directory_when_inert(self) -> None:
+        # No verification signal: no hook writes the log, so there is
+        # nothing that could land in a commit.
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            self._git(root, "init", "-q")
+            self.assertIsNone(session_start._decisions_log_note(root))
 
     def test_silent_when_ignored(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
