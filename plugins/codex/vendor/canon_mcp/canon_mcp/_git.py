@@ -198,6 +198,11 @@ def full_head_sha(root: Path) -> str | None:
     return _run_git(root, "rev-parse", "HEAD")
 
 
+def head_tree(root: Path) -> str | None:
+    """The full SHA of HEAD's tree, or None if it can't be determined."""
+    return _run_git(root, "rev-parse", "HEAD^{tree}")
+
+
 def is_pushed(root: Path, sha: str) -> bool:
     """Whether `sha` exists in the history of any remote-tracking
     branch.

@@ -6,6 +6,7 @@ evidence.py.
 from __future__ import annotations
 
 import json
+import subprocess
 import tempfile
 import unittest
 from pathlib import Path
@@ -216,6 +217,124 @@ class BuildEvidenceTests(unittest.TestCase):
         self.assertIsNone(result["green"])
         self.assertIn(".canon/plans/wip.md", result["message"])
         self.assertNotIn(".canon/config.json", result["message"])
+
+
+def _git(root: Path, *args: str) -> str:
+    return subprocess.run(
+        ["git", *args], cwd=root, check=True, capture_output=True, text=True
+    ).stdout.strip()
+
+
+_CONFIG: dict[str, object] = {
+    "verify": "true",
+    "ship_evidence": {"command": "just evidence", "result": "build/evidence.json"},
+}
+
+
+class ShipEvidenceTests(unittest.TestCase):
+    """Regression: the field repository's real evidence was matched to
+    HEAD by timestamp. See
+    docs/decisions/0010-ship-evidence-is-verified-not-stored.md."""
+
+    def _repo(self, root: Path) -> str:
+        _git(root, "init", "-q")
+        (root / "a.txt").write_text("a", encoding="utf-8")
+        _git(root, "add", "a.txt")
+        _git(
+            root,
+            "-c",
+            "user.email=canon@example.com",
+            "-c",
+            "user.name=Canon Tests",
+            "commit",
+            "-q",
+            "-m",
+            "init",
+        )
+        return _git(root, "rev-parse", "HEAD^{tree}")
+
+    def _write(self, root: Path, data: object) -> None:
+        path = root / "build" / "evidence.json"
+        path.parent.mkdir(exist_ok=True)
+        path.write_text(json.dumps(data), encoding="utf-8")
+
+    def _status(self, root: Path, config: dict[str, object] = _CONFIG) -> str:
+        result = evidence.ship_evidence(root, config)
+        assert result is not None
+        return str(result["status"])
+
+    def test_none_when_not_declared(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            self.assertIsNone(evidence.ship_evidence(Path(tmp), {"verify": "true"}))
+
+    def test_passed_for_heads_tree(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            tree = self._repo(root)
+            self._write(root, {"tree": tree, "dirty": False, "passed": True})
+            self.assertEqual(self._status(root), "passed")
+
+    def test_an_abbreviated_tree_is_accepted(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            tree = self._repo(root)
+            self._write(root, {"tree": tree[:12], "dirty": False, "passed": True})
+            self.assertEqual(self._status(root), "passed")
+
+    def test_missing_when_the_file_is_absent(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            self._repo(root)
+            self.assertEqual(self._status(root), "missing")
+
+    def test_stale_for_another_tree(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            self._repo(root)
+            self._write(root, {"tree": "0" * 40, "dirty": False, "passed": True})
+            self.assertEqual(self._status(root), "stale")
+
+    def test_dirty_when_produced_on_a_dirty_tree(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            tree = self._repo(root)
+            self._write(root, {"tree": tree, "dirty": True, "passed": True})
+            self.assertEqual(self._status(root), "dirty")
+
+    def test_failed_when_it_did_not_pass(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            tree = self._repo(root)
+            self._write(root, {"tree": tree, "dirty": False, "passed": False})
+            self.assertEqual(self._status(root), "failed")
+
+    def test_malformed_file_and_malformed_key(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            self._repo(root)
+            self._write(root, {"tree": 1})
+            self.assertEqual(self._status(root), "malformed")
+            self.assertEqual(
+                self._status(root, {"ship_evidence": {"command": "x"}}), "malformed"
+            )
+            self.assertEqual(
+                self._status(
+                    root,
+                    {"ship_evidence": {"command": "x", "result": "../outside.json"}},
+                ),
+                "malformed",
+            )
+
+    def test_build_evidence_carries_it(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            self._repo(root)
+            (root / ".canon").mkdir()
+            (root / ".canon" / "config.json").write_text(
+                json.dumps(_CONFIG), encoding="utf-8"
+            )
+            result = evidence.build_evidence(root)
+            self.assertEqual(result["ship_evidence"]["status"], "missing")
 
 
 if __name__ == "__main__":

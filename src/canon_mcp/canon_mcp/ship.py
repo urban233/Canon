@@ -68,6 +68,18 @@ def _review_readiness(review: dict[str, Any]) -> tuple[bool, str | None]:
     return False, f"unrecognized reviewer verdict: {decision}"
 
 
+def _ship_evidence_readiness(
+    ship: dict[str, Any] | None,
+) -> tuple[bool, str | None]:
+    """Declared ship evidence must be `passed`; undeclared changes
+    nothing. See docs/decisions/0010-ship-evidence-is-verified-not-stored.md."""
+    if ship is None or ship.get("status") == "passed":
+        return True, None
+    reason = f"ship evidence is {ship.get('status')}: {ship.get('detail')}"
+    command = ship.get("command")
+    return False, reason + (f" -- run `{command}`" if command else "")
+
+
 def build_ship(root: Path) -> dict[str, Any]:
     """Whether the three invariants are met right now, and what's
     missing if not."""
@@ -78,12 +90,15 @@ def build_ship(root: Path) -> dict[str, Any]:
     evidence = build_evidence(root)
     evidence_ok = evidence.get("green") is True
     evidence_reason = None if evidence_ok else _evidence_reason(evidence)
+    ship_ok, ship_reason = _ship_evidence_readiness(evidence.get("ship_evidence"))
 
     review = build_review(root)
     review_ok, review_reason = _review_readiness(review)
 
-    missing = [r for r in (plan_reason, evidence_reason, review_reason) if r]
-    ready = plan_ok and evidence_ok and review_ok
+    missing = [
+        r for r in (plan_reason, evidence_reason, ship_reason, review_reason) if r
+    ]
+    ready = plan_ok and evidence_ok and ship_ok and review_ok
     return {
         "ready": ready,
         "plan": {"satisfied": plan_ok, "reason": plan_reason},
