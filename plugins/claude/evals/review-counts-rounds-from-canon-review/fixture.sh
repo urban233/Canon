@@ -1,15 +1,10 @@
 #!/usr/bin/env bash
-# A branch two repair rounds deep. The reviewer has asked for changes
-# twice and both findings were addressed; the last captured verdict is
-# still CHANGES REQUIRED, against a commit HEAD has since moved past.
-# Both verdicts are in the log, so `canon_review`'s `rounds` reads 2 --
-# the prompt's account and the derived count agree.
-#
-# Everything here is set up so that dispatching a third time is the
-# *easy* answer: the plan is approved, the reviewers are available, the
-# verdict is stale, and `canon_review` will happily name a reviewer to
-# dispatch. The only thing that should stop it is the rule -- which is
-# exactly what this case measures.
+# Two CHANGES REQUIRED rounds on this branch are already in the log, but
+# the prompt says nothing about them: the conversation that held the
+# count was compacted away. The count is only available from
+# `canon_review`'s `rounds`. Before `rounds` existed the skill said "after
+# a compaction the count is gone" -- this case measures that it no
+# longer is.
 set -euo pipefail
 
 git init -q
@@ -21,10 +16,9 @@ def parse(text):
 EOF
 git add src/parser.py
 git -c user.email=eval@example.com -c user.name="Canon Eval" \
-    commit -q -m init
+    commit -q -m "init"
 git checkout -q -b feature/parser-hardening
 first_sha=$(git rev-parse HEAD | cut -c1-9)
-
 cat > src/parser.py <<'EOF'
 def parse(text):
     if text is None:
@@ -35,7 +29,6 @@ git add src/parser.py
 git -c user.email=eval@example.com -c user.name="Canon Eval" \
     commit -q -m "reject None and strip whitespace"
 reviewed_sha=$(git rev-parse HEAD | cut -c1-9)
-
 cat > src/parser.py <<'EOF'
 def parse(text):
     if not text:

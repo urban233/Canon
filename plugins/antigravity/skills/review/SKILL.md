@@ -53,6 +53,16 @@ already passed. Re-reading the whole diff makes that regression look like
 part of the change; reading the delta against a commit already approved is
 what makes it visible.
 
+**After a READY verdict, confirm the delta only.** When a reviewer's own
+last verdict is READY FOR HUMAN APPROVAL and its `head` is an ancestor of
+HEAD -- you only closed its notes, or touched docs -- it has already
+passed everything up to that commit. Ask it to review `<head>..HEAD`
+alone and return a fresh verdict. The full range is for repair after
+CHANGES REQUIRED, where a fix can break what was passed; after READY
+there is nothing unpassed outside the delta, and re-reading the whole
+range costs a full round for no new coverage. The verdict is still fresh
+at HEAD, so `canon_ship` is satisfied the same way.
+
 **Read `stale` per reviewer, not from the combined `verdict`.** The
 combined `stale` is true when *any* reviewer's verdict is stale, while the
 combined `head` belongs to whichever verdict ranked worst. With two
@@ -76,6 +86,7 @@ you either, deliberately -- a counter in the repository is
 `round-state.json`, and a counter in session state is both unreadable by
 `canon_ship` and lost on the next session anyway. So this is yours to
 hold, from the rounds in this conversation. The honest consequence: after
-a compaction the count is gone, and the rule degrades to judgement.
-`canon_review`'s `verdicts` still tells you the last verdict on this
-branch, which is the one fact that survives.
+a compaction the count is gone, and the rule degrades to judgement. On
+Claude Code and Codex, `canon_review` counts the rounds from captured
+verdicts; Antigravity captures none (step 3 above), so here the count
+really is only in this conversation.

@@ -19,7 +19,9 @@ that something actually said.
 2. **Dispatch each reviewer it names**, giving it the `base..HEAD` range,
    the saved plan and its `## Non-goals`, and the evidence that checks
    ran. Never your own reasoning about the change -- a reviewer's value
-   comes precisely from not having seen it.
+   comes precisely from not having seen it. When `canon_review`'s
+   `models` names a model for a reviewer, dispatch it on that model; the
+   repository chose it, so it is not yours to change.
 3. **Read the verdict back from `canon_review`,** not from your own
    recollection of what the subagent said. The `SubagentStop` hook
    captures it from the subagent's own final message, which is the
@@ -38,6 +40,16 @@ that closes the reported finding and quietly breaks something the reviewer
 already passed. Re-reading the whole diff makes that regression look like
 part of the change; reading the delta against a commit already approved is
 what makes it visible.
+
+**After a READY verdict, confirm the delta only.** When a reviewer's own
+last verdict is READY FOR HUMAN APPROVAL and its `head` is an ancestor of
+HEAD -- you only closed its notes, or touched docs -- it has already
+passed everything up to that commit. Ask it to review `<head>..HEAD`
+alone and return a fresh verdict. The full range is for repair after
+CHANGES REQUIRED, where a fix can break what was passed; after READY
+there is nothing unpassed outside the delta, and re-reading the whole
+range costs a full round for no new coverage. The verdict is still fresh
+at HEAD, so `canon_ship` is satisfied the same way.
 
 **Read `stale` per reviewer, not from the combined `verdict`.** The
 combined `stale` is true when *any* reviewer's verdict is stale, while the
@@ -62,11 +74,8 @@ grows. So the cost of grinding is no longer only your attention and the
 developer's.
 
 This is imposed on you, not on the developer: it is not a gate, it blocks
-nothing, and `canon_ship` never reads it. Nothing counts the rounds for
-you either, deliberately -- a counter in the repository is
-`round-state.json`, and a counter in session state is both unreadable by
-`canon_ship` and lost on the next session anyway. So this is yours to
-hold, from the rounds in this conversation. The honest consequence: after
-a compaction the count is gone, and the rule degrades to judgement.
-`canon_review`'s `verdicts` still tells you the last verdict on this
-branch, which is the one fact that survives.
+nothing, and `canon_ship` never reads it. **Take the count from
+`canon_review`'s `rounds`**, not from this conversation: it counts each
+reviewer's CHANGES REQUIRED verdicts on this branch, derived from the
+verdicts already captured, so it survives a compaction that the
+conversation does not. When any reviewer's `rounds` is 2, stop and ask.
