@@ -101,41 +101,6 @@ def canon_is_active(config: dict[str, Any] | None) -> bool:
     return has_verification_signal(config)
 
 
-def guard_default_branch(config: dict[str, Any] | None) -> bool:
-    """Whether Canon should gate edits and commits made directly on the
-    default branch.
-
-    True unless a repo's config explicitly opts out -- the one thing
-    docs/plan.md §12 calls out as worth making configurable, for a
-    genuinely trunk-based repo.
-    """
-    if config is None:
-        return True
-    return config.get("guard_default_branch") is not False
-
-
-_VALID_MODES = {"pair", "solo", "async"}
-_DEFAULT_MODE = "solo"
-
-
-def interaction_mode(config: dict[str, Any] | None) -> str:
-    """Canon's one interaction-mode setting (docs/plan.md §09): "pair",
-    "solo", or "async".
-
-    Defaults to "solo" -- the documented default -- for a missing
-    config, a missing key, or any value that isn't one of the three
-    literals. Never guessed at runtime: a hook has no controlling
-    terminal to sniff (confirmed directly against both supported
-    platforms' hooks references) whether the session itself is interactive or not,
-    so this is config, the same shape as `verify` and
-    `guard_default_branch` before it.
-    """
-    if config is None:
-        return _DEFAULT_MODE
-    mode = config.get("mode")
-    return mode if mode in _VALID_MODES else _DEFAULT_MODE
-
-
 def plan_verify_command(root: Path, branch: str | None) -> str | None:
     """The `verify:` a branch's saved plan header names, or None.
 

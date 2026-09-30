@@ -40,8 +40,6 @@ git -c user.email=eval@example.com -c user.name="Canon Eval" \
     commit -q -m init
 
 # Off main and onto a feature branch before the agent's turn starts.
-# Once it writes a valid .canon/config.json, Canon becomes active --
-# there is no .canon/ exemption from plan_gate -- and an Edit/Write on
-# main would additionally hit the default-branch guard. Neither gate is
-# what this eval is testing, so this keeps them out of the way.
+# Once it writes a valid .canon/config.json, Canon becomes active, and
+# the setup is best exercised the way real work happens: on a branch.
 git checkout -q -b setup/verify

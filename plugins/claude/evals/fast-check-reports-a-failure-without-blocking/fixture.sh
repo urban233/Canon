@@ -1,6 +1,5 @@
 #!/usr/bin/env bash
-# A feature branch with an approved plan (so the plan gate lets an edit
-# through) and a `check` command that fails on a defect already sitting
+# A feature branch with an approved plan and a `check` command that fails on a defect already sitting
 # in the file the model is asked to edit. The fast check fires on the
 # first edit and reports the defect as context -- it never blocks, so
 # the whole question this case asks is what the model does with a report

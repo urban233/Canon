@@ -16,10 +16,7 @@ cat > .canon/config.json <<'EOF'
 }
 EOF
 
-# decide is invoked at ship time, when a plan is already approved --
-# plan_gate.py would otherwise (correctly) block the Write for the
-# decision record itself, since it's still an edit with no plan on a
-# branch that hasn't got one yet.
+# decide is invoked at ship time, when a plan is already approved.
 cat > .canon/plans/feature/storage-format.md <<'EOF'
 ---
 status: approved

@@ -97,9 +97,9 @@ _host = HOST_DEFAULT
 # multi_replace_file_content, and list_dir"), with `write_to_file`
 # confirmed against a live payload.
 #
-# One list, shared by fast_check, check_scope and plan_gate. It used to
-# be written out three times, which is three chances to add a platform's
-# tool to two of them -- and a gate that silently never fires is worse
+# One list, shared by fast_check and check_scope. It used to be written
+# out once per hook, which is a chance per hook to add a platform's tool
+# to some of them and not others -- and a gate that silently never fires is worse
 # than one that is absent, because nothing announces it.
 EDIT_TOOL_NAMES = (
     "Edit",
