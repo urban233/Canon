@@ -97,6 +97,7 @@ from __future__ import annotations
 import json
 import re
 import sys
+from pathlib import Path
 from typing import Any
 
 import _common
@@ -254,31 +255,58 @@ _MERGE_VALUE_OPTIONS = {
 _GIT_GLOBAL_VALUE_OPTIONS = {"-C", "-c", "--git-dir", "--work-tree", "--namespace"}
 
 
+# Grouping and substitution punctuation glued to a word -- `(git`,
+# `$(git`, `` `git ``, `--force)` -- is not part of the word git sees.
+_GLUED_PUNCTUATION = re.compile(r"^[$(`]+|[)`]+$")
+
+
 def _tokens(segment: str) -> list[str]:
-    return [t.strip("'\"") for t in segment.replace("\\\n", " ").split()]
+    return [
+        _GLUED_PUNCTUATION.sub("", t).strip("'\"")
+        for t in segment.replace("\\\n", " ").split()
+    ]
 
 
-def _git_subcommand(tokens: list[str]) -> tuple[str, list[str], bool] | None:
+def _is_git(token: str) -> bool:
+    """`git` itself, or git run by path (`/usr/bin/git`)."""
+    return token.rsplit("/", 1)[-1] == "git"
+
+
+def _git_subcommand(
+    tokens: list[str], root: Path | None = None
+) -> tuple[str, list[str], bool] | None:
     """`(subcommand, its arguments, elsewhere)` for a segment that runs
     git, or None. `elsewhere` is True when a global option (`-C`,
     `--git-dir`, ...) points git at another repository, whose branches
-    this hook can't see."""
-    try:
-        index = tokens.index("git")
-    except ValueError:
+    this hook can't see. A `-C` naming this repository's own root, by
+    absolute path, is not elsewhere."""
+    index = next((i for i, t in enumerate(tokens) if _is_git(t)), None)
+    if index is None:
         return None
     elsewhere = False
     index += 1
     while index < len(tokens) and tokens[index].startswith("-"):
-        option = tokens[index].split("=", 1)[0]
-        if option in ("-C", "--git-dir", "--work-tree"):
-            elsewhere = True
-        if option in _GIT_GLOBAL_VALUE_OPTIONS and "=" not in tokens[index]:
+        option, _, value = tokens[index].partition("=")
+        if option in _GIT_GLOBAL_VALUE_OPTIONS and not value:
             index += 1
+            value = tokens[index] if index < len(tokens) else ""
+        if option == "-C":
+            elsewhere = elsewhere or not _is_repo_root(value, root)
+        elif option in ("--git-dir", "--work-tree"):
+            elsewhere = True
         index += 1
     if index >= len(tokens):
         return None
     return tokens[index], tokens[index + 1 :], elsewhere
+
+
+def _is_repo_root(path: str, root: Path | None) -> bool:
+    if root is None or not path.startswith("/"):
+        return False
+    try:
+        return Path(path).resolve() == Path(root).resolve()
+    except OSError:
+        return False
 
 
 def _checkout_target(args: list[str]) -> str | None:
@@ -298,7 +326,12 @@ def _checkout_target(args: list[str]) -> str | None:
         if not arg.startswith("-"):
             positional.append(arg)
         index += 1
-    return positional[0] if positional else None
+    if not positional:
+        return None
+    if any(a in ("-t", "--track") or a.startswith("--track=") for a in args):
+        # `--track origin/main` creates and switches to the local `main`.
+        return positional[0].removeprefix("refs/remotes/").split("/", 1)[-1]
+    return positional[0]
 
 
 def _merge_sources(args: list[str]) -> list[str]:
@@ -380,7 +413,10 @@ def _push_violation(args: list[str], branch: str | None, default: str) -> str | 
 
 
 def _contextual_operation(
-    command: str, current_branch: str | None, default: str
+    command: str,
+    current_branch: str | None,
+    default: str,
+    root: Path | None = None,
 ) -> str | None:
     """The first merge or force push in `command` that lands on the
     default branch -- see the comment block above -- or None."""
@@ -390,7 +426,7 @@ def _contextual_operation(
         if tokens and tokens[0] == "cd":
             branch = None
             continue
-        parsed = _git_subcommand(tokens)
+        parsed = _git_subcommand(tokens, root)
         if parsed is None:
             continue
         subcommand, args, elsewhere = parsed
@@ -587,7 +623,10 @@ def main() -> None:
     label = _matched_destructive_operation(unquoted)
     if label is None and _CONTEXTUAL_PATTERN.search(unquoted):
         label = _contextual_operation(
-            unquoted, _common.current_branch(root), _common.default_branch(root)
+            unquoted,
+            _common.current_branch(root),
+            _common.default_branch(root),
+            root,
         )
     if label is not None:
         reason = (

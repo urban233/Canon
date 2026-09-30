@@ -219,7 +219,7 @@ class BranchUpdateTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             _init_repo(root, branch)
-            output = _invoke_main(_payload(root, command))
+            output = _invoke_main(_payload(root, command.format(root=root)))
         if not output:
             return None
         return json.loads(output)["hookSpecificOutput"].get("permissionDecision")
@@ -283,6 +283,35 @@ class BranchUpdateTests(unittest.TestCase):
         ):
             with self.subTest(command=command):
                 self.assertEqual(self._decision(command, "feat"), "deny")
+
+    def test_a_force_push_is_denied_however_git_is_invoked(self) -> None:
+        for command in (
+            "(git push --force origin feat)",
+            "/usr/bin/git push -f origin feat",
+            "echo $(git push --force origin feat)",
+        ):
+            with self.subTest(command=command):
+                self.assertEqual(self._decision(command, "feat"), "deny")
+
+    def test_a_merge_into_the_default_branch_in_a_subshell_is_denied(self) -> None:
+        self.assertEqual(self._decision("(git merge feature/x)", "main"), "deny")
+
+    def test_tracking_the_default_branch_then_merging_is_denied(self) -> None:
+        for flag in ("--track", "-t"):
+            with self.subTest(flag=flag):
+                self.assertEqual(
+                    self._decision(
+                        f"git checkout {flag} origin/main && git merge feature/x",
+                        "feature/x",
+                    ),
+                    "deny",
+                )
+
+    def test_dash_c_naming_this_repository_is_not_elsewhere(self) -> None:
+        self.assertEqual(
+            self._decision("git -C {root} merge feature/x", "main"), "deny"
+        )
+        self.assertIsNone(self._decision("git -C /elsewhere merge feature/x", "main"))
 
     def test_a_pull_request_merge_is_still_denied_on_a_feature_branch(self) -> None:
         self.assertEqual(self._decision("gh pr merge 42 --squash", "feat"), "deny")
