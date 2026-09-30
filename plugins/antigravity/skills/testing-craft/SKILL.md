@@ -23,7 +23,7 @@ Use this skill in two situations:
   workflow.
 - **Directly**, when the developer asks to design a test strategy for a
   change, audit an existing test suite's health, triage a specific flaky
-  or brittle test, or invokes `$testing-craft`.
+  or brittle test, or asks for this skill by name.
 
 ## Apply the references
 
@@ -38,7 +38,7 @@ Use this skill in two situations:
   and coverage-as-diagnostic. Read before auditing or maintaining an
   existing suite.
 
-Each reference ends in a numbered self-check; run it against the test
+Each reference ends in a self-check list; run it against the test
 content before treating that content as done.
 
 ## When invoked directly

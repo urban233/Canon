@@ -16,6 +16,10 @@ Versions before 1.0.0 may change behaviour a plugin install depends on. Canon is
 
 - **The plan gate** ([ADR 0012](docs/decisions/0012-no-gate-before-the-first-edit.md)). `plan_gate.py` no longer refuses an edit with no saved plan, an edit or commit on the default branch, or a branch cut from another feature branch, on any platform. In one field repository it refused 25 times and prevented no mistake: 14 refusals came from the plan-save bug fixed in 0.2.1, and 11 blocked each deliberately stacked step. A plan is still required before shipping: `canon_ship` refuses a branch without an approved one. The `guard_default_branch` config key is now ignored.
 
+### Fixed
+
+- **Skill text that contradicted Canon's own code.** The `plan` skill's `## Parent` instruction had been cut mid-sentence, so it could be read as asking for the step slug rather than the feature plan's filename. It also said a missing `## Non-goals` or `## Verification` is noted in the saved header, when the note is a one-time message and `canon_ship` reports the section missing. `testing-craft` named Codex's `$testing-craft` invocation on every platform, and `review-change` asked the reviewer for a "brief", which Canon does not have; it now names the saved plan.
+
 ## [0.3.0] - 2026-09-28
 
 Canon now understands stacked branches. It was built from a field session in which an agent took a multi-step feature through Canon one stacked branch at a time, and every claim it made about Canon was checked against the repository before anything changed (`docs/field-reports/2026-09-28-open-protein-platform-movie-export.md`). Each step is now measured from its parent step rather than from `main`. A reviewer's verdict answers only for its own branch. Evidence that neither CI nor the `Stop` hook can run, such as a display-bound suite, can be declared and verified against HEAD's tree. Re-review after a READY verdict costs only the delta. After updating, add `.canon/hooks/` to your `.gitignore` if it isn't already; Canon now tells you at session start when it isn't.
