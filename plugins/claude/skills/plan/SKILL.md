@@ -31,12 +31,11 @@ section it can't find leaves its field blank rather than being invented.
   absent one — every edit outside it is reported as a departure.
 - **`## Done`** — one line, the definition of done.
 - **`## Parent`** — only when this branch is one step of a feature plan:
-  name the branch after that step's slug in the feature plan's
-  `## Steps`, or `canon_position` cannot tell which step this is.
   the feature plan's filename (`public-permalinks.md`). It is written to
   the header only if that file exists under `.canon/plans/features/`;
   a name that resolves to nothing is silently left blank, so get it
-  right.
+  right. Name the branch after that step's slug in the feature plan's
+  `## Steps` as well, or `canon_position` cannot tell which step this is.
 
 `status` and `base` need no section — the hook reads those from git
 itself.
@@ -70,7 +69,9 @@ not.
 
 Always include `## Non-goals` and `## Verification`. Both are read back:
 `Non-goals` by the scope check and by a reviewer, `Verification` by the
-`Stop` hook. A plan missing either gets a note in its saved header.
+`Stop` hook. A plan missing either is still saved, with a one-time note
+asking for the section, and `canon_ship` reports it missing until it is
+added.
 
 One piece of craft: **a Non-goal is only useful if it was tempting.**
 "Don't rewrite the module" earns its line; "don't break anything" is

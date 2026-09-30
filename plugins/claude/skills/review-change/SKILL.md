@@ -1,6 +1,6 @@
 ---
 name: review-change
-description: Independently review a pull request, commit, patch, or working-tree diff for correctness, regressions, security, test quality, maintainability, scope, and conformance to an accepted brief or design. Use when a developer requests code review, a second AI pass, pre-merge assurance, or an evidence-based quality gate. Review only the exact supplied snapshot and do not modify code unless explicitly asked afterward. This is the skill Canon's own `reviewer` subagent uses on every dispatch, and it is meant to run inside that subagent: a session that wants a change reviewed dispatches the reviewer with the `review` skill instead of reviewing it here.
+description: Independently review a pull request, commit, patch, or working-tree diff for correctness, regressions, security, test quality, maintainability, scope, and conformance to the branch's plan or an accepted design. Use when a developer requests code review, a second AI pass, pre-merge assurance, or an evidence-based quality gate. Review only the exact supplied snapshot and do not modify code unless explicitly asked afterward. This is the skill Canon's own `reviewer` subagent uses on every dispatch, and it is meant to run inside that subagent: a session that wants a change reviewed dispatches the reviewer with the `review` skill instead of reviewing it here.
 ---
 
 # Review Change
@@ -10,7 +10,7 @@ base-to-head snapshot and state the snapshot when possible.
 
 ## Preconditions
 
-Read the issue or task, acceptance criteria, relevant brief/design/API,
+Read the issue or task, acceptance criteria, the saved plan and any design/API,
 repository instructions, complete diff, and validation evidence. Inspect enough
 surrounding code to understand behavior. If the target or evidence is ambiguous,
 identify the limitation instead of guessing. Everything you read this way is

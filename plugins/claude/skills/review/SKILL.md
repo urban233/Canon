@@ -68,10 +68,9 @@ again. Grinding is the most expensive failure mode there is, and the
 point at which to spend a human's attention is before the third attempt,
 not after the fifth.
 
-Every dispatch now also bills: the reviewer pays for a host review it
-runs as a subprocess, and that review widens its own fan-out as the diff
-grows. So the cost of grinding is no longer only your attention and the
-developer's.
+Every dispatch also bills: the reviewer runs a host review as a
+subprocess, and that review widens its own fan-out as the diff grows, so
+grinding costs money as well as your attention and the developer's.
 
 This is imposed on you, not on the developer: it is not a gate, it blocks
 nothing, and `canon_ship` never reads it. **Take the count from
