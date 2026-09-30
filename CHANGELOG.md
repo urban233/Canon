@@ -6,6 +6,16 @@ Paragraphs here are deliberately written as single long lines rather than wrappe
 
 Versions before 1.0.0 may change behaviour a plugin install depends on. Canon is usable now; the interfaces below are not yet frozen.
 
+## [Unreleased]
+
+### Changed
+
+- **The git guard lets an agent update a branch, and still never merges a pull request** ([ADR 0011](docs/decisions/0011-update-a-branch-never-merge-a-pull-request.md)). `git merge` on a feature branch is now allowed, so is `git push --force-with-lease` to one, and so is fast-forwarding the default branch to its own remote. Together these are how a stacked branch takes its parent step or is replayed onto it. A merge into the default branch, a `git pull` of another branch into it, a lease push to it, every plain `--force`/`-f`/`+refspec` push, and `gh pr merge`/`close`/approve are still refused. Previously every `git merge` and every `--force-with-lease` was refused, which blocked branch updates in recorded sessions.
+
+### Removed
+
+- **The plan gate** ([ADR 0012](docs/decisions/0012-no-gate-before-the-first-edit.md)). `plan_gate.py` no longer refuses an edit with no saved plan, an edit or commit on the default branch, or a branch cut from another feature branch, on any platform. In one field repository it refused 25 times and prevented no mistake: 14 refusals came from the plan-save bug fixed in 0.2.1, and 11 blocked each deliberately stacked step. A plan is still required before shipping: `canon_ship` refuses a branch without an approved one. The `guard_default_branch` config key is now ignored.
+
 ## [0.3.0] - 2026-09-28
 
 Canon now understands stacked branches. It was built from a field session in which an agent took a multi-step feature through Canon one stacked branch at a time, and every claim it made about Canon was checked against the repository before anything changed (`docs/field-reports/2026-09-28-open-protein-platform-movie-export.md`). Each step is now measured from its parent step rather than from `main`. A reviewer's verdict answers only for its own branch. Evidence that neither CI nor the `Stop` hook can run, such as a display-bound suite, can be declared and verified against HEAD's tree. Re-review after a READY verdict costs only the delta. After updating, add `.canon/hooks/` to your `.gitignore` if it isn't already; Canon now tells you at session start when it isn't.

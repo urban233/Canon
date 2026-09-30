@@ -73,9 +73,11 @@ those platforms, and what is genuinely weaker on each:
   subagent that only ever sees the diff, the plan, and the evidence -- never
   the conversation that produced them, so review can't inherit the writer's
   own blind spots.
-- **No accidental branch damage.** Editing on the default branch, or
-  branching again from a branch you already made on purpose, is caught
-  before the first edit, not discovered at commit time.
+- **No accidental branch damage.** Force pushes, hard resets, branch
+  deletions and merging a pull request are refused outright. Keeping a
+  branch up to date is not: merging its base or parent into a feature
+  branch, fast-forwarding to a remote, and `--force-with-lease` on a
+  rebased stacked branch all go through.
 - **No new surface to babysit.** All of the above rides on primitives Claude
   Code already has -- plan mode, hooks, subagents, MCP tools. There's no
   dashboard, no separate CLI, and no task database that can fall out of sync
