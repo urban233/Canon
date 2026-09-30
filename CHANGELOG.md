@@ -6,7 +6,9 @@ Paragraphs here are deliberately written as single long lines rather than wrappe
 
 Versions before 1.0.0 may change behaviour a plugin install depends on. Canon is usable now; the interfaces below are not yet frozen.
 
-## [Unreleased]
+## [0.3.1] - 2026-10-01
+
+Canon gets out of the way of stacked work. An agent can now keep its own branch up to date: it can merge the base or a parent step in, fast-forward to the remote, and push a rebased branch with `--force-with-lease`. Merging a pull request is still refused. The plan gate is gone: Canon no longer refuses an edit before a plan is saved, and asks for the plan only at ship time, where it is read. If your `.canon/config.json` sets `guard_default_branch`, it is now ignored and can be deleted.
 
 ### Changed
 
@@ -109,6 +111,7 @@ First public release, for [Claude Code](https://claude.com/claude-code) and [Cod
 - **Codex cannot bundle a subagent,** so the two reviewer briefs ship as TOML files with a one-time manual copy into `.codex/agents/`. See `plugins/codex/README.md`.
 - **The eval suite is Claude-only** and is deliberately not a CI gate. See `docs/decisions/0003-eval-suite-is-not-a-ci-gate.md`.
 
+[0.3.1]: https://github.com/urban233/Canon/releases/tag/v0.3.1
 [0.3.0]: https://github.com/urban233/Canon/releases/tag/v0.3.0
 [0.2.1]: https://github.com/urban233/Canon/releases/tag/v0.2.1
 [0.2.0]: https://github.com/urban233/Canon/releases/tag/v0.2.0
