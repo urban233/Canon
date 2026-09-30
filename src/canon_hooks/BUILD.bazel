@@ -18,7 +18,6 @@ py_library(
         "check_scope.py",
         "fast_check.py",
         "git_guard.py",
-        "plan_gate.py",
         "plan_header.py",
         "session_start.py",
         "stop.py",

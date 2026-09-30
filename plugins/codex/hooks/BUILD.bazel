@@ -18,7 +18,6 @@ py_library(
         "session_start.py",
         "capture_review.py",
         "check_scope.py",
-        "plan_gate.py",
         "git_guard.py",
         "plan_header.py",
         "__init__.py",

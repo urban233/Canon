@@ -25,7 +25,7 @@ context:
 # tests/test_claude_hooks_save_plan.py's BranchNamespaceCollisionTests,
 # and every reader of the redirected path is pinned by
 # tests/test_branch_plan_path_parity.py plus a collision test apiece in
-# test_claude_hooks_plan_gate.py, test_claude_hooks_check_scope.py,
+# test_claude_hooks_check_scope.py,
 # test_claude_hooks_session_start.py, test_canon_mcp_plan.py and
 # test_canon_mcp_position.py.
 #

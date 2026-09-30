@@ -5,11 +5,16 @@ guard and commit-trailer stripper.
 Two independent jobs, per docs/plan.md §07's "Destructive git run
 casually" spine-table row and §12's authorship section:
 
-1. A short, fixed list of destructive operations -- the five §07 names
-   (force push, hard reset, forced clean, branch deletion, merge) plus
-   four `gh pr` operations -- are denied outright, always, with no
-   exception and no `ask`: these are the operations §12's table marks
-   "never" for Canon regardless of interaction mode. `rebase` onto a
+1. A short, fixed list of destructive operations -- hard reset, forced
+   clean, branch deletion, a plain force push, plus four `gh pr`
+   operations -- are denied outright, always, with no exception and no
+   `ask`: these are the operations §12's table marks "never" for Canon
+   regardless of interaction mode. A `git merge`, a `git pull` of another
+   branch, and a `--force-with-lease` push are judged by the branch they
+   land on instead: denied onto the default branch, allowed on a feature
+   branch, where they are how a branch -- a stacked one especially -- is
+   kept up to date. See `_contextual_operation` and
+   docs/decisions/0011-update-a-branch-never-merge-a-pull-request.md. `rebase` onto a
    shared branch and `tag` deletion are in §12's broader table too, but
    both need a "is this actually shared" judgement this hook doesn't
    make, so they're left out rather than guessed at.
@@ -74,8 +79,8 @@ casually" spine-table row and §12's authorship section:
    separate surface, and §12 explicitly leaves that to documentation
    rather than mechanising it here.
 
-Like `plan_gate.py`, this hook only ever denies, never asks -- see that
-module's docstring for why.
+This hook only ever denies, never asks: an `ask` would put a "never"
+operation one confirmation away.
 
 Inert without a verification signal (docs/plan.md §07, "No signal, no
 Canon"): with no `verify` command in `.canon/config.json` this hook is a
@@ -92,6 +97,7 @@ from __future__ import annotations
 import json
 import re
 import sys
+from pathlib import Path
 from typing import Any
 
 import _common
@@ -106,10 +112,6 @@ _SHELL_TOOL_NAMES = ("Bash", "run_command")
 # multi-line `git commit` invocations are written that way.
 _NON_DELIMITER = r"(?:\\\n|[^|;&\n])*"
 _DESTRUCTIVE_PATTERNS = [
-    (
-        re.compile(rf"\bgit\s+push\b{_NON_DELIMITER}(--force\b|-f\b)"),
-        "a force push",
-    ),
     (
         re.compile(rf"\bgit\s+reset\b{_NON_DELIMITER}--hard\b"),
         "a hard reset",
@@ -132,17 +134,6 @@ _DESTRUCTIVE_PATTERNS = [
         # push and must not match.
         re.compile(rf"\bgit\s+push\b{_NON_DELIMITER}(--delete\b|\s:\S)"),
         "a remote branch deletion",
-    ),
-    (
-        # `(?![-\w])` keeps the read-only `git merge-base` and
-        # `git merge-file` out of this; the second lookahead keeps the
-        # recovery forms out. Aborting a merge is how you get *out* of
-        # one, not the operation 12 marks "never".
-        re.compile(
-            rf"\bgit\s+merge(?![-\w])"
-            rf"(?!{_NON_DELIMITER}--(abort|quit|continue)\b)"
-        ),
-        "a merge",
     ),
     (
         # No flag check needed: every accepted form (`--squash`,
@@ -224,6 +215,240 @@ def _blank_quoted_spans(command: str) -> str:
         return " " * len(span) if re.search(r"\s", span[1:-1]) else span
 
     return _QUOTED_SPAN.sub(_blank, command)
+
+
+# --- Merges and force pushes: judged by the branch they land on --------
+#
+# A merge or a force push is only "never" when it lands on the default
+# branch: that is a pull request merged the classical way, or shared
+# history rewritten. On a feature branch the same commands are how a
+# branch is kept up to date -- merging its base or its parent step in,
+# fast-forwarding to its remote, or pushing a rebased stacked branch with
+# `--force-with-lease` -- and denying them blocked exactly that work in
+# the field (`git merge --ff-only origin/<branch>`, `git merge origin/main`
+# into a PR branch, a `--force-with-lease` after a rebase). See
+# docs/decisions/0011-update-a-branch-never-merge-a-pull-request.md.
+#
+# Each segment of a compound command is judged on its own, against the
+# branch it would run on: the current branch, or the last
+# `git checkout`/`git switch` earlier in the same command. A branch that
+# can't be determined (detached HEAD, an unborn repository, a `cd`
+# elsewhere) is not treated as the default branch -- a tripwire that
+# guesses "main" would deny ordinary work on uncertainty.
+
+_SEGMENT_SPLIT = re.compile(r"[|;&]|(?<!\\)\n")
+_UPSTREAM_ALIASES = ("@{u}", "@{upstream}")
+# `git merge` options that take a separate value, so the value is not
+# mistaken for a branch to merge.
+_MERGE_VALUE_OPTIONS = {
+    "-m",
+    "-F",
+    "-s",
+    "-X",
+    "--message",
+    "--file",
+    "--strategy",
+    "--strategy-option",
+    "--into-name",
+    "--cleanup",
+}
+_GIT_GLOBAL_VALUE_OPTIONS = {"-C", "-c", "--git-dir", "--work-tree", "--namespace"}
+
+
+# Grouping and substitution punctuation glued to a word -- `(git`,
+# `$(git`, `` `git ``, `--force)` -- is not part of the word git sees.
+_GLUED_PUNCTUATION = re.compile(r"^[$(`]+|[)`]+$")
+
+
+def _tokens(segment: str) -> list[str]:
+    return [
+        _GLUED_PUNCTUATION.sub("", t).strip("'\"")
+        for t in segment.replace("\\\n", " ").split()
+    ]
+
+
+def _is_git(token: str) -> bool:
+    """`git` itself, or git run by path (`/usr/bin/git`)."""
+    return token.rsplit("/", 1)[-1] == "git"
+
+
+def _git_subcommand(
+    tokens: list[str], root: Path | None = None
+) -> tuple[str, list[str], bool] | None:
+    """`(subcommand, its arguments, elsewhere)` for a segment that runs
+    git, or None. `elsewhere` is True when a global option (`-C`,
+    `--git-dir`, ...) points git at another repository, whose branches
+    this hook can't see. A `-C` naming this repository's own root, by
+    absolute path, is not elsewhere."""
+    index = next((i for i, t in enumerate(tokens) if _is_git(t)), None)
+    if index is None:
+        return None
+    elsewhere = False
+    index += 1
+    while index < len(tokens) and tokens[index].startswith("-"):
+        option, _, value = tokens[index].partition("=")
+        if option in _GIT_GLOBAL_VALUE_OPTIONS and not value:
+            index += 1
+            value = tokens[index] if index < len(tokens) else ""
+        if option == "-C":
+            elsewhere = elsewhere or not _is_repo_root(value, root)
+        elif option in ("--git-dir", "--work-tree"):
+            elsewhere = True
+        index += 1
+    if index >= len(tokens):
+        return None
+    return tokens[index], tokens[index + 1 :], elsewhere
+
+
+def _is_repo_root(path: str, root: Path | None) -> bool:
+    if root is None or not path.startswith("/"):
+        return False
+    try:
+        return Path(path).resolve() == Path(root).resolve()
+    except OSError:
+        return False
+
+
+def _checkout_target(args: list[str]) -> str | None:
+    """The branch a `git checkout`/`git switch` leaves HEAD on, or None
+    when it can't be read off the command (a path checkout, `-`, a
+    detach)."""
+    positional: list[str] = []
+    index = 0
+    while index < len(args):
+        arg = args[index]
+        if arg == "--":
+            return None  # a path checkout: HEAD stays where it is
+        if arg in ("-b", "-B", "-c", "-C", "--orphan"):
+            return args[index + 1] if index + 1 < len(args) else None
+        if arg in ("--detach", "-d", "-"):
+            return None
+        if not arg.startswith("-"):
+            positional.append(arg)
+        index += 1
+    if not positional:
+        return None
+    if any(a in ("-t", "--track") or a.startswith("--track=") for a in args):
+        # `--track origin/main` creates and switches to the local `main`.
+        return positional[0].removeprefix("refs/remotes/").split("/", 1)[-1]
+    return positional[0]
+
+
+def _merge_sources(args: list[str]) -> list[str]:
+    sources: list[str] = []
+    index = 0
+    while index < len(args):
+        arg = args[index]
+        if arg in _MERGE_VALUE_OPTIONS:
+            index += 2
+            continue
+        if not arg.startswith("-"):
+            sources.append(arg)
+        index += 1
+    return sources
+
+
+def _merge_violation(args: list[str], branch: str | None, default: str) -> str | None:
+    if any(a in ("--abort", "--quit", "--continue") for a in args):
+        return None  # recovery: how you get out of a merge
+    if branch != default:
+        return None  # updating a feature branch
+    sources = _merge_sources(args)
+    syncing = (
+        "--ff-only" in args
+        and bool(sources)
+        and all(
+            source in (f"origin/{default}", *_UPSTREAM_ALIASES) for source in sources
+        )
+    )
+    return None if syncing else "a merge into the default branch"
+
+
+def _pull_violation(args: list[str], branch: str | None, default: str) -> str | None:
+    """`git pull <remote> <other-branch>` on the default branch merges
+    that branch into it -- a pull request merged locally. A plain
+    `git pull`, or one naming the default branch itself, only updates."""
+    if branch != default:
+        return None
+    positional = [a for a in args if not a.startswith("-")]
+    refs = positional[1:]
+    if any(ref.split(":", 1)[0].removeprefix("refs/heads/") != default for ref in refs):
+        return "a merge into the default branch"
+    return None
+
+
+def _push_targets(positional: list[str], branch: str | None) -> list[str | None]:
+    refspecs = positional[1:]
+    if not refspecs:
+        return [branch]
+    targets: list[str | None] = []
+    for refspec in refspecs:
+        source, _, destination = refspec.lstrip("+").partition(":")
+        target = destination or source
+        target = target.removeprefix("refs/heads/")
+        targets.append(branch if target == "HEAD" else target)
+    return targets
+
+
+def _push_violation(args: list[str], branch: str | None, default: str) -> str | None:
+    positional = [a for a in args if not a.startswith("-")]
+    short_flags = "".join(
+        a[1:] for a in args if a.startswith("-") and not a.startswith("--")
+    )
+    long_flags = [a.split("=", 1)[0] for a in args if a.startswith("--")]
+    if "--force" in long_flags or "f" in short_flags:
+        return "a force push"
+    if any(refspec.startswith("+") for refspec in positional[1:]):
+        return "a force push"
+    if "d" in short_flags:
+        return "a remote branch deletion"
+    leased = "--force-with-lease" in long_flags or "--force-if-includes" in long_flags
+    if not leased:
+        return None
+    if "--all" in long_flags or "--mirror" in long_flags:
+        return "a force push to every branch"
+    if any(target == default for target in _push_targets(positional, branch)):
+        return "a force push to the default branch"
+    return None
+
+
+def _contextual_operation(
+    command: str,
+    current_branch: str | None,
+    default: str,
+    root: Path | None = None,
+) -> str | None:
+    """The first merge or force push in `command` that lands on the
+    default branch -- see the comment block above -- or None."""
+    branch = current_branch
+    for segment in _SEGMENT_SPLIT.split(command):
+        tokens = _tokens(segment)
+        if tokens and tokens[0] == "cd":
+            branch = None
+            continue
+        parsed = _git_subcommand(tokens, root)
+        if parsed is None:
+            continue
+        subcommand, args, elsewhere = parsed
+        on = None if elsewhere else branch
+        if subcommand in ("checkout", "switch") and not elsewhere:
+            target = _checkout_target(args)
+            if target is not None or "-" in args or "--detach" in args:
+                branch = target
+            continue
+        judge = {
+            "merge": _merge_violation,
+            "pull": _pull_violation,
+            "push": _push_violation,
+        }.get(subcommand)
+        if judge is not None:
+            label = judge(args, on, default)
+            if label is not None:
+                return label
+    return None
+
+
+_CONTEXTUAL_PATTERN = re.compile(r"\bgit\b[^|;&\n]*\b(merge|pull|push)\b")
 
 
 def _matched_destructive_operation(command: str) -> str | None:
@@ -396,6 +621,13 @@ def main() -> None:
     unquoted = _blank_quoted_spans(command)
 
     label = _matched_destructive_operation(unquoted)
+    if label is None and _CONTEXTUAL_PATTERN.search(unquoted):
+        label = _contextual_operation(
+            unquoted,
+            _common.current_branch(root),
+            _common.default_branch(root),
+            root,
+        )
     if label is not None:
         reason = (
             f"Canon never runs {label} -- if you genuinely want this, run it yourself."

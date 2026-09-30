@@ -17,8 +17,31 @@ from unittest import mock
 import git_guard
 
 
-def _init_repo(root: Path) -> None:
-    subprocess.run(["git", "init", "-q"], cwd=root, check=True, capture_output=True)
+def _git(root: Path, *args: str) -> None:
+    subprocess.run(["git", *args], cwd=root, check=True, capture_output=True)
+
+
+def _init_repo(root: Path, branch: str = "main") -> None:
+    """A repository on `main` with one commit, then on `branch`. The
+    merge and force-push rules depend on which branch a command lands
+    on, so an unborn HEAD (where the branch can't be read) would test
+    the wrong thing."""
+    _git(root, "init", "-q")
+    _git(root, "symbolic-ref", "HEAD", "refs/heads/main")
+    _git(
+        root,
+        "-c",
+        "user.email=canon@example.com",
+        "-c",
+        "user.name=Canon Tests",
+        "commit",
+        "-q",
+        "--allow-empty",
+        "-m",
+        "init",
+    )
+    if branch != "main":
+        _git(root, "switch", "-q", "-c", branch)
     _activate(root)
 
 
@@ -182,6 +205,116 @@ class DestructiveCommandTests(unittest.TestCase):
             self.assertEqual(
                 payload["hookSpecificOutput"]["permissionDecision"], "deny"
             )
+
+
+class BranchUpdateTests(unittest.TestCase):
+    """Regression: every `git merge` and every `--force-with-lease` was
+    denied, which blocked keeping a stacked branch up to date. Observed
+    in the field: `git merge --ff-only origin/<branch>`, `git merge
+    --no-edit origin/main` into a PR branch, and `git push
+    --force-with-lease` after a rebase. Only what lands on the default
+    branch is refused now."""
+
+    def _decision(self, command: str, branch: str) -> str | None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            _init_repo(root, branch)
+            output = _invoke_main(_payload(root, command.format(root=root)))
+        if not output:
+            return None
+        return json.loads(output)["hookSpecificOutput"].get("permissionDecision")
+
+    def test_merging_the_base_into_a_feature_branch_is_allowed(self) -> None:
+        self.assertIsNone(self._decision("git merge --no-edit origin/main", "feat/m1"))
+
+    def test_fast_forwarding_a_feature_branch_is_allowed(self) -> None:
+        self.assertIsNone(
+            self._decision(
+                "git checkout -q feat/m1 && git merge -q --ff-only origin/feat/m1",
+                "main",
+            )
+        )
+
+    def test_merging_the_parent_step_into_a_stacked_branch_is_allowed(self) -> None:
+        self.assertIsNone(self._decision("git merge movie-effects", "movie-export"))
+
+    def test_lease_push_of_a_feature_branch_is_allowed(self) -> None:
+        self.assertIsNone(
+            self._decision(
+                "git push --force-with-lease origin movie-export", "movie-export"
+            )
+        )
+        self.assertIsNone(self._decision("git push --force-with-lease", "movie-export"))
+
+    def test_fast_forwarding_the_default_branch_to_its_remote_is_allowed(self) -> None:
+        self.assertIsNone(self._decision("git merge --ff-only origin/main", "main"))
+        self.assertIsNone(self._decision("git pull", "main"))
+
+    def test_merging_a_branch_into_the_default_branch_is_denied(self) -> None:
+        self.assertEqual(self._decision("git merge feature/x", "main"), "deny")
+        self.assertEqual(
+            self._decision("git merge --ff-only origin/feature/x", "main"), "deny"
+        )
+
+    def test_checking_out_the_default_branch_then_merging_is_denied(self) -> None:
+        self.assertEqual(
+            self._decision("git checkout main && git merge feature/x", "feature/x"),
+            "deny",
+        )
+
+    def test_pulling_another_branch_into_the_default_branch_is_denied(self) -> None:
+        self.assertEqual(self._decision("git pull origin feature/x", "main"), "deny")
+
+    def test_a_lease_push_to_the_default_branch_is_denied(self) -> None:
+        self.assertEqual(self._decision("git push --force-with-lease", "main"), "deny")
+        self.assertEqual(
+            self._decision("git push --force-with-lease origin HEAD:main", "feat"),
+            "deny",
+        )
+        self.assertEqual(
+            self._decision("git push --force-with-lease --all", "feat"), "deny"
+        )
+
+    def test_a_plain_force_push_is_denied_on_any_branch(self) -> None:
+        for command in (
+            "git push --force origin feat",
+            "git push -uf origin feat",
+            "git push origin +feat",
+        ):
+            with self.subTest(command=command):
+                self.assertEqual(self._decision(command, "feat"), "deny")
+
+    def test_a_force_push_is_denied_however_git_is_invoked(self) -> None:
+        for command in (
+            "(git push --force origin feat)",
+            "/usr/bin/git push -f origin feat",
+            "echo $(git push --force origin feat)",
+        ):
+            with self.subTest(command=command):
+                self.assertEqual(self._decision(command, "feat"), "deny")
+
+    def test_a_merge_into_the_default_branch_in_a_subshell_is_denied(self) -> None:
+        self.assertEqual(self._decision("(git merge feature/x)", "main"), "deny")
+
+    def test_tracking_the_default_branch_then_merging_is_denied(self) -> None:
+        for flag in ("--track", "-t"):
+            with self.subTest(flag=flag):
+                self.assertEqual(
+                    self._decision(
+                        f"git checkout {flag} origin/main && git merge feature/x",
+                        "feature/x",
+                    ),
+                    "deny",
+                )
+
+    def test_dash_c_naming_this_repository_is_not_elsewhere(self) -> None:
+        self.assertEqual(
+            self._decision("git -C {root} merge feature/x", "main"), "deny"
+        )
+        self.assertIsNone(self._decision("git -C /elsewhere merge feature/x", "main"))
+
+    def test_a_pull_request_merge_is_still_denied_on_a_feature_branch(self) -> None:
+        self.assertEqual(self._decision("gh pr merge 42 --squash", "feat"), "deny")
 
 
 class NearMissTests(unittest.TestCase):
